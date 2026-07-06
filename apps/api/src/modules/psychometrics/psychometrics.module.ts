@@ -4,11 +4,12 @@ import { CredentialingModule } from '../credentialing/credentialing.module';
 import { PsychometricsController } from './psychometrics.controller';
 import { PsychometricsService } from './psychometrics.service';
 import { ScoringService } from './scoring.service';
+import { IrtScoringService } from './irt-scoring.service';
 
 @Module({
   imports: [JwtModule.register({}), CredentialingModule],
   controllers: [PsychometricsController],
-  providers: [PsychometricsService, ScoringService],
-  exports: [ScoringService],
+  providers: [PsychometricsService, ScoringService, IrtScoringService],
+  exports: [ScoringService, IrtScoringService],
 })
 export class PsychometricsModule {}

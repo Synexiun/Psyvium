@@ -12,6 +12,8 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
 import { ScoringService } from './scoring.service';
+import { IrtScoringService, type IrtScorableItem } from './irt-scoring.service';
+import { ScoringMethod, type IrtScoreResult } from '@vpsy/contracts';
 
 /** Ordering used to only ever escalate — never silently downgrade — a client's reflected risk level. */
 const SEVERITY_RANK: Record<string, number> = {
@@ -41,6 +43,7 @@ export class PsychometricsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scoring: ScoringService,
+    private readonly irt: IrtScoringService,
     private readonly audit: AuditService,
     private readonly bus: EventBus,
   ) {}
@@ -48,6 +51,14 @@ export class PsychometricsService {
   async administer(principal: AuthPrincipal, input: AdministerResponseInput): Promise<QuestionnaireResponseDto> {
     const version = await this.prisma.questionnaireVersion.findUnique({
       where: { id: input.versionId },
+      include: {
+        questionnaire: { select: { scoringMethod: true } },
+        items: {
+          where: { active: true },
+          orderBy: { orderIndex: 'asc' },
+          include: { parameters: { where: { active: true }, orderBy: { createdAt: 'desc' } } },
+        },
+      },
     });
     if (!version || !version.published) {
       throw new NotFoundException('Published questionnaire version not found');
@@ -67,6 +78,25 @@ export class PsychometricsService {
     // Deterministic — same principle as Intake's safety screen (§06 core principle).
     const safetyHits = this.scoring.checkSafetyItems(input.answers, version.cutoffs);
 
+    // ── IRT latent-trait scoring (07-psychometrics-engine.md §5) — opt-in per
+    // instrument. Only runs when the instrument declares an IRT-family scoring
+    // method AND its items carry stored calibration parameters; every other
+    // instrument keeps the classical path above, byte-for-byte unchanged.
+    // Classical rawScore/severityBand (and the safety-item hook) are still
+    // computed and persisted alongside θ — banding cutoffs are published on the
+    // raw metric, and downstream risk logic must not change with IRT adoption.
+    // Deterministic like everything else here: AI is never consulted.
+    const irtResult = this.computeIrt(
+      version.questionnaire?.scoringMethod,
+      version.items ?? [],
+      input.answers,
+    );
+    const interpretation = irtResult
+      ? `${computed.interpretation} IRT EAP theta=${irtResult.thetaEstimate.toFixed(3)} (SE=${irtResult.standardError.toFixed(3)}, ` +
+        `T=${(50 + 10 * irtResult.thetaEstimate).toFixed(1)}, percentile=${irtResult.percentile.toFixed(1)}) ` +
+        `from ${irtResult.itemsUsed} calibrated item(s) [${irtResult.irtModelsUsed.join(', ')}] on the N(0,1) reference metric.`
+      : computed.interpretation;
+
     const result = await this.prisma.$transaction(async (tx) => {
       const response = await tx.questionnaireResponse.create({
         data: {
@@ -82,8 +112,12 @@ export class PsychometricsService {
           tenantId: principal.tenantId,
           responseId: response.id,
           rawScore: computed.rawScore,
+          thetaEstimate: irtResult?.thetaEstimate ?? null,
+          standardError: irtResult?.standardError ?? null,
+          reliabilityAtTheta: irtResult?.reliabilityAtTheta ?? null,
+          percentile: irtResult?.percentile ?? null,
           severityBand: computed.severityBand ?? null,
-          interpretation: computed.interpretation,
+          interpretation,
         },
       });
 
@@ -129,6 +163,8 @@ export class PsychometricsService {
       after: {
         rawScore: computed.rawScore,
         severityBand: computed.severityBand,
+        thetaEstimate: irtResult?.thetaEstimate ?? null,
+        standardError: irtResult?.standardError ?? null,
         safetyFlagsRaised: result.raisedFlagIds.length,
       },
     });
@@ -149,6 +185,34 @@ export class PsychometricsService {
     }
 
     return this.toDto(result.response, result.score);
+  }
+
+  /**
+   * IRT gate + scoring. Returns null (→ classical-only) unless the instrument
+   * opted in (`scoringMethod` IRT/CAT) AND at least one active item carries an
+   * active calibration row. When multiple calibrations are active for an item,
+   * the newest wins (rows arrive pre-sorted createdAt desc); calibration
+   * pinning per QuestionnaireVersion is the documented follow-up alongside CAT.
+   * Invalid stored parameters throw 422 (via IrtScoringService.parseParams) —
+   * a mis-calibrated instrument must fail loudly, never score wrongly.
+   */
+  private computeIrt(
+    scoringMethod: string | undefined,
+    items: Array<{ id: string; linkId?: string | null; parameters?: unknown[] }>,
+    answers: Record<string, number>,
+  ): IrtScoreResult | null {
+    if (scoringMethod !== ScoringMethod.IRT && scoringMethod !== ScoringMethod.CAT) return null;
+
+    const scorable: IrtScorableItem[] = [];
+    for (const item of items) {
+      const raw = item.parameters?.[0];
+      if (!raw) continue;
+      const linkId = item.linkId ?? item.id;
+      scorable.push({ linkId, params: this.irt.parseParams(raw, linkId) });
+    }
+    if (scorable.length === 0) return null;
+
+    return this.irt.scoreEap(scorable, answers);
   }
 
   async getResponse(principal: AuthPrincipal, id: string): Promise<QuestionnaireResponseDto> {
@@ -172,6 +236,8 @@ export class PsychometricsService {
       id: string;
       responseId: string;
       rawScore: number | null;
+      thetaEstimate?: number | null;
+      standardError?: number | null;
       severityBand: SeverityBand | null;
       interpretation: string | null;
       createdAt: Date;
@@ -188,6 +254,8 @@ export class PsychometricsService {
             id: score.id,
             responseId: score.responseId,
             rawScore: score.rawScore,
+            thetaEstimate: score.thetaEstimate ?? null,
+            standardError: score.standardError ?? null,
             severityBand: score.severityBand,
             interpretation: score.interpretation,
             createdAt: score.createdAt.toISOString(),

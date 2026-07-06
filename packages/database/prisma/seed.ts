@@ -205,6 +205,84 @@ async function main() {
     },
   });
 
+  // ─────────────────────────────────────────────────────────────
+  // IRT-calibrated demo instrument (07-psychometrics-engine.md §3/§5) — a
+  // public-domain-style 7-item anxiety scale scored with the Graded Response
+  // Model. Item parameters are FIXED calibration values (the engine only ever
+  // scores against them; it never re-estimates at runtime). Answers are keyed
+  // by Item.linkId (q1..q7), categories 0..3. Classical raw-sum banding still
+  // runs alongside (bands on the 0..21 raw metric), so the safety/risk
+  // pipeline is identical for IRT and classical instruments.
+  // Worked example (pinned in irt-scoring.service.spec.ts): answers
+  // {q1:2,q2:1,q3:3,q4:1,q5:2,q6:2,q7:3} → theta=0.803, SE=0.385.
+  // ─────────────────────────────────────────────────────────────
+  const qIrt = await prisma.questionnaire.upsert({
+    where: { code: 'VPSY-ANX-IRT-7' },
+    update: {},
+    create: {
+      code: 'VPSY-ANX-IRT-7',
+      name: 'VPSY Anxiety Scale (7-item, IRT)',
+      construct: 'anxiety',
+      licensing: 'PUBLIC_DOMAIN',
+      scoringMethod: 'IRT',
+    },
+  });
+  const qvIrt = await prisma.questionnaireVersion.upsert({
+    where: { questionnaireId_version: { questionnaireId: qIrt.id, version: '1.0.0' } },
+    update: {},
+    create: {
+      questionnaireId: qIrt.id,
+      version: '1.0.0',
+      published: true,
+      cutoffs: {
+        bands: [
+          { band: 'LOW', min: 0, max: 5 },
+          { band: 'MODERATE', min: 6, max: 10 },
+          { band: 'HIGH', min: 11, max: 15 },
+          { band: 'SEVERE', min: 16, max: 21 },
+        ],
+      },
+    },
+  });
+  const irtItems: Array<{ stem: string; a: number; thresholds: number[] }> = [
+    { stem: 'I felt nervous, anxious, or on edge.', a: 1.8, thresholds: [-1.2, 0.0, 1.1] },
+    { stem: 'I was not able to stop or control worrying.', a: 1.4, thresholds: [-0.8, 0.3, 1.5] },
+    { stem: 'I worried too much about different things.', a: 2.1, thresholds: [-1.5, -0.4, 0.7] },
+    { stem: 'I had trouble relaxing.', a: 1.1, thresholds: [-0.3, 0.8, 1.9] },
+    { stem: 'I was so restless that it was hard to sit still.', a: 1.6, thresholds: [-1.0, 0.2, 1.3] },
+    { stem: 'I became easily annoyed or irritable.', a: 1.3, thresholds: [-0.5, 0.6, 1.7] },
+    { stem: 'I felt afraid, as if something awful might happen.', a: 1.9, thresholds: [-1.3, -0.2, 0.9] },
+  ];
+  const IRT_CALIBRATION = 'cal_demo_anx_2026_1';
+  for (let i = 0; i < irtItems.length; i++) {
+    const def = irtItems[i]!;
+    const item = await prisma.item.upsert({
+      where: { id: `item_anx_irt_${i + 1}` },
+      update: {},
+      create: {
+        id: `item_anx_irt_${i + 1}`,
+        questionnaireVersionId: qvIrt.id,
+        linkId: `q${i + 1}`,
+        stem: def.stem,
+        responseOptions: ['Not at all', 'Several days', 'More than half the days', 'Nearly every day'],
+        orderIndex: i,
+      },
+    });
+    await prisma.itemParameter.upsert({
+      where: { itemId_calibrationId: { itemId: item.id, calibrationId: IRT_CALIBRATION } },
+      update: {},
+      create: {
+        id: `itemparam_anx_irt_${i + 1}`,
+        itemId: item.id,
+        calibrationId: IRT_CALIBRATION,
+        model: 'GRM',
+        a: def.a,
+        thresholds: def.thresholds,
+        seEstimates: { a: 0.08, thresholds: [0.06, 0.05, 0.07], sample: 'demo calibration N=1200 (synthetic)' },
+      },
+    });
+  }
+
   // Active AI model + prompt versions
   await prisma.aIModelVersion.upsert({
     where: { provider_model_version: { provider: 'anthropic', model: 'claude-opus-4-8', version: '2026.01' } },
@@ -791,6 +869,7 @@ async function main() {
   console.log('✅ Seed complete. Demo login password for all accounts: Vpsy!2026');
   console.log('   Manager:', manager.email, '| Psychologists: dr.rivera@, dr.okafor@ | Client: alex.client@');
   console.log('   Demo dashboard client id (alex.client, assigned to dr.rivera):', client.id);
+  console.log('   Psychometrics: classical VPSY-DEP-SCREEN-9 (version', qv.id, ') + IRT VPSY-ANX-IRT-7 (version', qvIrt.id, ', 7 GRM-calibrated items).');
   console.log('   CRM: 5 pipeline stages, 3 referrers, 3 demo leads.');
   console.log('   Communications Hub: 1 provisioned phone number, 1 demo call + 1 SMS + 1 voice media message.');
   console.log('   Scheduling: 3 open AvailabilitySlots on dr.rivera (next 3 days).');

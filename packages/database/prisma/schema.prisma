@@ -876,6 +876,10 @@ model Item {
   itemBank               ItemBank?             @relation(fields: [itemBankId], references: [id])
   questionnaireVersionId String?
   questionnaireVersion   QuestionnaireVersion? @relation(fields: [questionnaireVersionId], references: [id])
+  /// Answer-key linkage: `QuestionnaireResponse.answers` is keyed by linkId
+  /// (e.g. "q1"), FHIR QuestionnaireResponse-style. Nullable/additive —
+  /// falls back to the row id when unset.
+  linkId                 String?
   stem                   String
   responseOptions        Json                  @default("[]")
   discrimination         Float? // a
@@ -885,8 +889,34 @@ model Item {
   active                 Boolean               @default(true)
   orderIndex             Int                   @default(0)
 
+  parameters ItemParameter[]
+
   @@index([itemBankId])
   @@index([questionnaireVersionId])
+}
+
+/// Per-item IRT parameters, per calibration (07-psychometrics-engine.md §3/§5).
+/// Parameters are estimated OFFLINE on approved calibration samples and stored
+/// per `calibrationId`; the engine only ever *scores* against these fixed
+/// values — it never re-estimates at runtime. Recalibration = new rows under a
+/// new calibrationId, never an in-place rewrite (scores stay reproducible).
+/// Instrument-catalog data (not PHI) — deliberately outside the RLS backstop,
+/// same as Item / QuestionnaireVersion (see the RLS migration's exclusions).
+model ItemParameter {
+  id            String   @id @default(cuid())
+  itemId        String
+  item          Item     @relation(fields: [itemId], references: [id])
+  calibrationId String   @default("cal_default")
+  model         IrtModel
+  a             Float    @default(1) // discrimination (RASCH fixes a = 1)
+  b             Float    @default(0) // difficulty (dichotomous models)
+  thresholds    Float[]  @default([]) // GRM: ordered category boundaries b_1 < ... < b_m
+  c             Float? // guessing / lower asymptote (3PL only), in [0, 1)
+  seEstimates   Json? // calibration standard errors, provenance
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  @@unique([itemId, calibrationId])
 }
 
 model Questionnaire {

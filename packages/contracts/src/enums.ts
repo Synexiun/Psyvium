@@ -120,6 +120,19 @@ export const ScoringMethod = {
 } as const;
 export type ScoringMethod = (typeof ScoringMethod)[keyof typeof ScoringMethod];
 
+/**
+ * IRT response models (07-psychometrics-engine.md §5). Mirrors the Prisma
+ * `IrtModel` enum. RASCH/TWO_PL/THREE_PL are dichotomous (0/1 responses);
+ * GRM (Graded Response Model) covers ordered polytomous (Likert) items.
+ */
+export const IrtModel = {
+  RASCH: 'RASCH',
+  TWO_PL: 'TWO_PL',
+  THREE_PL: 'THREE_PL',
+  GRM: 'GRM',
+} as const;
+export type IrtModel = (typeof IrtModel)[keyof typeof IrtModel];
+
 export const AiAgent = {
   INTAKE: 'INTAKE',
   DIFFERENTIAL: 'DIFFERENTIAL',
