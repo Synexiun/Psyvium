@@ -52,6 +52,21 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # ── Dependency audit (WARN, non-blocking) ───────────────────────────
+      # docs/technical/10-observability-and-devops.md §4.1 lists "vulnerable
+      # dep" as a security-scan gate, but a HARD block here would let an
+      # unpatched *transitive* advisory (frequently with no fix available
+      # yet, and no clinical-data exposure of its own) stop an unrelated
+      # clinical-safety fix from merging — the worse outcome for a system
+      # whose core promise is that safety fixes ship fast. So this reports
+      # (and is visible in the job log/summary for every PR) without failing
+      # the build. Revisit if/when this repo adds a triage/allowlist process
+      # (e.g. `pnpm audit --json` diffed against a reviewed exceptions file)
+      # that could safely make specific severities blocking again.
+      - name: "Dependency audit (high+critical — WARN, non-blocking; see comment above)"
+        run: pnpm audit --audit-level high
+        continue-on-error: true
+
       - name: Prisma generate
         run: pnpm --filter @vpsy/database exec prisma generate
 
@@ -87,3 +102,65 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      # ── E2E (placeholder — lands with the Playwright suite a parallel
+      # workstream is adding to apps/web). `--if-present` keeps this step a
+      # harmless no-op (exit 0) until that script exists, instead of either
+      # failing CI on a script that isn't there yet or silently omitting the
+      # gate and having to remember to add it back later.
+      - name: "E2E (apps/web — no-op until Playwright suite lands)"
+        run: pnpm --filter @vpsy/web run test:e2e --if-present
+
+  # ── Secret scan ──────────────────────────────────────────────────────────
+  # docs/technical/10-observability-and-devops.md §4.1 / §14: a leaked secret
+  # must block merge, full stop — independent job so it can't be skipped by
+  # anything that happens (or fails) in build-test.
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks needs history to scan the full diff/range, not just the tip commit
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional: only needed for gitleaks' paid org features (e.g. the
+          # hosted findings dashboard). Scanning itself runs without it; if
+          # this secret isn't configured in the repo, the env var is simply
+          # empty and the action falls back to its unlicensed OSS behavior.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # ── Docker build proof ───────────────────────────────────────────────────
+  # docs/technical/10-observability-and-devops.md §5: proves both images
+  # still build clean on every PR (no push — this is a build-only smoke
+  # check, not a release step; release/publish is a separate concern for a
+  # later wave). Independent job so a Dockerfile regression is visible on
+  # its own line rather than buried in — or blocking — the main test job.
+  docker-build:
+    name: Docker build proof (api + web, no push)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build api image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+          cache-from: type=gha,scope=vpsy-api
+          cache-to: type=gha,mode=max,scope=vpsy-api
+
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: false
+          cache-from: type=gha,scope=vpsy-web
+          cache-to: type=gha,mode=max,scope=vpsy-web

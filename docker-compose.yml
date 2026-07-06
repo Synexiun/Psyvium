@@ -6,6 +6,24 @@
 #   # then point packages/database/.env + apps/api/.env at:
 #   DATABASE_URL="postgresql://vpsy:vpsy@localhost:5433/vpsy?schema=public"
 #   REDIS_URL="redis://localhost:6380"
+#
+# The default flow above (`docker compose up -d`, no --profile) is unchanged
+# by the api/web services below — they only start under the "full" profile,
+# built from apps/api/Dockerfile + apps/web/Dockerfile:
+#
+#   docker compose --profile full up --build
+#   # then, from the host (the api image is a runtime-only container — no
+#   # Prisma CLI in it — so schema/seed still run via the host pnpm workspace,
+#   # pointed at the host-mapped port like the default flow above):
+#   DATABASE_URL="postgresql://vpsy:vpsy@localhost:5433/vpsy?schema=public" \
+#     pnpm --filter @vpsy/database exec prisma db push --skip-generate
+#   DATABASE_URL="postgresql://vpsy:vpsy@localhost:5433/vpsy?schema=public" \
+#     pnpm --filter @vpsy/database run seed
+#   # web http://localhost:3000, api http://localhost:4000/api/v1, docs http://localhost:4000/api/docs
+#
+# JWT_ACCESS_SECRET / JWT_REFRESH_SECRET default to the same placeholder
+# values as .env.example (fine for local/full-stack smoke, never for anything
+# resembling production) — override by exporting them before `docker compose`.
 services:
   postgres:
     image: postgres:16-alpine
@@ -37,6 +55,56 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # ── Optional full-stack services (Wave D) ────────────────────────────────
+  # Not part of the default dev inner loop (`pnpm dev` against the two
+  # services above is still the fast path) — these exist so
+  # `docker compose --profile full up --build` can prove the whole stack
+  # (containers + Postgres + Redis) boots together, e.g. before a release or
+  # when debugging something container-specific rather than local-Node-specific.
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: vpsy-api
+    profiles: ["full"]
+    environment:
+      # Internal compose network — service name + native port, not the
+      # host-remapped 5433/6380 above.
+      DATABASE_URL: "postgresql://vpsy:vpsy@postgres:5432/vpsy?schema=public"
+      REDIS_URL: "redis://redis:6379"
+      JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:-dev-access-secret-change-me}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:-dev-refresh-secret-change-me}"
+      WEB_ORIGIN: "http://localhost:3000"
+      PORT: "4000"
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Baked into the browser bundle at build time — this is the URL the
+        # user's browser calls, so it must be host-reachable (not the
+        # internal `api` service name).
+        NEXT_PUBLIC_API_URL: "http://localhost:4000"
+    container_name: vpsy-web
+    profiles: ["full"]
+    environment:
+      # Server-side rewrite target (next.config.mjs `/api/backend/*`) — this
+      # runs inside the web container, so it uses the internal service name.
+      API_URL: "http://api:4000"
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
 
 volumes:
   vpsy_pgdata:

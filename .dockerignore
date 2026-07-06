@@ -1,0 +1,48 @@
+# VPSY OS — Docker build context excludes.
+# Both apps/api/Dockerfile and apps/web/Dockerfile are built with the monorepo
+# root as build context (required so `turbo prune` can see every workspace),
+# so this file lives at the root and applies to both.
+
+# deps (reinstalled inside the image from pnpm-lock.yaml — never trust a host copy)
+**/node_modules
+.pnpm-store
+
+# build output (regenerated inside the image)
+**/dist
+**/.next
+**/out
+**/build
+**/.turbo
+**/*.tsbuildinfo
+
+# local env / secrets — never bake these into an image
+.env
+.env.*
+!.env.example
+
+# vcs / editor / os
+.git
+.github
+.gitignore
+.gitattributes
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# logs
+**/*.log
+apps/api/*.log
+
+# test artifacts
+coverage
+**/coverage
+
+# docs (not needed to build or run)
+docs
+
+# this repo's own harness state
+.claude
+
+# turbo's own prune scratch dir, if ever left behind locally
+/out
