@@ -91,6 +91,7 @@ export class IntakeService {
 
       // Deterministic risk flags → escalations (safety-critical, human-routed)
       const raisedFlagIds: string[] = [];
+      const raisedEscalations: { escalationId: string; riskFlagId: string }[] = [];
       for (const flag of computed.riskFlags) {
         const rf = await tx.riskFlag.create({
           data: {
@@ -104,10 +105,11 @@ export class IntakeService {
             status: 'ESCALATED',
           },
         });
-        await tx.escalation.create({
+        const escalation = await tx.escalation.create({
           data: { tenantId: principal.tenantId, riskFlagId: rf.id },
         });
         raisedFlagIds.push(rf.id);
+        raisedEscalations.push({ escalationId: escalation.id, riskFlagId: rf.id });
       }
 
       // Reflect risk on the client record
@@ -116,7 +118,7 @@ export class IntakeService {
         data: { riskLevel: computed.severityBand },
       });
 
-      return { intake, screening, raisedFlagIds };
+      return { intake, screening, raisedFlagIds, raisedEscalations };
     });
 
     // ── Post-commit: audit, AI summary, events ──
@@ -158,6 +160,13 @@ export class IntakeService {
     });
     for (const flagId of result.raisedFlagIds) {
       await this.bus.publish(Events.RiskFlagRaised, principal.tenantId, { riskFlagId: flagId, clientId: client.id });
+    }
+    for (const esc of result.raisedEscalations) {
+      await this.bus.publish(Events.EscalationRaised, principal.tenantId, {
+        escalationId: esc.escalationId,
+        riskFlagId: esc.riskFlagId,
+        clientId: client.id,
+      });
     }
 
     return {

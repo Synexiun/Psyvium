@@ -3,7 +3,17 @@
 import { useEffect, useState } from 'react';
 import { api, setToken, getToken, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
+import { useLiveRefresh } from '@/lib/live-events';
+import { RealtimeEventType } from '@vpsy/contracts';
 import type { RiskBoardDto, EscalationDto, RiskFlagDto, SafetyPlanDto, Severity } from '@/lib/risk-types';
+
+/** Live event types that mean "this board's numbers may be stale — reload it." */
+const RISK_BOARD_LIVE_EVENTS = [
+  RealtimeEventType.RiskFlagRaised,
+  RealtimeEventType.EscalationRaised,
+  RealtimeEventType.EscalationAssigned,
+  RealtimeEventType.EscalationResolved,
+];
 import { SkeletonStack } from '@/components/Skeleton';
 import { ErrorPanel } from '@/components/ErrorPanel';
 import { EmptyState } from '@/components/EmptyState';
@@ -53,6 +63,9 @@ export default function RiskPage() {
     }
   }
   useEffect(() => { load(); }, []);
+  // Live push (SP3): reload the board the moment a risk flag/escalation
+  // changes anywhere in the tenant — no polling, no manual refresh.
+  useLiveRefresh(RISK_BOARD_LIVE_EVENTS, load);
 
   if (!board) return <SkeletonStack count={4} className="mt-6 space-y-3" />;
 

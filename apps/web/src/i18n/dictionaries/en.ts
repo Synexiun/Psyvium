@@ -37,6 +37,10 @@ const en = {
     localTime: 'Local time',
     openPalette: 'Command',
     signedInAs: 'Signed in · {role}',
+    liveConnected: 'Live',
+    liveReconnecting: 'Reconnecting…',
+    liveOffline: 'Offline',
+    liveConnecting: 'Connecting…',
   },
   palette: {
     title: 'Command palette',

@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { assertJwtSecretsPresent } from './common/config/jwt-secrets';
@@ -16,6 +17,8 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api/v1');
   app.enableCors({ origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000', credentials: true });
+  // Real-time layer (SP3): explicit Socket.IO adapter for RealtimeGateway.
+  app.useWebSocketAdapter(new IoAdapter(app));
   // Validation is handled per-route by ZodValidationPipe against @vpsy/contracts
   // schemas (single source of truth), so no global class-validator pipe is needed.
 

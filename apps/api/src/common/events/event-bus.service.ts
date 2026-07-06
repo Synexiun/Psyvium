@@ -63,11 +63,14 @@ export const Events = {
   SmsDelivered: 'sms.delivered',
   MediaMessageSent: 'media_message.sent',
   // Risk & Crisis (context 21)
+  EscalationRaised: 'escalation.raised',
+  EscalationAssigned: 'escalation.assigned',
   EscalationResolved: 'escalation.resolved',
   BreakGlassInvoked: 'breakglass.invoked',
   SafetyPlanCreated: 'safetyplan.created',
   // Scheduling (context 9)
   AppointmentBooked: 'appointment.booked',
+  AppointmentStatusChanged: 'appointment.status_changed',
   NoShowRecorded: 'appointment.no_show_recorded',
   // Decoupled seam: a Communications-Hub subscriber turns this into an
   // SMS/notification — Scheduling never imports the communications module.
@@ -76,4 +79,8 @@ export const Events = {
   InvoiceCreated: 'invoice.created',
   PaymentCaptured: 'payment.captured',
   PayoutComputed: 'payout.computed',
+  // AI Gateway (ADR-007) — every inference is logged as an AIRecommendation
+  // behind a PENDING human-decision gate; this is the seam the real-time
+  // layer (SP3) and any other PENDING-queue subscriber hooks into.
+  AIRecommendationCreated: 'ai_recommendation.created',
 } as const;

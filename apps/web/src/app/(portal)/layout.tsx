@@ -22,9 +22,11 @@ import { useI18n } from '@/i18n';
 import { getPrincipal, logout, type Principal } from '@/lib/api';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { LiveStatusIndicator } from '@/components/LiveStatusIndicator';
 import { CommandPalette, useCommandPaletteHotkey } from '@/components/CommandPalette';
 import { CommandRail, PORTAL_NAV } from '@/components/CommandRail';
 import { ContextPanelHostProvider } from '@/components/ContextPanel';
+import { LiveEventsProvider } from '@/lib/live-events';
 
 /** Role code (as carried in the access token) → the existing role-label i18n key. */
 const ROLE_LABEL_KEY: Record<string, 'login.roleClient' | 'login.rolePsychologist' | 'login.roleManager' | 'login.roleExecutive'> = {
@@ -67,6 +69,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
   const current = PORTAL_NAV.find((n) => pathname?.startsWith(n.href));
 
   return (
+    <LiveEventsProvider>
     <ContextPanelHostProvider value={panelHost}>
       <div className="flex min-h-dvh bg-console-900">
         <a href="#portal-content" className="skip-link">{t('common.skipToContent')}</a>
@@ -100,6 +103,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
                   {isMac ? '⌘K' : 'Ctrl K'}
                 </kbd>
               </button>
+              <LiveStatusIndicator />
               <ThemeToggle />
               <LanguageSwitcher compact />
               {principal ? (
@@ -171,5 +175,6 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
         <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       </div>
     </ContextPanelHostProvider>
+    </LiveEventsProvider>
   );
 }

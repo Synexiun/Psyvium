@@ -162,7 +162,7 @@ describe('SchedulingService.updateAppointmentStatus', () => {
     );
   });
 
-  it('does not emit NoShowRecorded for a non-NO_SHOW status change', async () => {
+  it('does not emit NoShowRecorded for a non-NO_SHOW status change, but does emit the real-time AppointmentStatusChanged event', async () => {
     const { svc, bus } = makeService({
       appointment: {
         findFirst: jest.fn().mockResolvedValue(appointmentRow),
@@ -173,7 +173,34 @@ describe('SchedulingService.updateAppointmentStatus', () => {
 
     await svc.updateAppointmentStatus(psychologistPrincipal, 'appt_1', { status: 'CONFIRMED' as const });
 
-    expect(bus.publish).not.toHaveBeenCalled();
+    expect(bus.publish).not.toHaveBeenCalledWith(
+      'appointment.no_show_recorded',
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(bus.publish).toHaveBeenCalledWith(
+      'appointment.status_changed',
+      'tenant_demo',
+      expect.objectContaining({ appointmentId: 'appt_1', status: 'CONFIRMED' }),
+    );
+  });
+
+  it('emits AppointmentStatusChanged alongside NoShowRecorded on a NO_SHOW transition', async () => {
+    const { svc, bus } = makeService({
+      appointment: {
+        findFirst: jest.fn().mockResolvedValue(appointmentRow),
+        findMany: jest.fn(),
+        update: jest.fn().mockResolvedValue({ ...appointmentRow, status: 'NO_SHOW' }),
+      },
+    });
+
+    await svc.updateAppointmentStatus(psychologistPrincipal, 'appt_1', { status: 'NO_SHOW' as const });
+
+    expect(bus.publish).toHaveBeenCalledWith(
+      'appointment.status_changed',
+      'tenant_demo',
+      expect.objectContaining({ appointmentId: 'appt_1', status: 'NO_SHOW' }),
+    );
   });
 });
 

@@ -17,3 +17,4 @@ export * from './dto/risk';
 export * from './dto/scheduling';
 export * from './dto/finance';
 export * from './dto/analytics';
+export * from './dto/realtime';

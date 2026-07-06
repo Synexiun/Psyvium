@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { AiAgent, HumanDecision, type MatchCandidate } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { EventBus, Events } from '../../common/events/event-bus.service';
 
 /**
  * The AI Gateway is a GOVERNED bounded context (ADR-007). Rules enforced here:
@@ -24,7 +25,10 @@ export class AiGatewayService {
   private readonly apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.AI_GATEWAY_API_KEY ?? '';
   private client: Anthropic | null = null;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly bus: EventBus,
+  ) {}
 
   /** True when a real model can be called. */
   get aiConfigured(): boolean {
@@ -200,6 +204,17 @@ export class AiGatewayService {
           linkedEntityId: input.linkedEntityId,
         },
       });
+
+      // Real-time layer (SP3): the dashboard's PENDING human-decision queue
+      // refreshes live. Only ids/refs/status are published — the AI output
+      // itself never crosses the socket (PHI minimization).
+      await this.bus.publish(Events.AIRecommendationCreated, input.tenantId, {
+        recommendationId: rec.id,
+        agent: input.agent,
+        linkedEntityType: input.linkedEntityType,
+        linkedEntityId: input.linkedEntityId,
+      });
+
       return rec.id;
     } catch (err) {
       this.logger.warn(`could not log AI recommendation: ${(err as Error).message}`);

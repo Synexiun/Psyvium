@@ -12,6 +12,15 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// PRODUCTION NOTE (SP3 — real-time layer): the hot paths this schema indexes
+// for (risk board polling→push, appointment status, AI recommendation queue)
+// are now also driven by live Socket.IO pushes off the EventBus, so read
+// traffic is bursty around tenant activity rather than smooth. Production
+// should sit behind a pooled, managed Postgres (PgBouncer in transaction
+// mode, or a managed pooler such as Neon/Supabase's built-in pgbouncer) so a
+// burst of concurrent dashboard reloads never exhausts direct connections.
+// This is a deployment/infra concern, not a schema change — nothing here
+// provisions or assumes a specific provider.
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -368,17 +377,17 @@ model RoleAssignment {
 // Group B — People
 // ─────────────────────────────────────────────────────────────
 model Client {
-  id                String    @id @default(cuid())
+  id                String       @id @default(cuid())
   tenantId          String
-  userId            String    @unique
-  user              User      @relation("UserClient", fields: [userId], references: [id])
-  demographics      Json      @default("{}") // dob, sex, gender, address
-  preferredLanguage String    @default("en")
+  userId            String       @unique
+  user              User         @relation("UserClient", fields: [userId], references: [id])
+  demographics      Json         @default("{}") // dob, sex, gender, address
+  preferredLanguage String       @default("en")
   culturalContext   String?
   riskLevel         SeverityBand @default(LOW)
-  status            String    @default("active")
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  status            String       @default("active")
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
   deletedAt         DateTime?
 
   emergencyContacts   EmergencyContact[]
@@ -426,43 +435,43 @@ model Consent {
 }
 
 model Psychologist {
-  id               String   @id @default(cuid())
+  id               String    @id @default(cuid())
   tenantId         String
-  userId           String   @unique
-  user             User     @relation("UserPsychologist", fields: [userId], references: [id])
+  userId           String    @unique
+  user             User      @relation("UserPsychologist", fields: [userId], references: [id])
   specialties      String[]
   languages        String[]
   bio              String?
-  yearsExperience  Int      @default(0)
-  acceptingClients Boolean  @default(true)
-  caseloadCap      Int      @default(30)
-  currentCaseload  Int      @default(0)
-  outcomeIndex     Float    @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  yearsExperience  Int       @default(0)
+  acceptingClients Boolean   @default(true)
+  caseloadCap      Int       @default(30)
+  currentCaseload  Int       @default(0)
+  outcomeIndex     Float     @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
   deletedAt        DateTime?
 
-  credentials      Credential[]
-  contracts        Contract[]
-  assignments      Assignment[]
-  appointments     Appointment[]
-  payouts          Payout[]
+  credentials       Credential[]
+  contracts         Contract[]
+  assignments       Assignment[]
+  appointments      Appointment[]
+  payouts           Payout[]
   availabilitySlots AvailabilitySlot[]
 
   @@index([tenantId, acceptingClients])
 }
 
 model Credential {
-  id                 String    @id @default(cuid())
+  id                 String       @id @default(cuid())
   psychologistId     String
   psychologist       Psychologist @relation(fields: [psychologistId], references: [id])
   licenseNumber      String
   jurisdiction       String
   issuingBody        String
   expiresAt          DateTime?
-  verificationStatus String    @default("pending")
-  malpracticeStatus  String    @default("unknown")
-  createdAt          DateTime  @default(now())
+  verificationStatus String       @default("pending")
+  malpracticeStatus  String       @default("unknown")
+  createdAt          DateTime     @default(now())
 
   @@index([psychologistId])
 }
@@ -611,18 +620,18 @@ model Appointment {
 }
 
 model Session {
-  id                        String          @id @default(cuid())
-  tenantId                  String
-  appointmentId             String          @unique
-  appointment               Appointment     @relation(fields: [appointmentId], references: [id])
-  startedAt                 DateTime?
-  endedAt                   DateTime?
-  modality                  SessionModality @default(VIDEO)
-  waitingRoomJoinedAt       DateTime?
-  emergencyLocationConfirmed Boolean        @default(false)
-  recordingConsentId        String?
-  recordingUrl              String?
-  createdAt                 DateTime        @default(now())
+  id                         String          @id @default(cuid())
+  tenantId                   String
+  appointmentId              String          @unique
+  appointment                Appointment     @relation(fields: [appointmentId], references: [id])
+  startedAt                  DateTime?
+  endedAt                    DateTime?
+  modality                   SessionModality @default(VIDEO)
+  waitingRoomJoinedAt        DateTime?
+  emergencyLocationConfirmed Boolean         @default(false)
+  recordingConsentId         String?
+  recordingUrl               String?
+  createdAt                  DateTime        @default(now())
 
   notes         SessionNote[]
   interventions Intervention[]
@@ -631,16 +640,16 @@ model Session {
 }
 
 model SessionNote {
-  id                String   @id @default(cuid())
+  id                String    @id @default(cuid())
   tenantId          String
   sessionId         String
-  session           Session  @relation(fields: [sessionId], references: [id])
-  content           Json     @default("{}") // structured SOAP/DAP
+  session           Session   @relation(fields: [sessionId], references: [id])
+  content           Json      @default("{}") // structured SOAP/DAP
   continuitySummary String?
   signedAt          DateTime?
   signedBy          String?
-  version           Int      @default(1)
-  createdAt         DateTime @default(now())
+  version           Int       @default(1)
+  createdAt         DateTime  @default(now())
 
   @@index([sessionId])
 }
@@ -703,26 +712,26 @@ model Goal {
 }
 
 model Intervention {
-  id                 String           @id @default(cuid())
-  tenantId           String
-  planId             String?
-  plan               TreatmentPlan?   @relation(fields: [planId], references: [id])
-  goalId             String?
-  goal               Goal?            @relation(fields: [goalId], references: [id])
-  sessionId          String?
-  session            Session?         @relation(fields: [sessionId], references: [id])
-  clinicalTarget     String
-  type               InterventionType
-  modality           String           @default("individual")
-  durationMin        Int?
-  rationale          String?
-  clientResponse     String?
-  followUpDate       DateTime?
+  id                  String           @id @default(cuid())
+  tenantId            String
+  planId              String?
+  plan                TreatmentPlan?   @relation(fields: [planId], references: [id])
+  goalId              String?
+  goal                Goal?            @relation(fields: [goalId], references: [id])
+  sessionId           String?
+  session             Session?         @relation(fields: [sessionId], references: [id])
+  clinicalTarget      String
+  type                InterventionType
+  modality            String           @default("individual")
+  durationMin         Int?
+  rationale           String?
+  clientResponse      String?
+  followUpDate        DateTime?
   effectivenessRating Int?
-  adverseEffects     String?
-  aiRecommendationId String?
-  clinicianApproved  Boolean          @default(false)
-  createdAt          DateTime         @default(now())
+  adverseEffects      String?
+  aiRecommendationId  String?
+  clinicianApproved   Boolean          @default(false)
+  createdAt           DateTime         @default(now())
 
   homework Homework[]
 
@@ -761,18 +770,18 @@ model OutcomeMeasure {
 }
 
 model RiskFlag {
-  id        String     @id @default(cuid())
+  id        String       @id @default(cuid())
   tenantId  String
   clientId  String
-  client    Client     @relation(fields: [clientId], references: [id])
+  client    Client       @relation(fields: [clientId], references: [id])
   intakeId  String?
-  intake    Intake?    @relation(fields: [intakeId], references: [id])
+  intake    Intake?      @relation(fields: [intakeId], references: [id])
   type      RiskType
   severity  SeverityBand
   source    RiskSource
   evidence  String?
-  status    RiskStatus @default(OPEN)
-  createdAt DateTime   @default(now())
+  status    RiskStatus   @default(OPEN)
+  createdAt DateTime     @default(now())
 
   escalations Escalation[]
 
@@ -795,17 +804,17 @@ model Escalation {
 }
 
 model SafetyPlan {
-  id                  String   @id @default(cuid())
-  tenantId            String
-  clientId            String
-  client              Client   @relation(fields: [clientId], references: [id])
-  warningSigns        String[]
-  copingStrategies    String[]
-  supportContacts     Json     @default("[]")
-  professionalContacts Json    @default("[]")
-  environmentSafety   String?
-  version             Int      @default(1)
-  createdAt           DateTime @default(now())
+  id                   String   @id @default(cuid())
+  tenantId             String
+  clientId             String
+  client               Client   @relation(fields: [clientId], references: [id])
+  warningSigns         String[]
+  copingStrategies     String[]
+  supportContacts      Json     @default("[]")
+  professionalContacts Json     @default("[]")
+  environmentSafety    String?
+  version              Int      @default(1)
+  createdAt            DateTime @default(now())
 
   @@index([clientId])
 }
@@ -815,14 +824,14 @@ model SafetyPlan {
 /// a BreakGlassInvoked domain event so the tenant DPO can be alerted. Never
 /// updated — a fresh grant is a fresh row.
 model BreakGlassGrant {
-  id         String   @id @default(cuid())
-  tenantId   String
-  clientId   String
-  client     Client   @relation(fields: [clientId], references: [id])
-  invokedBy  String
-  reason     String
-  grantedAt  DateTime @default(now())
-  expiresAt  DateTime
+  id        String   @id @default(cuid())
+  tenantId  String
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id])
+  invokedBy String
+  reason    String
+  grantedAt DateTime @default(now())
+  expiresAt DateTime
 
   @@index([tenantId, clientId])
 }
@@ -851,10 +860,10 @@ model Item {
   questionnaireVersion   QuestionnaireVersion? @relation(fields: [questionnaireVersionId], references: [id])
   stem                   String
   responseOptions        Json                  @default("[]")
-  discrimination         Float?                // a
-  difficulty             Float?                // b
-  guessing               Float?                // c
-  dif                    Json?                 // differential item functioning
+  discrimination         Float? // a
+  difficulty             Float? // b
+  guessing               Float? // c
+  dif                    Json? // differential item functioning
   active                 Boolean               @default(true)
   orderIndex             Int                   @default(0)
 
@@ -876,15 +885,15 @@ model Questionnaire {
 }
 
 model QuestionnaireVersion {
-  id              String   @id @default(cuid())
+  id              String        @id @default(cuid())
   questionnaireId String
   questionnaire   Questionnaire @relation(fields: [questionnaireId], references: [id])
   version         String
-  norms           Json     @default("{}")
-  cutoffs         Json     @default("{}")
-  validityScales  Json     @default("{}")
-  published       Boolean  @default(false)
-  createdAt       DateTime @default(now())
+  norms           Json          @default("{}")
+  cutoffs         Json          @default("{}")
+  validityScales  Json          @default("{}")
+  published       Boolean       @default(false)
+  createdAt       DateTime      @default(now())
 
   items     Item[]
   responses QuestionnaireResponse[]
@@ -893,17 +902,17 @@ model QuestionnaireVersion {
 }
 
 model QuestionnaireResponse {
-  id                 String             @id @default(cuid())
+  id                 String               @id @default(cuid())
   tenantId           String
   versionId          String
   version            QuestionnaireVersion @relation(fields: [versionId], references: [id])
   clientId           String
-  client             Client             @relation(fields: [clientId], references: [id])
-  answers            Json               @default("{}")
-  administrationMode AdministrationMode @default(STATIC)
-  validityFlags      Json               @default("{}")
+  client             Client               @relation(fields: [clientId], references: [id])
+  answers            Json                 @default("{}")
+  administrationMode AdministrationMode   @default(STATIC)
+  validityFlags      Json                 @default("{}")
   responseTimeMs     Int?
-  completedAt        DateTime           @default(now())
+  completedAt        DateTime             @default(now())
 
   score PsychometricScore?
 
@@ -912,33 +921,33 @@ model QuestionnaireResponse {
 }
 
 model PsychometricScore {
-  id                String                @id @default(cuid())
-  tenantId          String
-  responseId        String                @unique
-  response          QuestionnaireResponse @relation(fields: [responseId], references: [id])
-  rawScore          Float?
-  thetaEstimate     Float?
-  standardError     Float?
-  percentile        Float?
-  severityBand      SeverityBand?
-  interpretation    String?
+  id                 String                @id @default(cuid())
+  tenantId           String
+  responseId         String                @unique
+  response           QuestionnaireResponse @relation(fields: [responseId], references: [id])
+  rawScore           Float?
+  thetaEstimate      Float?
+  standardError      Float?
+  percentile         Float?
+  severityBand       SeverityBand?
+  interpretation     String?
   reliabilityAtTheta Float?
-  createdAt         DateTime              @default(now())
+  createdAt          DateTime              @default(now())
 }
 
 // ─────────────────────────────────────────────────────────────
 // Group E2 — Wearables (registry in Postgres; raw metrics belong in TimescaleDB)
 // ─────────────────────────────────────────────────────────────
 model WearableDevice {
-  id         String   @id @default(cuid())
-  tenantId   String
-  clientId   String
-  client     Client   @relation(fields: [clientId], references: [id])
-  provider   String // apple_health | google_fit | fitbit | oura | garmin
-  externalId String?
-  consentId  String? // gated by an explicit Consent
-  connectedAt DateTime @default(now())
-  lastSyncAt DateTime?
+  id          String    @id @default(cuid())
+  tenantId    String
+  clientId    String
+  client      Client    @relation(fields: [clientId], references: [id])
+  provider    String // apple_health | google_fit | fitbit | oura | garmin
+  externalId  String?
+  consentId   String? // gated by an explicit Consent
+  connectedAt DateTime  @default(now())
+  lastSyncAt  DateTime?
 
   metrics WearableMetric[]
 
@@ -946,7 +955,7 @@ model WearableDevice {
 }
 
 model WearableMetric {
-  id         String   @id @default(cuid())
+  id         String         @id @default(cuid())
   tenantId   String
   deviceId   String
   device     WearableDevice @relation(fields: [deviceId], references: [id])
@@ -974,13 +983,13 @@ model Thread {
 }
 
 model Message {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   threadId  String
-  thread    Thread   @relation(fields: [threadId], references: [id])
+  thread    Thread    @relation(fields: [threadId], references: [id])
   senderId  String
   body      String
   readAt    DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   @@index([threadId])
 }
@@ -1037,23 +1046,23 @@ model Invoice {
 }
 
 model Payment {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   tenantId   String
   invoiceId  String
-  invoice    Invoice  @relation(fields: [invoiceId], references: [id])
-  amount     Decimal  @db.Decimal(18, 4)
-  currency   String   @default("USD")
-  method     String   @default("card")
+  invoice    Invoice   @relation(fields: [invoiceId], references: [id])
+  amount     Decimal   @db.Decimal(18, 4)
+  currency   String    @default("USD")
+  method     String    @default("card")
   pspRef     String?
-  status     String   @default("pending")
+  status     String    @default("pending")
   capturedAt DateTime?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime  @default(now())
 
   @@index([invoiceId])
 }
 
 model LedgerAccount {
-  id       String  @id @default(cuid())
+  id       String @id @default(cuid())
   tenantId String
   code     String
   name     String
@@ -1080,17 +1089,17 @@ model AccountingEntry {
 }
 
 model RevenueShareRule {
-  id                String   @id @default(cuid())
-  tenantId          String
-  contractId        String
-  contract          Contract @relation(fields: [contractId], references: [id])
-  basis             String   @default("REVENUE") // SESSION|REVENUE|GROUP_SPLIT
-  pct               Float    @default(0)
-  seniorOverridePct Float    @default(0)
-  supervisorSharePct Float   @default(0)
-  clinicSharePct    Float    @default(0)
-  referralSharePct  Float    @default(0)
-  countryRules      Json     @default("{}")
+  id                 String   @id @default(cuid())
+  tenantId           String
+  contractId         String
+  contract           Contract @relation(fields: [contractId], references: [id])
+  basis              String   @default("REVENUE") // SESSION|REVENUE|GROUP_SPLIT
+  pct                Float    @default(0)
+  seniorOverridePct  Float    @default(0)
+  supervisorSharePct Float    @default(0)
+  clinicSharePct     Float    @default(0)
+  referralSharePct   Float    @default(0)
+  countryRules       Json     @default("{}")
 
   @@index([contractId])
 }
@@ -1162,6 +1171,9 @@ model AIRecommendation {
 
   @@index([tenantId, agent])
   @@index([linkedEntityType, linkedEntityId])
+  // Powers the PENDING human-decision queue (ADR-007 gate) and the SP3
+  // real-time AI recommendation feed — both filter by (tenantId, humanDecision).
+  @@index([tenantId, humanDecision])
 }
 
 /// Append-only, hash-chained audit log. Never updated or deleted.

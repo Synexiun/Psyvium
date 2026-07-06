@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { EventsModule } from './common/events/events.module';
 import { AuditModule } from './common/audit/audit.module';
+import { RealtimeModule } from './common/realtime/realtime.module';
 import { AiGatewayModule } from './modules/ai-gateway/ai-gateway.module';
 import { AuthModule } from './auth/auth.module';
 import { CredentialingModule } from './modules/credentialing/credentialing.module';
@@ -26,8 +27,8 @@ import { HealthModule } from './health/health.module';
 
 /**
  * The modular monolith root. Each bounded context is a Nest module. Cross-cutting
- * infrastructure (Prisma, EventBus, Audit, AI Gateway) is global so contexts
- * depend on stable ports, not on each other's internals.
+ * infrastructure (Prisma, EventBus, Audit, Realtime, AI Gateway) is global so
+ * contexts depend on stable ports, not on each other's internals.
  *
  * Phase 1 vertical slice active here: Auth → Intake/Screening → Matching/Assignment
  * (+ AI Gateway, Audit). Remaining 24 contexts are documented and scaffolded to
@@ -40,6 +41,7 @@ import { HealthModule } from './health/health.module';
     PrismaModule,
     EventsModule,
     AuditModule,
+    RealtimeModule,
     AiGatewayModule,
     // Bounded contexts (Phase 1)
     AuthModule,

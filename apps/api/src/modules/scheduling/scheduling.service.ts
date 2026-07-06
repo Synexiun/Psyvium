@@ -267,6 +267,17 @@ export class SchedulingService {
       });
     }
 
+    // Real-time layer (SP3): every status transition is pushed (booked is
+    // covered separately by AppointmentBooked); the bridge derives
+    // "changed" vs "cancelled" from `status` so live dashboards refresh
+    // without polling.
+    await this.bus.publish(Events.AppointmentStatusChanged, principal.tenantId, {
+      appointmentId: updated.id,
+      clientId: updated.clientId,
+      psychologistId: updated.psychologistId,
+      status: updated.status,
+    });
+
     return this.toAppointmentDto(updated as unknown as AppointmentRow);
   }
 

@@ -168,6 +168,15 @@ export class RiskService {
       after: { assignedTo: updated.assignedTo },
     });
 
+    if (updated.assignedTo) {
+      await this.bus.publish(Events.EscalationAssigned, principal.tenantId, {
+        escalationId: updated.id,
+        riskFlagId: updated.riskFlagId,
+        clientId: updated.riskFlag.clientId,
+        assignedTo: updated.assignedTo,
+      });
+    }
+
     return this.toEscalationDto(updated as EscalationRow);
   }
 
