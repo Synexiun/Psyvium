@@ -81,11 +81,11 @@ Three read-only clinical auditors graded the clinical sections against the publi
 - [x] Follow-up/caring contacts (`5c102ed`): followUpDueAt REQUIRED for HIGH/SEVERE resolutions + completion endpoint; board shows resolved-awaiting-follow-up (`d54f5b9`).
 - [x] Structured resolution (`5c102ed`): riskLevelAtResolution + interventionsApplied[] + followUpDueAt.
 - [x] Stanley-Brown-complete SafetyPlan (`5c102ed`+`d54f5b9`): distraction/help split, structured means-restriction, crisisLineInfo, client acknowledgment, client-visible copy (GET /risk/safety-plans/me + home-page card with real tel/sms/chat links).
-- [ ] Location confirmation + jurisdiction-aware emergency numbers (988 is US-only; APA telepsychology guidance).
+- [x] Jurisdiction-aware crisis resources (`4a54b55`): country→line registry + GET /risk/crisis-resources; emergency card renders the resolved jurisdiction's real numbers (988 only when US-confirmed). Session-start location confirmation = telehealth-wave follow-up.
 - [x] Coded `Formulation` model (`ae5587a`): ICD+DSM codes, PROVISIONAL/CONFIRMED/RULED_OUT, hypothesis lineage, clinician-only, critical-audited, no AI write path.
 - [x] Golden-thread enforcement (`ae5587a`): note with an active plan must reference planId + ≥1 valid goalId (400 lists valid goals); sessionSnapshot + riskStatusAtNote; no-active-plan honestly flagged.
 - [x] `AI_ASSISTED_ANALYSIS` consent gate (`ba97ee6`): model never invoked without a live grant (withheldReason recorded, honest fallback); never intake-blocking. Client-facing disclosure surface = follow-up (web).
-- [~] Real item content for VPSY-DEP-SCREEN-9 + band fixes + `ItemTranslation` w/ provenance — *in flight*.
+- [x] Real item content (`2f54183`): 9 original stems seeded; PHQ-9-convention subBands restored; GAD-7 band drift fixed to Spitzer 2006; ItemTranslation w/ back-translation provenance — only 'validated' served as localized, else honest 'unvalidated-source-language'.
 
 **P1 — clinical quality**
 - [x] SMART-goal enforcement + review cadence + overdue tracking (`e5076b6`). Client acknowledgment on TreatmentPlan = follow-up.
@@ -94,7 +94,7 @@ Three read-only clinical auditors graded the clinical sections against the publi
 - [x] Reliable Change Index (`e5076b6`): Jacobson-Truax w/ cited PHQ-9/GAD-7 psychometrics; honest 'unknown-reliability' fallback.
 - [ ] Validate-or-replace the intake composite risk score (recentLoss now feeds it — the validation study remains).
 - [ ] DIF pipeline (min. Mantel-Haenszel); TIF/conditional-SE reporting; LicenseGrant 403 gate.
-- [ ] Post-incident review record (reviewer/co-sign/action items) for SEVERE resolutions + break-glass grants; transition-of-care/step-down record.
+- [x] Post-incident review (`4a54b55`): IncidentReview (reviewer/co-sign/action items) + pending "never ages silently" list for SEVERE resolutions + break-glass; deliberately not a resolution gate. Transition-of-care record = follow-up.
 - [ ] AI: persist the de-identified signal bundle (not just hash) for true replay; promote approvedForProduction/approvedBy to real columns; soften the FDA time-sensitivity claim for the crisis agent pending regulatory review.
 
 ## WAVE F — In-house telehealth video (infra)
