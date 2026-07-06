@@ -1,6 +1,8 @@
 # 01 — Bounded Contexts
 
-VPSY OS is decomposed into **28 bounded contexts**. Each is a hard module boundary in `apps/api/src/modules/<context>`. Contexts never import each other's internals — they interact only via published contracts (`packages/contracts`) and domain events.
+> **Canonical numbering:** context **numbers** in this document are historical and were later superseded. The authoritative numbering is the **30-context scheme in [`13-roadmap-and-phases.md`](13-roadmap-and-phases.md)**, which `BUILD-STATUS.md` and `10-10-PROGRAM.md` key off. When a task or status references "context N," use the roadmap's numbering — not the numbers in the map below. (Reconciling the two schemes into one shared table is a tracked doc task.)
+
+VPSY OS is decomposed into **~30 bounded contexts**. Each is a hard module boundary in `apps/api/src/modules/<context>`. Contexts never import each other's internals — they interact only via published contracts (`packages/contracts`) and domain events.
 
 ## Context map
 
