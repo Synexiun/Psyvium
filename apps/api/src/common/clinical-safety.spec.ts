@@ -8,6 +8,22 @@ import { PsychometricsService } from '../modules/psychometrics/psychometrics.ser
 import { ScoringService } from '../modules/psychometrics/scoring.service';
 import { IrtScoringService } from '../modules/psychometrics/irt-scoring.service';
 import { NationalAnalyticsService } from '../modules/analytics/national-analytics.service';
+import { FieldCipherService } from './crypto/field-cipher';
+import type { FieldKeyProvider } from './crypto/field-key-provider';
+
+/**
+ * WAVE D P0 — RiskService now takes a FieldCipherService (field-level PHI
+ * encryption, docs/technical/06-security-and-rbac.md §7). Neither the
+ * escalation-resolution nor break-glass gates below touch SafetyPlan fields,
+ * so a disabled (no VPSY_FIELD_KEY) instance keeps these clinical-safety
+ * invariants exercising the exact same byte-identical passthrough behavior
+ * they always have. Encryption-specific coverage lives in
+ * modules/risk/risk.service.spec.ts and common/crypto/field-cipher.spec.ts.
+ */
+function disabledCipher(): FieldCipherService {
+  const noKeyProvider: FieldKeyProvider = { getKey: async () => null };
+  return new FieldCipherService(noKeyProvider);
+}
 
 /**
  * Clinical-safety suite (docs/technical/12-testing-strategy.md §6).
@@ -177,7 +193,7 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
       };
       const audit = { record: jest.fn() };
       const bus = { publish: jest.fn() };
-      return { svc: new RiskService(prisma as any, audit as any, bus as any), prisma, audit };
+      return { svc: new RiskService(prisma as any, audit as any, bus as any, disabledCipher()), prisma, audit };
     }
 
     it('rejects resolution when no human principal is present — an AI/automation actor can never resolve an escalation', async () => {
@@ -222,7 +238,7 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
       };
       const audit = { record: jest.fn() };
       const bus = { publish: jest.fn() };
-      return { svc: new RiskService(prisma as any, audit as any, bus as any), audit, bus };
+      return { svc: new RiskService(prisma as any, audit as any, bus as any, disabledCipher()), audit, bus };
     }
 
     it('rejects a break-glass request whose reason is missing or under 10 characters', async () => {

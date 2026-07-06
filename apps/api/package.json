@@ -41,6 +41,7 @@
     "@vpsy/database": "workspace:*",
     "argon2": "^0.41.1",
     "ioredis": "^5.11.1",
+    "libsodium-wrappers": "^0.8.4",
     "livekit-server-sdk": "^2.16.0",
     "otplib": "^13.4.1",
     "reflect-metadata": "^0.2.2",

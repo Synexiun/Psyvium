@@ -9,6 +9,7 @@ import type {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
+import { FieldCipherService } from '../../common/crypto/field-cipher';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 
 type NoteRow = {
@@ -48,6 +49,14 @@ type NoteRow = {
  * SIGNED note, any further note for that session is a post-signature
  * addendum and `amendmentReason` is required (400 otherwise) — no silent
  * addenda.
+ *
+ * WAVE D P0 — field-level PHI encryption (docs/technical/06-security-and-rbac.md
+ * §7): `content` (the highest-value PHI field on this context) is encrypted
+ * at rest via `FieldCipherService` whenever `VPSY_FIELD_KEY` is configured
+ * (activate-on-config; plaintext behavior is byte-identical when it isn't).
+ * Encryption/decryption happens ONLY in `create()` (write) and `toDto()`
+ * (every read path — `create`, `listBySession`, `sign` all return through
+ * it), so the controller/DTO layer is completely unaware ciphertext exists.
  */
 @Injectable()
 export class ClinicalDocumentationService {
@@ -56,6 +65,7 @@ export class ClinicalDocumentationService {
     private readonly audit: AuditService,
     private readonly bus: EventBus,
     private readonly ai: AiGatewayService,
+    private readonly cipher: FieldCipherService,
   ) {}
 
   async create(principal: AuthPrincipal, input: CreateSessionNoteInput): Promise<SessionNoteDto> {
@@ -136,11 +146,13 @@ export class ClinicalDocumentationService {
       ...(goldenThreadFlag ? { goldenThread: goldenThreadFlag } : {}),
     };
 
+    const encryptedContent = await this.cipher.encryptJson(input.content, principal.tenantId);
+
     const note = await this.prisma.sessionNote.create({
       data: {
         tenantId: principal.tenantId,
         sessionId: input.sessionId,
-        content: input.content as any,
+        content: encryptedContent as any,
         continuitySummary: input.continuitySummary,
         version: (latest?.version ?? 0) + 1,
         planId,
@@ -162,7 +174,7 @@ export class ClinicalDocumentationService {
       after: { sessionId: input.sessionId, version: note.version, goldenThread: goldenThreadFlag ?? 'anchored' },
     });
 
-    return this.toDto(note);
+    return this.toDto(note, principal.tenantId);
   }
 
   async listBySession(principal: AuthPrincipal, sessionId: string): Promise<SessionNoteDto[]> {
@@ -170,7 +182,7 @@ export class ClinicalDocumentationService {
       where: { tenantId: principal.tenantId, sessionId },
       orderBy: { version: 'desc' },
     });
-    return notes.map((n) => this.toDto(n));
+    return Promise.all(notes.map((n) => this.toDto(n, principal.tenantId)));
   }
 
   async sign(principal: AuthPrincipal, noteId: string): Promise<SessionNoteDto> {
@@ -199,7 +211,7 @@ export class ClinicalDocumentationService {
       signedBy: principal.userId,
     });
 
-    return this.toDto(signed);
+    return this.toDto(signed, principal.tenantId);
   }
 
   /**
@@ -227,11 +239,12 @@ export class ClinicalDocumentationService {
     });
   }
 
-  private toDto(note: NoteRow): SessionNoteDto {
+  private async toDto(note: NoteRow, tenantId: string): Promise<SessionNoteDto> {
+    const content = await this.cipher.decryptJson(note.content, tenantId);
     return {
       id: note.id,
       sessionId: note.sessionId,
-      content: note.content as SessionNoteDto['content'],
+      content: content as SessionNoteDto['content'],
       continuitySummary: note.continuitySummary,
       signedAt: note.signedAt ? note.signedAt.toISOString() : null,
       signedBy: note.signedBy,

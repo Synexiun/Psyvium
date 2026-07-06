@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ScheduleModule } from '@nestjs/schedule';
+import { FieldCipherModule } from '../../common/crypto/field-cipher.module';
 import { RiskController } from './risk.controller';
 import { RiskService } from './risk.service';
 import { RiskSlaService } from './risk-sla.service';
@@ -13,7 +14,7 @@ import { RiskSlaService } from './risk-sla.service';
  * scoped to the Risk & Crisis module.
  */
 @Module({
-  imports: [JwtModule.register({}), ScheduleModule.forRoot()],
+  imports: [JwtModule.register({}), ScheduleModule.forRoot(), FieldCipherModule],
   controllers: [RiskController],
   providers: [RiskService, RiskSlaService],
 })

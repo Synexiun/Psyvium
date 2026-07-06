@@ -1,6 +1,20 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { AuthPrincipal } from '@vpsy/contracts';
 import { ClinicalDocumentationService } from './clinical-documentation.service';
+import { FieldCipherService } from '../../common/crypto/field-cipher';
+import type { FieldKeyProvider } from '../../common/crypto/field-key-provider';
+
+/** VPSY_FIELD_KEY unset — disabled-mode cipher whose methods are byte-identical passthroughs. */
+function disabledCipher(): FieldCipherService {
+  const noKeyProvider: FieldKeyProvider = { getKey: async () => null };
+  return new FieldCipherService(noKeyProvider);
+}
+
+/** A fixed, valid 32-byte test key so keyed-mode tests are deterministic. */
+function keyedCipher(key: Buffer = Buffer.alloc(32, 7)): FieldCipherService {
+  const provider: FieldKeyProvider = { getKey: async () => key };
+  return new FieldCipherService(provider);
+}
 
 /**
  * Wave C — Session-Note Assistant wiring (docs/technical/05-ai-clinical-layer.md
@@ -36,7 +50,7 @@ function makeService() {
       recommendationId: 'rec_1',
     }),
   };
-  const svc = new ClinicalDocumentationService(prisma as any, audit as any, bus as any, ai as any);
+  const svc = new ClinicalDocumentationService(prisma as any, audit as any, bus as any, ai as any, disabledCipher());
   return { svc, prisma, audit, bus, ai };
 }
 
@@ -134,7 +148,7 @@ describe('ClinicalDocumentationService.create — golden-thread enforcement (WAV
     const audit = { record: jest.fn() };
     const bus = { publish: jest.fn() };
     const ai = { summarizeSessionNote: jest.fn() };
-    const svc = new ClinicalDocumentationService(prisma as any, audit as any, bus as any, ai as any);
+    const svc = new ClinicalDocumentationService(prisma as any, audit as any, bus as any, ai as any, disabledCipher());
     return { svc, prisma, audit, bus };
   }
 
@@ -245,5 +259,101 @@ describe('ClinicalDocumentationService.create — golden-thread enforcement (WAV
     await expect(
       svc.create(principal, { sessionId: 'sess_1', content, formulationId: 'form_missing' } as any),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+/**
+ * WAVE D P0 — field-level PHI encryption (docs/technical/06-security-and-rbac.md
+ * §7): `SessionNote.content` is the highest-value PHI field on this context.
+ * These pin the service-level contract on top of the FieldCipherService unit
+ * tests in common/crypto/field-cipher.spec.ts.
+ */
+describe('ClinicalDocumentationService — field-level encryption of content', () => {
+  const content = { format: 'SOAP' as const, subjective: 'Client endorsed passive suicidal ideation.', objective: 'o', assessment: 'a', plan: 'p' };
+
+  function makeServiceWithCipher(cipher: FieldCipherService) {
+    const prisma = {
+      session: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'sess_1',
+          tenantId: 'tenant_demo',
+          startedAt: new Date('2026-01-01T10:00:00Z'),
+          endedAt: new Date('2026-01-01T10:50:00Z'),
+          modality: 'VIDEO',
+          appointment: { clientId: 'client_1', startsAt: new Date('2026-01-01T10:00:00Z'), client: { riskLevel: 'LOW' } },
+        }),
+      },
+      sessionNote: {
+        findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+        findMany: jest.fn(),
+        create: jest.fn().mockImplementation(({ data }: any) => ({ id: 'note_1', createdAt: new Date(), ...data })),
+      },
+      treatmentPlan: { findFirst: jest.fn().mockResolvedValue(null) },
+      formulation: { findFirst: jest.fn() },
+    };
+    const audit = { record: jest.fn() };
+    const bus = { publish: jest.fn() };
+    const ai = { summarizeSessionNote: jest.fn() };
+    const svc = new ClinicalDocumentationService(prisma as any, audit as any, bus as any, ai as any, cipher);
+    return { svc, prisma };
+  }
+
+  it('with a key configured: the row persisted to Prisma is ciphertext, but create() returns the decrypted content transparently', async () => {
+    const { svc, prisma } = makeServiceWithCipher(keyedCipher());
+
+    const result = await svc.create(principal, { sessionId: 'sess_1', content } as any);
+
+    // What actually went to Prisma.create is NOT plaintext.
+    const persisted = (prisma.sessionNote.create as jest.Mock).mock.calls[0][0].data.content;
+    expect(persisted).toMatchObject({ __vpsy_enc: 1, alg: 'xchacha20poly1305' });
+    expect(JSON.stringify(persisted)).not.toContain('suicidal');
+
+    // What the caller gets back is the plaintext DTO — controllers/DTOs never see ciphertext.
+    expect(result.content).toEqual(content);
+  });
+
+  it('round-trips through listBySession as well (every read path decrypts transparently)', async () => {
+    const { svc, prisma } = makeServiceWithCipher(keyedCipher());
+    await svc.create(principal, { sessionId: 'sess_1', content } as any);
+    const persistedNote = (prisma.sessionNote.create as jest.Mock).mock.results[0]!.value;
+    (prisma.sessionNote.findMany as jest.Mock).mockResolvedValue([persistedNote]);
+
+    const notes = await svc.listBySession(principal, 'sess_1');
+    expect(notes[0]!.content).toEqual(content);
+  });
+
+  it('disabled mode (no VPSY_FIELD_KEY): the persisted row is plaintext, byte-identical to pre-encryption behavior', async () => {
+    const { svc, prisma } = makeServiceWithCipher(disabledCipher());
+
+    const result = await svc.create(principal, { sessionId: 'sess_1', content } as any);
+
+    const persisted = (prisma.sessionNote.create as jest.Mock).mock.calls[0][0].data.content;
+    expect(persisted).toEqual(content); // no envelope — exactly what was passed in
+    expect(result.content).toEqual(content);
+  });
+
+  it('backward-compat passthrough: a pre-existing plaintext row is still readable once VPSY_FIELD_KEY is later configured', async () => {
+    const { svc, prisma } = makeServiceWithCipher(keyedCipher());
+    const legacyPlaintextNote = {
+      id: 'note_legacy',
+      sessionId: 'sess_1',
+      content, // never an envelope — written before the key existed
+      continuitySummary: null,
+      signedAt: null,
+      signedBy: null,
+      version: 1,
+      createdAt: new Date(),
+      planId: null,
+      goalIds: [],
+      formulationId: null,
+      riskStatusAtNote: null,
+      sessionSnapshot: null,
+      amendsVersionId: null,
+      amendmentReason: null,
+    };
+    (prisma.sessionNote.findMany as jest.Mock).mockResolvedValue([legacyPlaintextNote]);
+
+    const notes = await svc.listBySession(principal, 'sess_1');
+    expect(notes[0]!.content).toEqual(content);
   });
 });

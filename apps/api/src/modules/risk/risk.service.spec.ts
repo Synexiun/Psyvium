@@ -1,6 +1,20 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { SeverityBand, type AuthPrincipal } from '@vpsy/contracts';
 import { RiskService } from './risk.service';
+import { FieldCipherService } from '../../common/crypto/field-cipher';
+import type { FieldKeyProvider } from '../../common/crypto/field-key-provider';
+
+/** VPSY_FIELD_KEY unset — disabled-mode cipher whose methods are byte-identical passthroughs. */
+function disabledCipher(): FieldCipherService {
+  const noKeyProvider: FieldKeyProvider = { getKey: async () => null };
+  return new FieldCipherService(noKeyProvider);
+}
+
+/** A fixed, valid 32-byte test key so keyed-mode tests are deterministic. */
+function keyedCipher(key: Buffer = Buffer.alloc(32, 7)): FieldCipherService {
+  const provider: FieldKeyProvider = { getKey: async () => key };
+  return new FieldCipherService(provider);
+}
 
 /**
  * Phase 4 DoD (docs/technical/13-roadmap-and-phases.md): "Break-glass access
@@ -37,7 +51,7 @@ const escalationRow = {
   },
 };
 
-function makeService(overrides: Partial<Record<string, unknown>> = {}) {
+function makeService(overrides: Partial<Record<string, unknown>> = {}, cipher: FieldCipherService = disabledCipher()) {
   const prisma = {
     escalation: {
       findFirst: jest.fn().mockResolvedValue(escalationRow),
@@ -81,7 +95,7 @@ function makeService(overrides: Partial<Record<string, unknown>> = {}) {
   };
   const audit = { record: jest.fn() };
   const bus = { publish: jest.fn() };
-  const svc = new RiskService(prisma as any, audit as any, bus as any);
+  const svc = new RiskService(prisma as any, audit as any, bus as any, cipher);
   return { svc, prisma, audit, bus, prismaTx };
 }
 
@@ -490,5 +504,143 @@ describe('RiskService.createSafetyPlan', () => {
     expect(prisma.safetyPlan.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ version: 2 }) }),
     );
+  });
+});
+
+/**
+ * WAVE D P0 — field-level PHI encryption (docs/technical/06-security-and-rbac.md
+ * §7, PHI-Critical): SafetyPlan is the risk-side counterpart to the
+ * SessionNote.content coverage in clinical-documentation.service.spec.ts.
+ * Cipher-internal behavior (round-trip, cross-tenant AAD failure, disabled
+ * passthrough, malformed-key fail-fast) is pinned once in
+ * common/crypto/field-cipher.spec.ts; these tests pin the SERVICE-level wiring
+ * (write path encrypts, read path decrypts transparently, DTO shape unchanged).
+ */
+describe('RiskService — field-level encryption of SafetyPlan', () => {
+  const input = {
+    clientId: 'client_1',
+    warningSigns: ['Isolating from friends', 'Giving away possessions'],
+    copingStrategies: ['Call support contact', 'Go for a walk'],
+    supportContacts: ['Jordan (sister) 555-0100'],
+    professionalContacts: ['Dr. Lee 555-0200'],
+    environmentSafety: 'Firearms removed from the home by a family member.',
+  };
+
+  it('with a key configured: the row persisted to Prisma is ciphertext, but createSafetyPlan() returns decrypted plaintext', async () => {
+    const { svc, prisma } = makeService({}, keyedCipher());
+    (prisma.safetyPlan.create as jest.Mock).mockImplementation(({ data }: any) => ({
+      ...data,
+      id: 'plan_1',
+      createdAt: new Date(),
+    }));
+
+    const plan = await svc.createSafetyPlan(principal, input);
+
+    const persisted = (prisma.safetyPlan.create as jest.Mock).mock.calls[0][0].data;
+    // warningSigns/copingStrategies: String[] shim — single element, not the plaintext array.
+    expect(persisted.warningSigns).toHaveLength(1);
+    expect(JSON.stringify(persisted.warningSigns)).not.toContain('Isolating');
+    // supportContacts/professionalContacts: Json envelope, not the plaintext array.
+    expect(persisted.supportContacts).toMatchObject({ __vpsy_enc: 1, alg: 'xchacha20poly1305' });
+    expect(JSON.stringify(persisted.supportContacts)).not.toContain('Jordan');
+    // environmentSafety: stringified envelope in the text column.
+    expect(persisted.environmentSafety).not.toContain('Firearms');
+
+    // The caller gets plaintext back — controllers/DTOs never see ciphertext.
+    expect(plan.warningSigns).toEqual(input.warningSigns);
+    expect(plan.copingStrategies).toEqual(input.copingStrategies);
+    expect(plan.supportContacts).toEqual(input.supportContacts);
+    expect(plan.professionalContacts).toEqual(input.professionalContacts);
+    expect(plan.environmentSafety).toBe(input.environmentSafety);
+  });
+
+  it('round-trips through getLatestSafetyPlan / getMySafetyPlan (clinician + own-client read paths)', async () => {
+    const cipher = keyedCipher();
+    const { svc: writeSvc, prisma: writePrisma } = makeService({}, cipher);
+    (writePrisma.safetyPlan.create as jest.Mock).mockImplementation(({ data }: any) => ({
+      ...data,
+      id: 'plan_1',
+      createdAt: new Date(),
+    }));
+    await writeSvc.createSafetyPlan(principal, input);
+    const persistedRow = (writePrisma.safetyPlan.create as jest.Mock).mock.results[0]!.value;
+
+    // A fresh service instance (different prisma mock, same cipher/key) reading back the persisted row —
+    // proves the read path decrypts independently of the write call, exactly like a real DB round-trip.
+    const { svc: readSvc } = makeService(
+      { safetyPlan: { findFirst: jest.fn().mockResolvedValue(persistedRow), create: jest.fn() } },
+      cipher,
+    );
+    const plan = await readSvc.getLatestSafetyPlan(principal, 'client_1');
+    expect(plan?.warningSigns).toEqual(input.warningSigns);
+    expect(plan?.supportContacts).toEqual(input.supportContacts);
+    expect(plan?.environmentSafety).toBe(input.environmentSafety);
+  });
+
+  it('cross-tenant AAD failure: a safety plan sealed for one tenant cannot be decrypted under another', async () => {
+    const cipher = keyedCipher();
+    const { svc: writeSvc, prisma: writePrisma } = makeService({}, cipher);
+    (writePrisma.safetyPlan.create as jest.Mock).mockImplementation(({ data }: any) => ({
+      ...data,
+      id: 'plan_1',
+      createdAt: new Date(),
+    }));
+    await writeSvc.createSafetyPlan(principal, input);
+    const persistedRow = (writePrisma.safetyPlan.create as jest.Mock).mock.results[0]!.value;
+
+    const otherTenantPrincipal: AuthPrincipal = { ...principal, tenantId: 'tenant_other' };
+    const { svc: readSvc } = makeService(
+      {
+        safetyPlan: { findFirst: jest.fn().mockResolvedValue(persistedRow), create: jest.fn() },
+        client: { findFirst: jest.fn().mockResolvedValue({ id: 'client_1', tenantId: 'tenant_other' }) },
+      },
+      cipher,
+    );
+    await expect(readSvc.getLatestSafetyPlan(otherTenantPrincipal, 'client_1')).rejects.toThrow(/decryption failed/i);
+  });
+
+  it('disabled mode (no VPSY_FIELD_KEY): the persisted row is plaintext, byte-identical to pre-encryption behavior', async () => {
+    const { svc, prisma } = makeService({}, disabledCipher());
+    (prisma.safetyPlan.create as jest.Mock).mockImplementation(({ data }: any) => ({
+      ...data,
+      id: 'plan_1',
+      createdAt: new Date(),
+    }));
+
+    const plan = await svc.createSafetyPlan(principal, input);
+    const persisted = (prisma.safetyPlan.create as jest.Mock).mock.calls[0][0].data;
+
+    expect(persisted.warningSigns).toEqual(input.warningSigns); // no envelope shim applied
+    expect(persisted.supportContacts).toEqual(input.supportContacts);
+    expect(persisted.environmentSafety).toBe(input.environmentSafety);
+    expect(plan.warningSigns).toEqual(input.warningSigns);
+  });
+
+  it('backward-compat passthrough: a pre-existing plaintext SafetyPlan is still readable once VPSY_FIELD_KEY is later configured', async () => {
+    const legacyPlaintextRow = {
+      id: 'plan_legacy',
+      clientId: 'client_1',
+      warningSigns: input.warningSigns, // ordinary multi-element array — never the shim shape
+      copingStrategies: input.copingStrategies,
+      supportContacts: input.supportContacts,
+      professionalContacts: input.professionalContacts,
+      environmentSafety: input.environmentSafety, // ordinary text, not JSON
+      distractionContacts: null,
+      helpContacts: null,
+      crisisLineInfo: { label: '988 Suicide & Crisis Lifeline', phone: '988' },
+      meansRestriction: null,
+      clientAcknowledgedAt: null,
+      version: 1,
+      createdAt: new Date(),
+    };
+    const { svc } = makeService(
+      { safetyPlan: { findFirst: jest.fn().mockResolvedValue(legacyPlaintextRow), create: jest.fn() } },
+      keyedCipher(),
+    );
+
+    const plan = await svc.getLatestSafetyPlan(principal, 'client_1');
+    expect(plan?.warningSigns).toEqual(input.warningSigns);
+    expect(plan?.environmentSafety).toBe(input.environmentSafety);
+    expect(plan?.crisisLineInfo).toEqual({ label: '988 Suicide & Crisis Lifeline', phone: '988' });
   });
 });

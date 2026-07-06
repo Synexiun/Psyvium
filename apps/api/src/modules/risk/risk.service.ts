@@ -21,6 +21,7 @@ import type {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
+import { FieldCipherService } from '../../common/crypto/field-cipher';
 import { CRISIS_LINE_FALLBACK, resolveCrisisResource } from './crisis-lines';
 
 /** 1 hour, matching the roadmap's break-glass time-box (06-security-and-rbac.md §2.2). */
@@ -110,6 +111,18 @@ type IncidentReviewRow = {
  * principal (enforced twice: JwtAuthGuard/PermissionsGuard at the edge, and
  * defensively here so the invariant holds even if this service is ever
  * called from a non-HTTP entrypoint).
+ *
+ * WAVE D P0 — field-level PHI encryption (docs/technical/06-security-and-rbac.md
+ * §7, PHI-Critical): every SafetyPlan field is encrypted at rest via
+ * `FieldCipherService` whenever `VPSY_FIELD_KEY` is configured
+ * (activate-on-config; byte-identical plaintext behavior when it isn't).
+ * `warningSigns`/`copingStrategies` are native `String[]` columns that can't
+ * hold a JSON envelope, so they use the documented single-element-stringified-
+ * envelope shim (see field-cipher.ts's class doc for the follow-up: migrate
+ * those two columns to native `Json`). Only `createSafetyPlan` (write) and
+ * `toSafetyPlanDto` (every read path — `createSafetyPlan`,
+ * `getLatestSafetyPlan`/`getMySafetyPlan`, and the clinician board read all
+ * funnel through it) touch the cipher; nothing else in this file changes.
  */
 @Injectable()
 export class RiskService {
@@ -117,6 +130,7 @@ export class RiskService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly bus: EventBus,
+    private readonly cipher: FieldCipherService,
   ) {}
 
   async getBoard(principal: AuthPrincipal): Promise<RiskBoardDto> {
@@ -367,20 +381,28 @@ export class RiskService {
       orderBy: { version: 'desc' },
     });
 
+    const tenantId = principal.tenantId;
     const plan = await this.prisma.safetyPlan.create({
       data: {
-        tenantId: principal.tenantId,
+        tenantId,
         clientId: input.clientId,
-        warningSigns: input.warningSigns,
-        copingStrategies: input.copingStrategies,
-        supportContacts: input.supportContacts ?? [],
-        professionalContacts: input.professionalContacts ?? [],
-        environmentSafety: input.environmentSafety,
+        warningSigns: await this.cipher.encryptStringArray(input.warningSigns, tenantId),
+        copingStrategies: await this.cipher.encryptStringArray(input.copingStrategies, tenantId),
+        supportContacts: (await this.cipher.encryptJson(input.supportContacts ?? [], tenantId)) as any,
+        professionalContacts: (await this.cipher.encryptJson(input.professionalContacts ?? [], tenantId)) as any,
+        environmentSafety: await this.cipher.encryptString(input.environmentSafety, tenantId),
         // Stanley-Brown SPI completeness (WAVE CR item 5) — additive fields.
-        distractionContacts: input.distractionContacts ?? undefined,
-        helpContacts: input.helpContacts ?? undefined,
-        crisisLineInfo: input.crisisLineInfo ?? DEFAULT_CRISIS_LINE_INFO,
-        meansRestriction: input.meansRestriction ?? undefined,
+        distractionContacts: input.distractionContacts
+          ? ((await this.cipher.encryptJson(input.distractionContacts, tenantId)) as any)
+          : undefined,
+        helpContacts: input.helpContacts ? ((await this.cipher.encryptJson(input.helpContacts, tenantId)) as any) : undefined,
+        crisisLineInfo: (await this.cipher.encryptJson(
+          input.crisisLineInfo ?? DEFAULT_CRISIS_LINE_INFO,
+          tenantId,
+        )) as any,
+        meansRestriction: input.meansRestriction
+          ? ((await this.cipher.encryptJson(input.meansRestriction, tenantId)) as any)
+          : undefined,
         clientAcknowledgedAt: input.clientAcknowledgedAt ? new Date(input.clientAcknowledgedAt) : undefined,
         version: (latest?.version ?? 0) + 1,
       },
@@ -401,7 +423,7 @@ export class RiskService {
       version: plan.version,
     });
 
-    return this.toSafetyPlanDto(plan as SafetyPlanRow);
+    return this.toSafetyPlanDto(plan as SafetyPlanRow, tenantId);
   }
 
   async getLatestSafetyPlan(principal: AuthPrincipal, clientId: string): Promise<SafetyPlanDto | null> {
@@ -409,7 +431,7 @@ export class RiskService {
       where: { tenantId: principal.tenantId, clientId },
       orderBy: { version: 'desc' },
     });
-    return plan ? this.toSafetyPlanDto(plan as SafetyPlanRow) : null;
+    return plan ? this.toSafetyPlanDto(plan as SafetyPlanRow, principal.tenantId) : null;
   }
 
   /**
@@ -707,19 +729,41 @@ export class RiskService {
     };
   }
 
-  private toSafetyPlanDto(plan: SafetyPlanRow): SafetyPlanDto {
+  private async toSafetyPlanDto(plan: SafetyPlanRow, tenantId: string): Promise<SafetyPlanDto> {
+    const [
+      warningSigns,
+      copingStrategies,
+      supportContacts,
+      professionalContacts,
+      environmentSafety,
+      distractionContacts,
+      helpContacts,
+      crisisLineInfo,
+      meansRestriction,
+    ] = await Promise.all([
+      this.cipher.decryptStringArray(plan.warningSigns, tenantId),
+      this.cipher.decryptStringArray(plan.copingStrategies, tenantId),
+      this.cipher.decryptJson(plan.supportContacts, tenantId),
+      this.cipher.decryptJson(plan.professionalContacts, tenantId),
+      this.cipher.decryptString(plan.environmentSafety, tenantId),
+      this.cipher.decryptJson(plan.distractionContacts, tenantId),
+      this.cipher.decryptJson(plan.helpContacts, tenantId),
+      this.cipher.decryptJson(plan.crisisLineInfo, tenantId),
+      this.cipher.decryptJson(plan.meansRestriction, tenantId),
+    ]);
+
     return {
       id: plan.id,
       clientId: plan.clientId,
-      warningSigns: plan.warningSigns,
-      copingStrategies: plan.copingStrategies,
-      supportContacts: (plan.supportContacts as string[] | null) ?? [],
-      professionalContacts: (plan.professionalContacts as string[] | null) ?? [],
-      environmentSafety: plan.environmentSafety,
-      distractionContacts: (plan.distractionContacts as string[] | null) ?? null,
-      helpContacts: (plan.helpContacts as string[] | null) ?? null,
-      crisisLineInfo: (plan.crisisLineInfo as SafetyPlanDto['crisisLineInfo']) ?? null,
-      meansRestriction: (plan.meansRestriction as SafetyPlanDto['meansRestriction']) ?? null,
+      warningSigns,
+      copingStrategies,
+      supportContacts: (supportContacts as string[] | null) ?? [],
+      professionalContacts: (professionalContacts as string[] | null) ?? [],
+      environmentSafety: environmentSafety ?? null,
+      distractionContacts: (distractionContacts as string[] | null) ?? null,
+      helpContacts: (helpContacts as string[] | null) ?? null,
+      crisisLineInfo: (crisisLineInfo as SafetyPlanDto['crisisLineInfo']) ?? null,
+      meansRestriction: (meansRestriction as SafetyPlanDto['meansRestriction']) ?? null,
       clientAcknowledgedAt: plan.clientAcknowledgedAt ? plan.clientAcknowledgedAt.toISOString() : null,
       version: plan.version,
       createdAt: plan.createdAt.toISOString(),
