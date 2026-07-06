@@ -182,6 +182,7 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
           })),
         },
         riskFlag: { update: jest.fn() },
+        outboxEvent: { create: jest.fn() },
       };
       const prisma = {
         escalation: { findFirst: jest.fn().mockResolvedValue(escalationRow), update: jest.fn() },
@@ -192,8 +193,8 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
         $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(prismaTx)),
       };
       const audit = { record: jest.fn() };
-      const bus = { publish: jest.fn() };
-      return { svc: new RiskService(prisma as any, audit as any, bus as any, disabledCipher()), prisma, audit };
+      const bus = { publish: jest.fn(), publishDurable: jest.fn() };
+      return { svc: new RiskService(prisma as any, audit as any, bus as any, disabledCipher()), prisma, audit, bus, prismaTx };
     }
 
     it('rejects resolution when no human principal is present — an AI/automation actor can never resolve an escalation', async () => {
@@ -333,6 +334,7 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
         client: {
           update: jest.fn().mockImplementation(({ data }: any) => ({ ...client, ...data })),
         },
+        outboxEvent: { create: jest.fn() },
       };
 
       const prisma = {
@@ -342,7 +344,7 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
       };
 
       const audit = { record: jest.fn() };
-      const bus = { publish: jest.fn() };
+      const bus = { publish: jest.fn(), publishDurable: jest.fn() };
       const ai = { interpretScore: jest.fn() };
       const svc = new PsychometricsService(
         prisma as any,
@@ -373,7 +375,10 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
       });
       expect(tx.escalation.create).toHaveBeenCalledTimes(1);
       expect(createdEscalations[0]).toMatchObject({ riskFlagId: createdRiskFlags[0].id });
-      expect(bus.publish).toHaveBeenCalledWith(
+      // Durable (ADR-005): written into the same transaction as the RiskFlag
+      // itself, not the direct fire-and-forget publish.
+      expect(bus.publishDurable).toHaveBeenCalledWith(
+        tx,
         'risk.flag.raised',
         'tenant_demo',
         expect.objectContaining({ riskFlagId: createdRiskFlags[0].id, clientId: 'client_1' }),

@@ -1508,6 +1508,31 @@ model AuditEvent {
   @@index([occurredAt])
 }
 
+/// Transactional outbox (ADR-005, doc 00-architecture-overview.md). Written
+/// in the SAME `$transaction` as the domain-state change it accompanies, via
+/// `EventBus.publishDurable(tx, ...)`, so "state changed <=> event exists"
+/// is a DB-level guarantee instead of a best-effort post-commit publish.
+/// `OutboxRelayService` sweeps PENDING rows and republishes them through the
+/// existing in-process `EventBus.publish()` — bridges/metrics/matching
+/// subscribers are unchanged either way.
+model OutboxEvent {
+  id          String    @id @default(cuid())
+  tenantId    String
+  eventName   String
+  payload     Json
+  /// PENDING | PUBLISHED | FAILED — plain String (see IncidentReview.kind
+  /// convention); FAILED is terminal, set only after the 10th attempt.
+  status      String    @default("PENDING")
+  attempts    Int       @default(0)
+  availableAt DateTime  @default(now())
+  publishedAt DateTime?
+  lastError   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([status, availableAt])
+  @@index([tenantId])
+}
+
 model PopulationMetric {
   id         String   @id @default(cuid())
   region     String

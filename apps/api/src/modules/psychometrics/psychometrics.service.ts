@@ -85,6 +85,7 @@ export interface ScoringTx {
   riskFlag: { create: (args: any) => Promise<any> };
   escalation: { create: (args: any) => Promise<any> };
   client: { update: (args: any) => Promise<any> };
+  outboxEvent: { create: (args: any) => Promise<any> };
 }
 
 /** Ordering used to only ever escalate — never silently downgrade — a client's reflected risk level. */
@@ -297,6 +298,20 @@ export class PsychometricsService {
       });
       raisedFlagIds.push(rf.id);
       raisedEscalations.push({ escalationId: escalation.id, riskFlagId: rf.id });
+
+      // Durable (ADR-005): written in this same transaction — mirrors
+      // Intake & Screening's identical hook (intake.service.ts) exactly, so
+      // a standalone assessment's safety escalation can never be silently
+      // dropped by a crash between commit and publish either.
+      await this.bus.publishDurable(tx, Events.RiskFlagRaised, principal.tenantId, {
+        riskFlagId: rf.id,
+        clientId: input.clientId,
+      });
+      await this.bus.publishDurable(tx, Events.EscalationRaised, principal.tenantId, {
+        escalationId: escalation.id,
+        riskFlagId: rf.id,
+        clientId: input.clientId,
+      });
     }
 
     // Reflect elevated risk on the client record — escalate only, never
@@ -335,21 +350,15 @@ export class PsychometricsService {
         safetyFlagsRaised: result.raisedFlagIds.length,
       },
     });
+    // AssessmentScored stays direct/non-durable — RiskFlagRaised/
+    // EscalationRaised for safety hits are now published durably, in-tx,
+    // from `persistScoredResponse` above (ADR-005); publishing them again
+    // here would double-fire every safety-critical subscriber.
     await this.bus.publish(Events.AssessmentScored, principal.tenantId, {
       responseId: result.response.id,
       clientId,
       severityBand: computed.severityBand,
     });
-    for (const flagId of result.raisedFlagIds) {
-      await this.bus.publish(Events.RiskFlagRaised, principal.tenantId, { riskFlagId: flagId, clientId });
-    }
-    for (const esc of result.raisedEscalations) {
-      await this.bus.publish(Events.EscalationRaised, principal.tenantId, {
-        escalationId: esc.escalationId,
-        riskFlagId: esc.riskFlagId,
-        clientId,
-      });
-    }
   }
 
   /**

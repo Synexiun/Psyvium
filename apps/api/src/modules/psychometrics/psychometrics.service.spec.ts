@@ -87,6 +87,7 @@ function makeService(versionOverrides: Record<string, unknown> = {}) {
         return { ...client, ...data };
       }),
     },
+    outboxEvent: { create: jest.fn() },
   };
 
   const prisma = {
@@ -96,7 +97,7 @@ function makeService(versionOverrides: Record<string, unknown> = {}) {
   };
 
   const audit = { record: jest.fn() };
-  const bus = { publish: jest.fn() };
+  const bus = { publish: jest.fn(), publishDurable: jest.fn() };
   const scoring = new ScoringService();
   const irt = new IrtScoringService();
 
@@ -134,13 +135,17 @@ describe('PsychometricsService.administer — safety-item hook', () => {
     // Client's reflected risk level is escalated (was LOW).
     expect(clientUpdates).toEqual([{ riskLevel: 'HIGH' }]);
 
-    // Same events Intake emits for its own safety flags.
-    expect(bus.publish).toHaveBeenCalledWith(
+    // Same events Intake emits for its own safety flags — published durably,
+    // in the same transaction (ADR-005), not via the direct fire-and-forget
+    // publish().
+    expect(bus.publishDurable).toHaveBeenCalledWith(
+      tx,
       'risk.flag.raised',
       'tenant_demo',
       expect.objectContaining({ riskFlagId: createdRiskFlags[0].id, clientId: 'client_1' }),
     );
-    expect(bus.publish).toHaveBeenCalledWith(
+    expect(bus.publishDurable).toHaveBeenCalledWith(
+      tx,
       'escalation.raised',
       'tenant_demo',
       expect.objectContaining({ escalationId: createdEscalations[0].id, riskFlagId: createdRiskFlags[0].id }),
@@ -176,8 +181,8 @@ describe('PsychometricsService.administer — safety-item hook', () => {
     expect(tx.riskFlag.create).not.toHaveBeenCalled();
     expect(tx.escalation.create).not.toHaveBeenCalled();
     expect(tx.client.update).not.toHaveBeenCalled();
-    expect(bus.publish).not.toHaveBeenCalledWith('risk.flag.raised', expect.anything(), expect.anything());
-    expect(bus.publish).not.toHaveBeenCalledWith('escalation.raised', expect.anything(), expect.anything());
+    expect(bus.publishDurable).not.toHaveBeenCalledWith(tx, 'risk.flag.raised', expect.anything(), expect.anything());
+    expect(bus.publishDurable).not.toHaveBeenCalledWith(tx, 'escalation.raised', expect.anything(), expect.anything());
   });
 
   it('never raises a flag when the safety item is simply absent from the answers', async () => {

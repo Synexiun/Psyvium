@@ -139,6 +139,7 @@ function makeHarness(opts: {
       }),
     },
     client: { update: jest.fn().mockImplementation(({ data }: any) => ({ ...client, ...data })) },
+    outboxEvent: { create: jest.fn() },
     catSession,
   };
 
@@ -156,7 +157,7 @@ function makeHarness(opts: {
   };
 
   const audit = { record: jest.fn() };
-  const bus = { publish: jest.fn() };
+  const bus = { publish: jest.fn(), publishDurable: jest.fn() };
   const scoring = new ScoringService();
   const irt = new IrtScoringService();
   const selection = new CatSelectionService();
@@ -369,7 +370,10 @@ describe('CatService.answer — stateful adaptive flow', () => {
     });
     expect(createdEscalations).toHaveLength(1);
     expect(tx.client.update).toHaveBeenCalledWith({ where: { id: 'client_1' }, data: { riskLevel: 'SEVERE' } });
-    expect(bus.publish).toHaveBeenCalledWith(
+    // Durable (ADR-005): published in the same transaction as the CatSession
+    // close, not via the direct fire-and-forget publish().
+    expect(bus.publishDurable).toHaveBeenCalledWith(
+      tx,
       'risk.flag.raised',
       'tenant_demo',
       expect.objectContaining({ riskFlagId: createdRiskFlags[0].id, clientId: 'client_1' }),

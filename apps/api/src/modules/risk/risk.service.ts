@@ -211,10 +211,25 @@ export class RiskService {
     if (!escalation) throw new NotFoundException('Escalation not found');
     if (escalation.resolvedAt) throw new ConflictException('Escalation is already resolved');
 
-    const updated = await this.prisma.escalation.update({
-      where: { id: escalation.id },
-      data: { assignedTo: input.assignedTo },
-      include: { riskFlag: { include: { client: { include: { user: true } } } } },
+    // Wrapped in a $transaction (it wasn't one before) purely so the
+    // EscalationAssigned outbox row commits atomically with the assignment
+    // itself (ADR-005) — a crash between the two must never silently drop
+    // the routing signal on-call/board subscribers rely on.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const esc = await tx.escalation.update({
+        where: { id: escalation.id },
+        data: { assignedTo: input.assignedTo },
+        include: { riskFlag: { include: { client: { include: { user: true } } } } },
+      });
+      if (esc.assignedTo) {
+        await this.bus.publishDurable(tx, Events.EscalationAssigned, principal.tenantId, {
+          escalationId: esc.id,
+          riskFlagId: esc.riskFlagId,
+          clientId: esc.riskFlag.clientId,
+          assignedTo: esc.assignedTo,
+        });
+      }
+      return esc;
     });
 
     await this.audit.record({
@@ -226,15 +241,6 @@ export class RiskService {
       before: { assignedTo: escalation.assignedTo },
       after: { assignedTo: updated.assignedTo },
     });
-
-    if (updated.assignedTo) {
-      await this.bus.publish(Events.EscalationAssigned, principal.tenantId, {
-        escalationId: updated.id,
-        riskFlagId: updated.riskFlagId,
-        clientId: updated.riskFlag.clientId,
-        assignedTo: updated.assignedTo,
-      });
-    }
 
     return this.toEscalationDto(updated as EscalationRow);
   }
@@ -290,6 +296,13 @@ export class RiskService {
         where: { id: escalation.riskFlagId },
         data: { status: RiskStatus.RESOLVED },
       });
+      // Durable (ADR-005): committed atomically with the resolution itself.
+      await this.bus.publishDurable(tx, Events.EscalationResolved, principal.tenantId, {
+        escalationId: esc.id,
+        riskFlagId: esc.riskFlagId,
+        clientId: esc.riskFlag.clientId,
+        resolvedBy: principal.userId,
+      });
       return esc;
     });
 
@@ -312,12 +325,8 @@ export class RiskService {
       critical: true,
     });
 
-    await this.bus.publish(Events.EscalationResolved, principal.tenantId, {
-      escalationId: updated.id,
-      riskFlagId: updated.riskFlagId,
-      clientId: updated.riskFlag.clientId,
-      resolvedBy: principal.userId,
-    });
+    // EscalationResolved now publishes durably from inside the transaction
+    // above (ADR-005) — nothing left to publish here.
 
     return this.toEscalationDto(updated as EscalationRow);
   }

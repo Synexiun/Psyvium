@@ -40,6 +40,7 @@ function makeService(provider: Record<string, jest.Mock> | null, overrides: Part
   const prismaTx = {
     payment: { create: jest.fn(async ({ data }: any) => ({ id: 'payment_1', ...data })) },
     invoice: { update: jest.fn() },
+    outboxEvent: { create: jest.fn() },
   };
 
   const prisma = {
@@ -53,7 +54,7 @@ function makeService(provider: Record<string, jest.Mock> | null, overrides: Part
     ...overrides,
   };
   const audit = { record: jest.fn() };
-  const bus = { publish: jest.fn() };
+  const bus = { publish: jest.fn(), publishDurable: jest.fn() };
   const accounting = { postBalancedEntry: jest.fn() };
   const svc = new PaymentsService(prisma as any, audit as any, bus as any, accounting as any);
   return { svc, prisma, audit, bus, accounting, prismaTx };
@@ -79,7 +80,7 @@ describe('PaymentsService.payInvoice — keyed (Stripe configured)', () => {
     expect(prismaTx.invoice.update).toHaveBeenCalledWith({ where: { id: 'invoice_1' }, data: { status: 'PAID' } });
     expect(accounting.postBalancedEntry).toHaveBeenCalled();
     expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'payment.captured' }));
-    expect(bus.publish).toHaveBeenCalledWith('payment.captured', 'tenant_demo', expect.anything());
+    expect(bus.publishDurable).toHaveBeenCalledWith(prismaTx, 'payment.captured', 'tenant_demo', expect.anything());
   });
 
   it('honestly records requires_payment_method WITHOUT flipping the invoice or touching the ledger', async () => {
@@ -163,7 +164,7 @@ describe('PaymentsService.capturePaymentFromWebhook', () => {
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'payment.captured', actorId: 'system:stripe-webhook' }),
     );
-    expect(bus.publish).toHaveBeenCalledWith('payment.captured', 'tenant_demo', expect.anything());
+    expect(bus.publishDurable).toHaveBeenCalledWith(prismaTx, 'payment.captured', 'tenant_demo', expect.anything());
   });
 
   it('is idempotent — a replayed webhook for an already-PAID invoice is a no-op, not a double capture', async () => {

@@ -40,6 +40,7 @@ function makeService(overrides: Partial<Record<string, unknown>> = {}) {
       create: jest.fn(async ({ data }: any) => ({ id: 'payment_1', ...data })),
     },
     invoice: { update: jest.fn() },
+    outboxEvent: { create: jest.fn() },
   };
 
   const prisma = {
@@ -58,7 +59,7 @@ function makeService(overrides: Partial<Record<string, unknown>> = {}) {
     ...overrides,
   };
   const audit = { record: jest.fn() };
-  const bus = { publish: jest.fn() };
+  const bus = { publish: jest.fn(), publishDurable: jest.fn() };
   const accounting = { postBalancedEntry: jest.fn() };
   const svc = new PaymentsService(prisma as any, audit as any, bus as any, accounting as any);
   return { svc, prisma, audit, bus, accounting, prismaTx };
@@ -152,7 +153,10 @@ describe('PaymentsService.payInvoice', () => {
     expect(postedAmount.toFixed(4)).toBe('180.0000');
 
     expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'payment.captured' }));
-    expect(bus.publish).toHaveBeenCalledWith(
+    // Durable (ADR-005): published inside captureTx's transaction, not via
+    // the direct fire-and-forget publish().
+    expect(bus.publishDurable).toHaveBeenCalledWith(
+      prismaTx,
       'payment.captured',
       'tenant_demo',
       expect.objectContaining({ invoiceId: 'invoice_1', amount: '180.0000' }),

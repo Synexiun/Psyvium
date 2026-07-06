@@ -120,6 +120,19 @@ export class IntakeService {
         });
         raisedFlagIds.push(rf.id);
         raisedEscalations.push({ escalationId: escalation.id, riskFlagId: rf.id });
+
+        // Durable (ADR-005): written in this same transaction so a crash
+        // between commit and publish can never silently drop a risk
+        // escalation. OutboxRelayService republishes it within ~2s.
+        await this.bus.publishDurable(tx, Events.RiskFlagRaised, principal.tenantId, {
+          riskFlagId: rf.id,
+          clientId: client.id,
+        });
+        await this.bus.publishDurable(tx, Events.EscalationRaised, principal.tenantId, {
+          escalationId: escalation.id,
+          riskFlagId: rf.id,
+          clientId: client.id,
+        });
       }
 
       // Reflect risk on the client record
@@ -163,22 +176,16 @@ export class IntakeService {
       this.logger.warn(`AI summary skipped: ${(err as Error).message}`);
     }
 
+    // IntakeSubmitted itself stays direct/non-durable: it only nudges
+    // Matching to prepare candidates, which also runs its own periodic
+    // reconciliation, so an occasional dropped signal is tolerable (unlike
+    // the risk flags/escalations above, which are now durable).
     await this.bus.publish(Events.IntakeSubmitted, principal.tenantId, {
       intakeId: result.intake.id,
       clientId: client.id,
       severityBand: computed.severityBand,
       suggestedSpecialty: computed.suggestedSpecialty,
     });
-    for (const flagId of result.raisedFlagIds) {
-      await this.bus.publish(Events.RiskFlagRaised, principal.tenantId, { riskFlagId: flagId, clientId: client.id });
-    }
-    for (const esc of result.raisedEscalations) {
-      await this.bus.publish(Events.EscalationRaised, principal.tenantId, {
-        escalationId: esc.escalationId,
-        riskFlagId: esc.riskFlagId,
-        clientId: client.id,
-      });
-    }
 
     return {
       id: result.screening.id,

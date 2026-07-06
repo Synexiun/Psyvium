@@ -92,9 +92,10 @@ function makeService(overrides: Partial<Record<string, unknown>> = {}, cipher: F
       })),
     },
     riskFlag: { update: jest.fn() },
+    outboxEvent: { create: jest.fn() },
   };
   const audit = { record: jest.fn() };
-  const bus = { publish: jest.fn() };
+  const bus = { publish: jest.fn(), publishDurable: jest.fn() };
   const svc = new RiskService(prisma as any, audit as any, bus as any, cipher);
   return { svc, prisma, audit, bus, prismaTx };
 }
@@ -114,7 +115,7 @@ describe('RiskService.resolveEscalation', () => {
   });
 
   it('sets resolvedAt + resolution and records an audit event for a real human principal', async () => {
-    const { svc, audit, bus } = makeService();
+    const { svc, audit, bus, prismaTx } = makeService();
     const result = await svc.resolveEscalation(principal, 'esc_1', {
       resolution: 'Contacted client by phone; safety plan reviewed; no acute risk, follow-up booked.',
       riskLevelAtResolution: SeverityBand.LOW,
@@ -128,7 +129,8 @@ describe('RiskService.resolveEscalation', () => {
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'escalation.resolved', actorId: 'user_psy_a' }),
     );
-    expect(bus.publish).toHaveBeenCalledWith(
+    expect(bus.publishDurable).toHaveBeenCalledWith(
+      prismaTx,
       'escalation.resolved',
       'tenant_demo',
       expect.objectContaining({ escalationId: 'esc_1' }),
@@ -184,6 +186,23 @@ describe('RiskService.resolveEscalation', () => {
       followUpDueAt,
     });
     expect(result.resolvedAt).not.toBeNull();
+  });
+});
+
+describe('RiskService.assignEscalation', () => {
+  it('publishes EscalationAssigned durably, in the same transaction as the assignment (ADR-005)', async () => {
+    const { svc, prisma, bus, prismaTx } = makeService();
+    const result = await svc.assignEscalation(principal, 'esc_1', { assignedTo: 'user_psy_b' });
+
+    expect(result.assignedTo).toBe('user_psy_b');
+    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(bus.publishDurable).toHaveBeenCalledWith(
+      prismaTx,
+      'escalation.assigned',
+      'tenant_demo',
+      expect.objectContaining({ escalationId: 'esc_1', assignedTo: 'user_psy_b' }),
+    );
+    expect(bus.publish).not.toHaveBeenCalled();
   });
 });
 

@@ -325,6 +325,15 @@ export class PaymentsService {
         memo: `Invoice ${invoice.id} payment`,
         invoiceId: invoice.id,
       });
+      // Durable (ADR-005): written in this same money-moving transaction so a
+      // crash between commit and publish can never silently drop a captured
+      // payment (which downstream ledger/notification subscribers rely on).
+      await this.bus.publishDurable(tx, Events.PaymentCaptured, tenantId, {
+        invoiceId: invoice.id,
+        paymentId: created.id,
+        amount: invoice.amount.toFixed(4),
+        currency: invoice.currency,
+      });
       return created as unknown as PaymentRow;
     });
   }
@@ -345,12 +354,8 @@ export class PaymentsService {
       before: { invoiceStatus: invoice.status ?? 'OPEN' },
       after: { invoiceId: invoice.id, amount: invoice.amount.toFixed(4), invoiceStatus: 'PAID', ...extra },
     });
-    await this.bus.publish(Events.PaymentCaptured, tenantId, {
-      invoiceId: invoice.id,
-      paymentId: payment.id,
-      amount: invoice.amount.toFixed(4),
-      currency: invoice.currency,
-    });
+    // PaymentCaptured now publishes durably from inside captureTx (ADR-005)
+    // — nothing left to publish here.
   }
 
   private toInvoiceDto(invoice: InvoiceRow): InvoiceDto {

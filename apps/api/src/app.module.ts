@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { EventsModule } from './common/events/events.module';
+import { OutboxModule } from './common/outbox/outbox.module';
 import { AuditModule } from './common/audit/audit.module';
 import { RealtimeModule } from './common/realtime/realtime.module';
 import { ObservabilityModule } from './common/observability/observability.module';
@@ -57,6 +58,10 @@ import { HealthModule } from './health/health.module';
     // Global infrastructure
     PrismaModule,
     EventsModule,
+    // Transactional outbox relay (ADR-005) — background sweep that
+    // republishes durably-written OutboxEvent rows; see common/events/
+    // event-bus.service.ts for the durable-vs-direct publish split.
+    OutboxModule,
     AuditModule,
     RealtimeModule,
     // OTel traces/metrics bootstrap started as a side effect at the very top
