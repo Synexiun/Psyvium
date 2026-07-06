@@ -22,3 +22,5 @@ export * from './dto/ai-assist';
 export * from './dto/intervention';
 export * from './dto/diagnosis';
 export * from './dto/documents';
+export * from './dto/registry';
+export * from './dto/admin';
