@@ -1,3 +1,9 @@
+// MUST be the very first import — see the ordering block comment at the top
+// of otel.ts for why (OTel's http/express/nestjs-core instrumentations patch
+// Node's module loader; that patch has to land before anything else in this
+// process ever `require()`s those modules, which `reflect-metadata`/Nest do
+// on the next lines).
+import './common/observability/otel';
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';

@@ -5,6 +5,7 @@ import { PrismaModule } from './common/prisma/prisma.module';
 import { EventsModule } from './common/events/events.module';
 import { AuditModule } from './common/audit/audit.module';
 import { RealtimeModule } from './common/realtime/realtime.module';
+import { ObservabilityModule } from './common/observability/observability.module';
 import { RateLimitModule } from './common/rate-limit/rate-limit.module';
 import { IdempotencyModule } from './common/idempotency/idempotency.module';
 import { TenantContextMiddleware } from './common/tenant-context.interceptor';
@@ -57,6 +58,12 @@ import { HealthModule } from './health/health.module';
     EventsModule,
     AuditModule,
     RealtimeModule,
+    // OTel traces/metrics bootstrap started as a side effect at the very top
+    // of main.ts (before this module tree is even built) — this module wires
+    // the Nest-side pieces: the `VpsyMetrics` domain counters, the EventBus
+    // bridge that feeds them, and the `auth.login.failed` interceptor (doc
+    // 10-observability-and-devops.md §7).
+    ObservabilityModule,
     AiGatewayModule,
     // Cross-cutting API security (doc 04-api-design.md §8 Idempotency, §9 Rate
     // limiting; 06-security-and-rbac.md). Global — every route gets the

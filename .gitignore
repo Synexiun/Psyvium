@@ -33,3 +33,9 @@ Thumbs.db
 # coverage
 coverage/
 *.tsbuildinfo
+
+# playwright (e2e a11y suite — storageState files carry live session cookies)
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/blob-report/
+apps/web/e2e/.auth/
