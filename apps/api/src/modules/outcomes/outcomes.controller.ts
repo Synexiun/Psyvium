@@ -1,9 +1,11 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
+  outcomeAiAssistRequestSchema,
   recordOutcomeMeasureSchema,
   Permission,
   type AuthPrincipal,
+  type OutcomeAiAssistInput,
   type RecordOutcomeMeasureInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
@@ -33,5 +35,19 @@ export class OutcomesController {
   @RequirePermissions(Permission.OUTCOME_READ)
   listForClient(@CurrentUser() user: AuthPrincipal, @Param('clientId') clientId: string) {
     return this.outcomes.listForClient(user, clientId);
+  }
+
+  /**
+   * Outcome Intelligence (doc 05 §3.5). Narrates an ALREADY-COMPUTED,
+   * deterministic RCI trend classification for the clinician — never
+   * recomputes it, never writes an OutcomeMeasure.
+   */
+  @Post('ai-assist')
+  @RequirePermissions(Permission.OUTCOME_READ)
+  aiAssist(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(outcomeAiAssistRequestSchema)) body: OutcomeAiAssistInput,
+  ) {
+    return this.outcomes.aiAssist(user, body);
   }
 }

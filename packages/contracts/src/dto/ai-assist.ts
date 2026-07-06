@@ -85,3 +85,125 @@ export const treatmentPlanAiAssistResponseSchema = z.object({
   withheldReason: z.literal('no-ai-consent').optional(),
 });
 export type TreatmentPlanAiAssistResult = z.infer<typeof treatmentPlanAiAssistResponseSchema>;
+
+/**
+ * Wave C completion — the 5 remaining governed agents from doc 05 §3:
+ * Differential Hypothesis (§3.2), Outcome Intelligence (§3.5), Psychometric
+ * Interpretation (§3.7), Crisis context-assembly (§3.6), and the Allocation
+ * rationale extension (§3.8). Same PHI-minimization / activate-on-key /
+ * honest-degradation / AI-consent-gate / PENDING-AIRecommendation contract as
+ * the three agents above.
+ */
+
+// ── Differential Hypothesis (§3.2, hook `dx-support`) ──
+
+export const differentialAiAssistRequestSchema = z.object({
+  clientId: z.string(),
+  severityBand: z.nativeEnum(SeverityBand),
+  specialty: z.string().max(100),
+  /** Coded elevated-screening-domain tags only (e.g. "depression", "anxiety") — never free text. */
+  screeningDomainsElevated: z.array(z.string().max(50)).max(10).default([]),
+});
+export type DifferentialAiAssistInput = z.infer<typeof differentialAiAssistRequestSchema>;
+
+/** One hedged, non-diagnostic differential DIRECTION — never a diagnosis. */
+export const differentialDirectionSchema = z.object({
+  direction: z.string(),
+  rationale: z.string(),
+});
+export type DifferentialDirection = z.infer<typeof differentialDirectionSchema>;
+
+export const differentialAiAssistResponseSchema = z.object({
+  /** Anti-anchoring rule (doc 05 §3.2): ALWAYS >= 2 competing directions — never a single answer. */
+  directions: z.array(differentialDirectionSchema).min(2),
+  source: z.enum(['ai', 'rule-based']),
+  aiConfigured: z.boolean(),
+  recommendationId: z.string().optional(),
+  withheldReason: z.literal('no-ai-consent').optional(),
+});
+export type DifferentialAiAssistResult = z.infer<typeof differentialAiAssistResponseSchema>;
+
+// ── Outcome Intelligence (§3.5, hook `outcome-review`) ──
+
+/**
+ * `rciClassification`/`direction` mirror `OutcomesService`'s deterministic
+ * Reliable Change Index output (`dto/outcome.ts` `OutcomeTrend`) — the AI
+ * layer only narrates an ALREADY-COMPUTED classification, never recomputes
+ * or overrides it.
+ */
+export const outcomeAiAssistRequestSchema = z.object({
+  clientId: z.string(),
+  construct: z.string().max(100),
+  rciClassification: z.enum([
+    'baseline',
+    'unknown-reliability',
+    'no-reliable-change',
+    'reliably-improved',
+    'reliably-worsened',
+  ]),
+  direction: z.enum(['baseline', 'unchanged', 'increased', 'decreased']),
+  /** Count of measures in the series only — never raw scores or dates. */
+  nPoints: z.number().int().nonnegative(),
+});
+export type OutcomeAiAssistInput = z.infer<typeof outcomeAiAssistRequestSchema>;
+
+export const outcomeAiAssistResponseSchema = z.object({
+  narrative: z.string(),
+  source: z.enum(['ai', 'rule-based']),
+  aiConfigured: z.boolean(),
+  recommendationId: z.string().optional(),
+  withheldReason: z.literal('no-ai-consent').optional(),
+});
+export type OutcomeAiAssistResult = z.infer<typeof outcomeAiAssistResponseSchema>;
+
+// ── Psychometric Interpretation (§3.7, hook `score-review`) — CLINICIAN ONLY ──
+// No request body: the target score is identified by the `:id` path param
+// (`POST /assessments/scores/:id/ai-interpret`) and every signal sent to the
+// model is derived server-side from the already-computed, deterministic
+// PsychometricScore row — never re-scored, never overridden by AI.
+
+export const psychometricAiAssistResponseSchema = z.object({
+  interpretation: z.string(),
+  source: z.enum(['ai', 'rule-based']),
+  aiConfigured: z.boolean(),
+  recommendationId: z.string().optional(),
+  withheldReason: z.literal('no-ai-consent').optional(),
+});
+export type PsychometricAiAssistResult = z.infer<typeof psychometricAiAssistResponseSchema>;
+
+// ── Crisis context-assembly (§3.6, hook `risk-context`) ──
+// Risk DETECTION is entirely deterministic and lives in the Risk & Crisis
+// context (out of scope here). This agent only ASSEMBLES a brief situational
+// summary for the human responder AFTER a RiskFlag/Escalation already
+// exists — advisory only; the assigned clinician/manager decides and acts.
+
+export const riskContextAiAssistRequestSchema = z.object({
+  clientId: z.string(),
+  riskFlagId: z.string(),
+  severity: z.nativeEnum(SeverityBand),
+  riskType: z.string().max(100),
+  openEscalations: z.number().int().nonnegative(),
+  hasActiveSafetyPlan: z.boolean(),
+  slaDueInMinutes: z.number().int(),
+});
+export type RiskContextAiAssistInput = z.infer<typeof riskContextAiAssistRequestSchema>;
+
+export const riskContextAiAssistResponseSchema = z.object({
+  summary: z.string(),
+  source: z.enum(['ai', 'rule-based']),
+  aiConfigured: z.boolean(),
+  recommendationId: z.string().optional(),
+  withheldReason: z.literal('no-ai-consent').optional(),
+});
+export type RiskContextAiAssistResult = z.infer<typeof riskContextAiAssistResponseSchema>;
+
+// ── Allocation rationale (§3.8 extension) ──
+// The RANKING itself stays the deterministic sort MatchingService computes —
+// the model NEVER reorders candidates. This is a SHORT assistive rationale
+// note per top-3 candidate only, derived from coded score-component signals.
+
+export const allocationRationaleSchema = z.object({
+  psychologistId: z.string(),
+  rationale: z.string(),
+});
+export type AllocationRationale = z.infer<typeof allocationRationaleSchema>;

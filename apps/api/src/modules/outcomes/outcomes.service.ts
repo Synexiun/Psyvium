@@ -1,7 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { AuthPrincipal, OutcomeMeasureDto, OutcomeTrend, RecordOutcomeMeasureInput } from '@vpsy/contracts';
+import type {
+  AuthPrincipal,
+  OutcomeAiAssistInput,
+  OutcomeAiAssistResult,
+  OutcomeMeasureDto,
+  OutcomeTrend,
+  RecordOutcomeMeasureInput,
+} from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 
 type MeasureRow = {
   id: string;
@@ -108,6 +116,7 @@ export class OutcomesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly ai: AiGatewayService,
   ) {}
 
   async record(principal: AuthPrincipal, input: RecordOutcomeMeasureInput): Promise<OutcomeMeasureDto> {
@@ -156,6 +165,29 @@ export class OutcomesService {
       const previous = lastSeen.get(m.construct) ?? null;
       lastSeen.set(m.construct, m);
       return this.toDto(m, previous);
+    });
+  }
+
+  /**
+   * Outcome Intelligence (doc 05 §3.5) — assistive trend NARRATIVE only. The
+   * Reliable Change Index classification is looked up from the same
+   * deterministic `toDto`/`computeReliableChange` math used by
+   * `record()`/`listForClient()` above; this method never recomputes or
+   * overrides it, and never writes an OutcomeMeasure itself.
+   */
+  async aiAssist(principal: AuthPrincipal, input: OutcomeAiAssistInput): Promise<OutcomeAiAssistResult> {
+    const client = await this.prisma.client.findFirst({
+      where: { id: input.clientId, tenantId: principal.tenantId },
+    });
+    if (!client) throw new NotFoundException('Client not found');
+
+    return this.ai.narrateOutcomeTrend({
+      tenantId: principal.tenantId,
+      clientId: input.clientId,
+      construct: input.construct,
+      rciClassification: input.rciClassification,
+      direction: input.direction,
+      nPoints: input.nPoints,
     });
   }
 

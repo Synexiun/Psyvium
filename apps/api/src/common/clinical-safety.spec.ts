@@ -327,7 +327,15 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
 
       const audit = { record: jest.fn() };
       const bus = { publish: jest.fn() };
-      const svc = new PsychometricsService(prisma as any, new ScoringService(), new IrtScoringService(), audit as any, bus as any);
+      const ai = { interpretScore: jest.fn() };
+      const svc = new PsychometricsService(
+        prisma as any,
+        new ScoringService(),
+        new IrtScoringService(),
+        audit as any,
+        bus as any,
+        ai as any,
+      );
       return { svc, tx, bus, createdRiskFlags, createdEscalations };
     }
 

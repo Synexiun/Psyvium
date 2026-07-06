@@ -4,6 +4,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import {
   AiAgent,
   HumanDecision,
+  type AllocationRationale,
+  type DifferentialDirection,
   type MatchCandidate,
   type SessionNoteDraftScaffold,
   type TreatmentPlanSuggestions,
@@ -135,25 +137,76 @@ export class AiGatewayService {
     return { summary, source, aiConfigured: this.aiConfigured, recommendationId, ...(withheldReason ? { withheldReason } : {}) };
   }
 
-  /** Manager allocation agent — rank candidates. Manager remains final authority. */
+  /**
+   * Manager allocation agent (doc 05 §3.8) — rank candidates. Manager remains
+   * final authority. The RANKING itself is ALWAYS the deterministic sort
+   * below — the AI layer NEVER reorders candidates, it only (optionally)
+   * EXPLAINS the top of an already-fixed order with a short rationale note
+   * per candidate. Same activate-on-key / honest-degradation / AI-consent
+   * (client-linked) gate as every other agent; unkeyed or unconsented leaves
+   * the pre-existing behavior (deterministic ranking only) unchanged.
+   */
   async rankCandidates(params: {
     tenantId: string;
     clientId: string;
     candidates: MatchCandidate[];
-  }): Promise<{ ranked: MatchCandidate[]; recommendationId?: string }> {
+  }): Promise<{
+    ranked: MatchCandidate[];
+    aiRationales?: AllocationRationale[];
+    source?: 'ai' | 'rule-based';
+    recommendationId?: string;
+    withheldReason?: 'no-ai-consent';
+  }> {
     // Deterministic scoring rationale is computed by the Matching context;
-    // the AI layer explains and can re-order, but never auto-assigns.
+    // this order is FINAL — the AI layer only ever explains it.
     const ranked = [...params.candidates].sort((a, b) => b.score - a.score);
+
+    let aiRationales: AllocationRationale[] | undefined;
+    let source: 'ai' | 'rule-based' | undefined;
+    let withheldReason: 'no-ai-consent' | undefined;
+
+    const top3 = ranked.slice(0, 3);
+    if (top3.length > 0) {
+      const signals = top3.map((c) => ({
+        psychologistId: c.psychologistId,
+        score: c.score,
+        specialtyMatch: !c.fitWarnings.some((w) => w.toLowerCase().includes('specialty')),
+        caseloadUtilization: c.caseloadUtilization,
+      }));
+
+      const aiConsented = await this.hasAiConsent(params.clientId);
+
+      if (this.aiConfigured && aiConsented) {
+        try {
+          aiRationales = await this.callAllocationModel(signals);
+          source = 'ai';
+        } catch (err) {
+          this.logger.warn(`AI allocation rationale failed, using rule-based rationale: ${(err as Error).message}`);
+          aiRationales = this.ruleBasedAllocationRationale(signals);
+          source = 'rule-based';
+        }
+      } else {
+        aiRationales = this.ruleBasedAllocationRationale(signals);
+        source = 'rule-based';
+        if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
+      }
+    }
+
     const recommendationId = await this.logRecommendation({
       tenantId: params.tenantId,
       agent: AiAgent.ALLOCATION,
       input: { clientId: params.clientId, candidateCount: params.candidates.length },
-      output: { ranking: ranked.map((c) => ({ psychologistId: c.psychologistId, score: c.score })) },
+      output: {
+        ranking: ranked.map((c) => ({ psychologistId: c.psychologistId, score: c.score })),
+        aiRationales,
+        source,
+        ...(withheldReason ? { withheldReason } : {}),
+      },
       confidence: 0.7,
       linkedEntityType: 'Assignment',
       linkedEntityId: params.clientId,
     });
-    return { ranked, recommendationId };
+    return { ranked, aiRationales, source, recommendationId, ...(withheldReason ? { withheldReason } : {}) };
   }
 
   /** Session-Note Assistant (doc 05 §3.4) — draft SCAFFOLD only, never a fabricated note. */
@@ -272,6 +325,274 @@ export class AiGatewayService {
 
     return {
       suggestions,
+      source,
+      aiConfigured: this.aiConfigured,
+      recommendationId,
+      ...(withheldReason ? { withheldReason } : {}),
+    };
+  }
+
+  /**
+   * Differential Hypothesis (doc 05 §3.2) — SUGGESTS non-diagnostic
+   * directions only; a clinician who agrees still authors the actual
+   * DiagnosisHypothesis record elsewhere (this method never writes one).
+   * Anti-anchoring rule: ALWAYS returns >= 2 competing, hedged directions —
+   * never a single answer that could anchor the clinician's judgment.
+   */
+  async suggestDifferentials(params: {
+    tenantId: string;
+    clientId: string;
+    severityBand: string;
+    specialty: string;
+    screeningDomainsElevated: string[];
+  }): Promise<{
+    directions: DifferentialDirection[];
+    source: 'ai' | 'rule-based';
+    aiConfigured: boolean;
+    recommendationId?: string;
+    withheldReason?: 'no-ai-consent';
+  }> {
+    const signals = {
+      severityBand: params.severityBand,
+      specialty: params.specialty,
+      screeningDomainsElevated: params.screeningDomainsElevated,
+    };
+    let directions: DifferentialDirection[];
+    let source: 'ai' | 'rule-based';
+    let withheldReason: 'no-ai-consent' | undefined;
+
+    const aiConsented = await this.hasAiConsent(params.clientId);
+
+    if (this.aiConfigured && aiConsented) {
+      try {
+        directions = await this.callDifferentialModel(signals);
+        source = 'ai';
+      } catch (err) {
+        this.logger.warn(`AI differential suggestion failed, using rule-based directions: ${(err as Error).message}`);
+        directions = this.ruleBasedDifferentials(signals);
+        source = 'rule-based';
+      }
+    } else {
+      directions = this.ruleBasedDifferentials(signals);
+      source = 'rule-based';
+      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
+    }
+
+    const recommendationId = await this.logRecommendation({
+      tenantId: params.tenantId,
+      agent: AiAgent.DIFFERENTIAL,
+      input: signals,
+      output: { directions, source, ...(withheldReason ? { withheldReason } : {}) },
+      confidence: source === 'ai' ? 0.5 : 0.35,
+      linkedEntityType: 'Client',
+      linkedEntityId: params.clientId,
+    });
+
+    return {
+      directions,
+      source,
+      aiConfigured: this.aiConfigured,
+      recommendationId,
+      ...(withheldReason ? { withheldReason } : {}),
+    };
+  }
+
+  /** Outcome Intelligence (doc 05 §3.5) — an assistive trend NARRATIVE only; the Reliable Change Index classification is always computed deterministically upstream (OutcomesService) and is never recomputed or contradicted here. */
+  async narrateOutcomeTrend(params: {
+    tenantId: string;
+    clientId: string;
+    construct: string;
+    rciClassification: string;
+    direction: string;
+    nPoints: number;
+  }): Promise<{
+    narrative: string;
+    source: 'ai' | 'rule-based';
+    aiConfigured: boolean;
+    recommendationId?: string;
+    withheldReason?: 'no-ai-consent';
+  }> {
+    const signals = {
+      construct: params.construct,
+      rciClassification: params.rciClassification,
+      direction: params.direction,
+      nPoints: params.nPoints,
+    };
+    let narrative: string;
+    let source: 'ai' | 'rule-based';
+    let withheldReason: 'no-ai-consent' | undefined;
+
+    const aiConsented = await this.hasAiConsent(params.clientId);
+
+    if (this.aiConfigured && aiConsented) {
+      try {
+        narrative = await this.callOutcomeModel(signals);
+        source = 'ai';
+      } catch (err) {
+        this.logger.warn(`AI outcome narrative failed, using rule-based narrative: ${(err as Error).message}`);
+        narrative = this.ruleBasedOutcomeNarrative(signals);
+        source = 'rule-based';
+      }
+    } else {
+      narrative = this.ruleBasedOutcomeNarrative(signals);
+      source = 'rule-based';
+      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
+    }
+
+    const recommendationId = await this.logRecommendation({
+      tenantId: params.tenantId,
+      agent: AiAgent.OUTCOME,
+      input: signals,
+      output: { narrative, source, ...(withheldReason ? { withheldReason } : {}) },
+      confidence: source === 'ai' ? 0.55 : 0.4,
+      linkedEntityType: 'Client',
+      linkedEntityId: params.clientId,
+    });
+
+    return {
+      narrative,
+      source,
+      aiConfigured: this.aiConfigured,
+      recommendationId,
+      ...(withheldReason ? { withheldReason } : {}),
+    };
+  }
+
+  /**
+   * Psychometric Interpretation (doc 05 §3.7) — CLINICIAN_ONLY assistive
+   * interpretation of an ALREADY-COMPUTED, deterministic score; never
+   * re-scores or alters severity banding. Must carry the synthetic-
+   * calibration caveat whenever the underlying score used demo/uncalibrated
+   * item parameters (ScoringService/`buildScoreComputation`'s
+   * 'SYNTHETIC CALIBRATION' marker) — both paths (AI and rule-based).
+   */
+  async interpretScore(params: {
+    tenantId: string;
+    clientId: string;
+    scoreId: string;
+    instrumentCode: string;
+    severityBand: string | null;
+    theta: number | null;
+    se: number | null;
+    synthetic: boolean;
+  }): Promise<{
+    interpretation: string;
+    source: 'ai' | 'rule-based';
+    aiConfigured: boolean;
+    recommendationId?: string;
+    withheldReason?: 'no-ai-consent';
+  }> {
+    const signals = {
+      instrumentCode: params.instrumentCode,
+      severityBand: params.severityBand,
+      theta: params.theta,
+      se: params.se,
+      synthetic: params.synthetic,
+    };
+    let interpretation: string;
+    let source: 'ai' | 'rule-based';
+    let withheldReason: 'no-ai-consent' | undefined;
+
+    const aiConsented = await this.hasAiConsent(params.clientId);
+
+    if (this.aiConfigured && aiConsented) {
+      try {
+        interpretation = await this.callPsychometricModel(signals);
+        source = 'ai';
+      } catch (err) {
+        this.logger.warn(`AI score interpretation failed, using rule-based interpretation: ${(err as Error).message}`);
+        interpretation = this.ruleBasedScoreInterpretation(signals);
+        source = 'rule-based';
+      }
+    } else {
+      interpretation = this.ruleBasedScoreInterpretation(signals);
+      source = 'rule-based';
+      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
+    }
+
+    const recommendationId = await this.logRecommendation({
+      tenantId: params.tenantId,
+      agent: AiAgent.PSYCHOMETRIC,
+      input: signals,
+      output: { interpretation, source, ...(withheldReason ? { withheldReason } : {}) },
+      confidence: source === 'ai' ? 0.55 : 0.4,
+      linkedEntityType: 'PsychometricScore',
+      linkedEntityId: params.scoreId,
+    });
+
+    return {
+      interpretation,
+      source,
+      aiConfigured: this.aiConfigured,
+      recommendationId,
+      ...(withheldReason ? { withheldReason } : {}),
+    };
+  }
+
+  /**
+   * Crisis context-assembly (doc 05 §3.6). Detection is 100% DETERMINISTIC
+   * and lives entirely in the Risk & Crisis context (out of scope here) —
+   * this agent runs strictly AFTER a RiskFlag/Escalation already exists and
+   * ONLY assembles a brief situational summary for the human responder. It
+   * never detects, scores, or classifies risk itself. Advisory only — the
+   * assigned clinician/manager decides and acts on every case.
+   */
+  async summarizeRiskContext(params: {
+    tenantId: string;
+    clientId: string;
+    riskFlagId: string;
+    severity: string;
+    riskType: string;
+    openEscalations: number;
+    hasActiveSafetyPlan: boolean;
+    slaDueInMinutes: number;
+  }): Promise<{
+    summary: string;
+    source: 'ai' | 'rule-based';
+    aiConfigured: boolean;
+    recommendationId?: string;
+    withheldReason?: 'no-ai-consent';
+  }> {
+    const signals = {
+      severity: params.severity,
+      riskType: params.riskType,
+      openEscalations: params.openEscalations,
+      hasActiveSafetyPlan: params.hasActiveSafetyPlan,
+      slaDueInMinutes: params.slaDueInMinutes,
+    };
+    let summary: string;
+    let source: 'ai' | 'rule-based';
+    let withheldReason: 'no-ai-consent' | undefined;
+
+    const aiConsented = await this.hasAiConsent(params.clientId);
+
+    if (this.aiConfigured && aiConsented) {
+      try {
+        summary = await this.callRiskContextModel(signals);
+        source = 'ai';
+      } catch (err) {
+        this.logger.warn(`AI risk-context summary failed, using rule-based summary: ${(err as Error).message}`);
+        summary = this.ruleBasedRiskContext(signals);
+        source = 'rule-based';
+      }
+    } else {
+      summary = this.ruleBasedRiskContext(signals);
+      source = 'rule-based';
+      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
+    }
+
+    const recommendationId = await this.logRecommendation({
+      tenantId: params.tenantId,
+      agent: AiAgent.CRISIS_RISK,
+      input: signals,
+      output: { summary, source, ...(withheldReason ? { withheldReason } : {}) },
+      confidence: source === 'ai' ? 0.5 : 0.4,
+      linkedEntityType: 'RiskFlag',
+      linkedEntityId: params.riskFlagId,
+    });
+
+    return {
+      summary,
       source,
       aiConfigured: this.aiConfigured,
       recommendationId,
@@ -518,6 +839,321 @@ export class AiGatewayService {
           ? 'Rule-based suggestion: repeat the primary outcome measure every 2 sessions given the declining trend; clinician confirms cadence.'
           : 'Rule-based suggestion: repeat the primary outcome measure every 3-4 sessions; clinician confirms cadence.',
     };
+  }
+
+  /**
+   * Real model call for the Allocation rationale extension (doc 05 §3.8).
+   * The candidate order given here is ALREADY FINAL (the deterministic sort
+   * from `rankCandidates`) — the model is explicitly instructed never to
+   * reorder it and the parser maps rationale lines back onto the given
+   * candidates strictly by position, never by any reordering the model text
+   * might imply.
+   */
+  private async callAllocationModel(
+    signals: Array<{ psychologistId: string; score: number; specialtyMatch: boolean; caseloadUtilization: number }>,
+  ): Promise<AllocationRationale[]> {
+    const system =
+      'You are a care-allocation decision-support assistant inside a licensed psychology platform. ' +
+      'The candidate RANKING is already fixed by a deterministic algorithm and you must NEVER reorder ' +
+      'or re-score it — you only write a short (one sentence) assistive rationale per candidate from ' +
+      'the coded signals given. The assigning manager always makes the final assignment decision. ' +
+      'Output EXACTLY one line per candidate, in the SAME order given, formatted as:\n' +
+      '<n>: <rationale>\n' +
+      'with no other text.';
+    const user =
+      `De-identified candidate signals, in final rank order (do not reorder):\n` +
+      signals
+        .map(
+          (s, i) =>
+            `${i + 1}. match score: ${s.score.toFixed(2)}; specialty match: ${s.specialtyMatch ? 'yes' : 'no'}; caseload utilization: ${(s.caseloadUtilization * 100).toFixed(0)}%`,
+        )
+        .join('\n') +
+      `\n\nWrite the ${signals.length} rationale line(s) now.`;
+
+    const res = await this.getClient().messages.create({
+      model: this.model,
+      max_tokens: 300,
+      system,
+      messages: [{ role: 'user', content: user }],
+    });
+    const text = this.extractText(res);
+    const rationales: AllocationRationale[] = [];
+    for (let i = 0; i < signals.length; i++) {
+      const match = text.match(new RegExp(`^${i + 1}:\\s*(.+)$`, 'mi'));
+      if (match?.[1]) rationales.push({ psychologistId: signals[i].psychologistId, rationale: match[1].trim() });
+    }
+    if (rationales.length !== signals.length) {
+      throw new Error(`incomplete allocation rationale from ${this.model}`);
+    }
+    return rationales;
+  }
+
+  /** Deterministic, transparent rule-based rationale (NOT AI) for the Allocation extension. */
+  private ruleBasedAllocationRationale(
+    signals: Array<{ psychologistId: string; score: number; specialtyMatch: boolean; caseloadUtilization: number }>,
+  ): AllocationRationale[] {
+    return signals.map((s) => ({
+      psychologistId: s.psychologistId,
+      rationale:
+        `Rule-based note (requires manager confirmation): match score ${s.score.toFixed(2)}` +
+        (s.specialtyMatch ? ', specialty aligned' : ', specialty not confirmed aligned') +
+        `, current caseload utilization ${(s.caseloadUtilization * 100).toFixed(0)}%.`,
+    }));
+  }
+
+  /**
+   * Real model call for Differential Hypothesis. Anti-anchoring rule: a
+   * response parsed into fewer than 2 competing directions is treated as an
+   * INCOMPLETE model response (thrown, triggering honest rule-based
+   * degradation) rather than accepted as a valid single answer — the
+   * clinician must never be anchored on one direction.
+   */
+  private async callDifferentialModel(signals: {
+    severityBand: string;
+    specialty: string;
+    screeningDomainsElevated: string[];
+  }): Promise<DifferentialDirection[]> {
+    const system =
+      'You are a clinical decision-support assistant inside a licensed psychology platform. You ' +
+      'ASSIST; a licensed clinician always decides and any diagnosis is made only by that clinician ' +
+      'through their own clinical judgment. You are given ONLY de-identified, coded screening signals. ' +
+      'NEVER state or imply a diagnosis. To avoid anchoring the clinician on a single answer, you MUST ' +
+      'propose AT LEAST TWO distinct, competing, hedged differential DIRECTIONS for further clinical ' +
+      'evaluation (not diagnoses) — never just one. Output EXACTLY one line per direction, at least 2 ' +
+      'and at most 4 lines, nothing else, formatted as:\n' +
+      '- <direction to consider> || <brief hedged rationale from the signals>';
+    const user =
+      `De-identified screening signals:\n` +
+      `- severity band: ${signals.severityBand}\n` +
+      `- suggested specialty: ${signals.specialty}\n` +
+      `- elevated screening domains: ${signals.screeningDomainsElevated.join(', ') || 'none'}\n\n` +
+      `Write at least 2 competing differential direction lines now.`;
+
+    const res = await this.getClient().messages.create({
+      model: this.model,
+      max_tokens: 400,
+      system,
+      messages: [{ role: 'user', content: user }],
+    });
+    const text = this.extractText(res);
+    const directions: DifferentialDirection[] = text
+      .split('\n')
+      .map((line) => line.replace(/^\s*-\s*/, '').trim())
+      .filter((line) => line.includes('||'))
+      .map((line) => {
+        const [direction, rationale] = line.split('||').map((s) => s.trim());
+        return { direction, rationale };
+      })
+      .filter((d) => d.direction && d.rationale);
+
+    if (directions.length < 2) {
+      throw new Error(`fewer than 2 differential directions parsed from ${this.model} response`);
+    }
+    return directions;
+  }
+
+  /**
+   * Deterministic, transparent rule-based directions (NOT AI). Anti-anchoring
+   * rule enforced structurally: always returns >= 2 directions, even from a
+   * single elevated screening domain.
+   */
+  private ruleBasedDifferentials(signals: {
+    severityBand: string;
+    specialty: string;
+    screeningDomainsElevated: string[];
+  }): DifferentialDirection[] {
+    const domains = signals.screeningDomainsElevated.length ? signals.screeningDomainsElevated : ['general'];
+    const directions: DifferentialDirection[] = domains.slice(0, 3).map((domain) => ({
+      direction: `Consider further evaluation of ${domain}-related presentation`,
+      rationale: `Rule-based note (requires clinician confirmation): ${domain} was elevated on screening within a ${signals.severityBand.toLowerCase()}-severity band; insufficient evidence for any diagnosis from screening alone.`,
+    }));
+    directions.push({
+      direction: `Consider a general ${signals.specialty} evaluation independent of the above`,
+      rationale:
+        'Rule-based note (requires clinician confirmation): a broader clinical interview may surface presentations not captured by screening domains alone.',
+    });
+    return directions;
+  }
+
+  /**
+   * Real model call for Outcome Intelligence. The RCI classification is
+   * ALREADY COMPUTED deterministically upstream (OutcomesService) — this
+   * call only narrates it and must never recompute or contradict it.
+   */
+  private async callOutcomeModel(signals: {
+    construct: string;
+    rciClassification: string;
+    direction: string;
+    nPoints: number;
+  }): Promise<string> {
+    const system =
+      'You are a clinical outcomes decision-support assistant inside a licensed psychology platform. ' +
+      'You ASSIST; a licensed clinician always interprets and decides. You are given an ALREADY-COMPUTED, ' +
+      'deterministic Reliable Change Index (RCI) classification for one outcome construct — never ' +
+      'recompute, contradict, or second-guess that classification. Write a concise (2-3 sentence) ' +
+      'assistive narrative describing the trend for the clinician. Never state or imply a diagnosis. Use ' +
+      'hedged, assistive language noting clinician review is required, especially with few data points.';
+    const user =
+      `De-identified outcome-trend signals:\n` +
+      `- construct: ${signals.construct}\n` +
+      `- deterministic RCI classification: ${signals.rciClassification}\n` +
+      `- direction: ${signals.direction}\n` +
+      `- number of data points in series: ${signals.nPoints}\n\n` +
+      `Write the assistive trend narrative now.`;
+
+    const res = await this.getClient().messages.create({
+      model: this.model,
+      max_tokens: 300,
+      system,
+      messages: [{ role: 'user', content: user }],
+    });
+    return this.extractText(res);
+  }
+
+  /** Deterministic, transparent rule-based narrative (NOT AI) for Outcome Intelligence. */
+  private ruleBasedOutcomeNarrative(signals: {
+    construct: string;
+    rciClassification: string;
+    direction: string;
+    nPoints: number;
+  }): string {
+    const low = signals.nPoints < 3 ? ' Few data points are available so far; interpret with caution.' : '';
+    const byClass: Record<string, string> = {
+      baseline: `Only a baseline measurement is available for ${signals.construct}; no trend can be assessed yet.`,
+      'unknown-reliability': `The change observed in ${signals.construct} could not be reliably classified from the data available.`,
+      'no-reliable-change': `No reliable change has been detected in ${signals.construct} based on the Reliable Change Index.`,
+      'reliably-improved': `${signals.construct} shows a reliably improved trend (${signals.direction}) per the Reliable Change Index.`,
+      'reliably-worsened': `${signals.construct} shows a reliably worsened trend (${signals.direction}) per the Reliable Change Index.`,
+    };
+    const base = byClass[signals.rciClassification] ?? `The trend for ${signals.construct} is ${signals.direction}.`;
+    return `Rule-based assistive note (requires clinician review): ${base}${low}`;
+  }
+
+  /**
+   * Real model call for Psychometric Interpretation (CLINICIAN_ONLY). The
+   * score/severity band is ALREADY COMPUTED deterministically upstream — this
+   * call never re-scores or re-bands. When the underlying score used
+   * synthetic/demo calibration, the response MUST carry that caveat; a
+   * completion that omits it when required is treated as incomplete and
+   * triggers honest rule-based degradation.
+   */
+  private async callPsychometricModel(signals: {
+    instrumentCode: string;
+    severityBand: string | null;
+    theta: number | null;
+    se: number | null;
+    synthetic: boolean;
+  }): Promise<string> {
+    const system =
+      'You are a psychometric interpretation decision-support assistant inside a licensed psychology ' +
+      'platform, for CLINICIAN use only. You ASSIST; a licensed clinician always interprets and decides. ' +
+      'You are given an ALREADY-COMPUTED, deterministic score/severity band — never re-score, re-band, or ' +
+      'contradict it. Write a concise (2-3 sentence) assistive interpretation. Never state or imply a ' +
+      'diagnosis. If the score was produced using synthetic/demo calibration parameters, you MUST ' +
+      'explicitly state that caveat and that the score should not be relied on clinically until backed by ' +
+      'a validated calibration.';
+    const user =
+      `De-identified score signals:\n` +
+      `- instrument: ${signals.instrumentCode}\n` +
+      `- severity band: ${signals.severityBand ?? 'not yet banded'}\n` +
+      `- theta estimate: ${signals.theta ?? 'n/a'}\n` +
+      `- standard error: ${signals.se ?? 'n/a'}\n` +
+      `- synthetic/demo calibration: ${signals.synthetic ? 'yes' : 'no'}\n\n` +
+      `Write the clinician-facing assistive interpretation now.`;
+
+    const res = await this.getClient().messages.create({
+      model: this.model,
+      max_tokens: 350,
+      system,
+      messages: [{ role: 'user', content: user }],
+    });
+    const text = this.extractText(res);
+    if (signals.synthetic && !/synthetic|demo|uncalibrated/i.test(text)) {
+      throw new Error('AI score interpretation omitted required synthetic-calibration caveat');
+    }
+    return text;
+  }
+
+  /** Deterministic, transparent rule-based interpretation (NOT AI) for Psychometric Interpretation. */
+  private ruleBasedScoreInterpretation(signals: {
+    instrumentCode: string;
+    severityBand: string | null;
+    theta: number | null;
+    se: number | null;
+    synthetic: boolean;
+  }): string {
+    const band = signals.severityBand ? signals.severityBand.toLowerCase() : 'not yet banded';
+    const precision =
+      signals.se != null ? ` (standard error ${signals.se.toFixed(2)}, wider intervals suggest more caution)` : '';
+    const caveat = signals.synthetic
+      ? ' SYNTHETIC/DEMO CALIBRATION: this score used uncalibrated demo item parameters and must not be relied on clinically until backed by a validated calibration.'
+      : '';
+    return (
+      `Rule-based assistive note (requires clinician confirmation): the ${signals.instrumentCode} result ` +
+      `bands as ${band}${precision}. Insufficient evidence for any diagnosis from a single score alone.` +
+      caveat
+    );
+  }
+
+  /**
+   * Real model call for Crisis context-assembly. Risk DETECTION already
+   * happened deterministically elsewhere (out of scope here) — this call
+   * only assembles a brief situational summary for the human responder and
+   * must never re-assess or reclassify risk.
+   */
+  private async callRiskContextModel(signals: {
+    severity: string;
+    riskType: string;
+    openEscalations: number;
+    hasActiveSafetyPlan: boolean;
+    slaDueInMinutes: number;
+  }): Promise<string> {
+    const system =
+      'You are a crisis-response context-assembly assistant inside a licensed psychology platform. Risk ' +
+      'DETECTION already happened deterministically elsewhere and is NOT your job — you are given an ' +
+      'ALREADY-FLAGGED risk situation and must only assemble a brief (2-3 sentence) situational summary ' +
+      'to orient the human responder faster. You never decide the response, never re-assess risk level, ' +
+      "and never replace the clinician/manager's judgment — state that the human responder decides and " +
+      'acts. Do not invent facts beyond the signals given.';
+    const user =
+      `De-identified risk-context signals (risk already flagged by deterministic detection):\n` +
+      `- severity: ${signals.severity}\n` +
+      `- risk type: ${signals.riskType}\n` +
+      `- other open escalations for this client: ${signals.openEscalations}\n` +
+      `- active safety plan on file: ${signals.hasActiveSafetyPlan ? 'yes' : 'no'}\n` +
+      `- SLA time remaining: ${signals.slaDueInMinutes} minute(s)\n\n` +
+      `Write the brief situational summary now.`;
+
+    const res = await this.getClient().messages.create({
+      model: this.model,
+      max_tokens: 300,
+      system,
+      messages: [{ role: 'user', content: user }],
+    });
+    return this.extractText(res);
+  }
+
+  /** Deterministic, transparent rule-based summary (NOT AI) for Crisis context-assembly — advisory only. */
+  private ruleBasedRiskContext(signals: {
+    severity: string;
+    riskType: string;
+    openEscalations: number;
+    hasActiveSafetyPlan: boolean;
+    slaDueInMinutes: number;
+  }): string {
+    const escalations =
+      signals.openEscalations > 0
+        ? `${signals.openEscalations} other open escalation(s) for this client. `
+        : 'No other open escalations for this client. ';
+    const plan = signals.hasActiveSafetyPlan ? 'An active safety plan is on file.' : 'No active safety plan is on file.';
+    const sla =
+      signals.slaDueInMinutes <= 0
+        ? 'The response SLA has elapsed.'
+        : `Approximately ${signals.slaDueInMinutes} minute(s) remain within the response SLA.`;
+    return (
+      `Rule-based situational summary (advisory only — human responder decides and acts): a ${signals.severity.toLowerCase()}-severity ` +
+      `${signals.riskType} flag is open. ${escalations}${plan} ${sla}`
+    );
   }
 
   private async logRecommendation(input: {

@@ -100,8 +100,9 @@ function makeService(versionOverrides: Record<string, unknown> = {}) {
   const scoring = new ScoringService();
   const irt = new IrtScoringService();
 
-  const svc = new PsychometricsService(prisma as any, scoring, irt, audit as any, bus as any);
-  return { svc, prisma, tx, audit, bus, createdRiskFlags, createdEscalations, clientUpdates, createdScores };
+  const ai = { interpretScore: jest.fn() };
+  const svc = new PsychometricsService(prisma as any, scoring, irt, audit as any, bus as any, ai as any);
+  return { svc, prisma, tx, audit, bus, ai, createdRiskFlags, createdEscalations, clientUpdates, createdScores };
 }
 
 describe('PsychometricsService.administer — safety-item hook', () => {
@@ -302,7 +303,14 @@ describe('PsychometricsService.getVersionItems — locale-aware item read path',
         findMany: jest.fn().mockResolvedValue(translationRows),
       },
     };
-    const svc = new PsychometricsService(prisma as any, new ScoringService(), new IrtScoringService(), {} as any, {} as any);
+    const svc = new PsychometricsService(
+      prisma as any,
+      new ScoringService(),
+      new IrtScoringService(),
+      {} as any,
+      {} as any,
+      {} as any,
+    );
     return { svc, prisma };
   }
 
@@ -365,5 +373,80 @@ describe('PsychometricsService.getVersionItems — locale-aware item read path',
 
     expect(prisma.itemTranslation.findMany).not.toHaveBeenCalled();
     expect(result.items[0].translationStatus).toBe('source');
+  });
+});
+
+/**
+ * Psychometric Interpretation ai-assist (doc 05 §3.7, CLINICIAN_ONLY). Proves
+ * the score/severity band are read from the already-computed row (never
+ * re-scored here), the synthetic-calibration string marker is detected and
+ * forwarded as a boolean (never the raw interpretation text), and only
+ * de-identified/coded signals reach the AI Gateway.
+ */
+describe('PsychometricsService.aiInterpret — Psychometric Interpretation ai-assist', () => {
+  function scoreRow(overrides: Partial<{ id: string; interpretation: string | null }> = {}) {
+    return {
+      id: overrides.id ?? 'score_1',
+      responseId: 'resp_1',
+      rawScore: 12,
+      thetaEstimate: 0.4,
+      standardError: 0.3,
+      severityBand: 'MODERATE',
+      interpretation: overrides.interpretation ?? 'Some interpretation text.',
+      response: {
+        id: 'resp_1',
+        clientId: 'client_1',
+        version: {
+          id: 'qv_1',
+          questionnaire: { id: 'q_1', code: 'PHQ-9' },
+        },
+      },
+    };
+  }
+
+  function makeAiInterpretService(score: ReturnType<typeof scoreRow> | null) {
+    const prisma = { psychometricScore: { findFirst: jest.fn().mockResolvedValue(score) } };
+    const ai = {
+      interpretScore: jest.fn().mockResolvedValue({
+        interpretation: 'assistive text',
+        source: 'rule-based',
+        aiConfigured: false,
+      }),
+    };
+    const svc = new PsychometricsService(prisma as any, {} as any, {} as any, {} as any, {} as any, ai as any);
+    return { svc, prisma, ai };
+  }
+
+  it('throws NotFoundException when the score does not exist in this tenant', async () => {
+    const { svc } = makeAiInterpretService(null);
+
+    await expect(svc.aiInterpret(principal, 'score_missing')).rejects.toThrow(/not found/i);
+  });
+
+  it('forwards ONLY de-identified, already-computed score signals to the AI Gateway — synthetic=false when no marker present', async () => {
+    const { svc, ai } = makeAiInterpretService(scoreRow({ interpretation: 'Non-synthetic interpretation.' }));
+
+    await svc.aiInterpret(principal, 'score_1');
+
+    expect(ai.interpretScore).toHaveBeenCalledWith({
+      tenantId: principal.tenantId,
+      clientId: 'client_1',
+      scoreId: 'score_1',
+      instrumentCode: 'PHQ-9',
+      severityBand: 'MODERATE',
+      theta: 0.4,
+      se: 0.3,
+      synthetic: false,
+    });
+  });
+
+  it('detects the SYNTHETIC CALIBRATION marker and forwards synthetic=true', async () => {
+    const { svc, ai } = makeAiInterpretService(
+      scoreRow({ interpretation: ' ⚠ SYNTHETIC CALIBRATION — DEMO ONLY: uncalibrated parameters.' }),
+    );
+
+    await svc.aiInterpret(principal, 'score_1');
+
+    expect(ai.interpretScore).toHaveBeenCalledWith(expect.objectContaining({ synthetic: true }));
   });
 });

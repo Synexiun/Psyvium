@@ -26,8 +26,15 @@ function makeService() {
     },
   };
   const audit = { record: jest.fn() };
-  const svc = new OutcomesService(prisma as any, audit as any);
-  return { svc, prisma, audit };
+  const ai = {
+    narrateOutcomeTrend: jest.fn().mockResolvedValue({
+      narrative: 'narrative',
+      source: 'rule-based',
+      aiConfigured: false,
+    }),
+  };
+  const svc = new OutcomesService(prisma as any, audit as any, ai as any);
+  return { svc, prisma, audit, ai };
 }
 
 function measureRow(overrides: Partial<{ id: string; construct: string; value: number; occurredAt: Date }> = {}) {
@@ -124,5 +131,57 @@ describe('OutcomesService — Reliable Change Index', () => {
     expect(results[1].trend.classification).toBe('no-reliable-change');
     expect(results[2].trend.rci).toBeCloseTo(-1.8589, 3); // 12 -> 6 vs. the immediately-prior measure
     expect(results[2].trend.classification).toBe('no-reliable-change');
+  });
+});
+
+describe('OutcomesService — Outcome Intelligence ai-assist (doc 05 §3.5)', () => {
+  it('rejects when the client does not exist in this tenant', async () => {
+    const { svc, prisma } = makeService();
+    (prisma.client.findFirst as jest.Mock).mockResolvedValue(null);
+
+    await expect(
+      svc.aiAssist(principal, {
+        clientId: 'client_missing',
+        construct: 'depression',
+        rciClassification: 'reliably-improved',
+        direction: 'decreased',
+        nPoints: 3,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('forwards ONLY the de-identified, already-computed trend signals to the AI Gateway — never raw scores/dates', async () => {
+    const { svc, ai } = makeService();
+
+    await svc.aiAssist(principal, {
+      clientId: 'client_1',
+      construct: 'depression',
+      rciClassification: 'reliably-improved',
+      direction: 'decreased',
+      nPoints: 4,
+    });
+
+    expect(ai.narrateOutcomeTrend).toHaveBeenCalledWith({
+      tenantId: principal.tenantId,
+      clientId: 'client_1',
+      construct: 'depression',
+      rciClassification: 'reliably-improved',
+      direction: 'decreased',
+      nPoints: 4,
+    });
+  });
+
+  it('never writes an OutcomeMeasure — this is a narration-only assist, not a recording path', async () => {
+    const { svc, prisma } = makeService();
+
+    await svc.aiAssist(principal, {
+      clientId: 'client_1',
+      construct: 'depression',
+      rciClassification: 'no-reliable-change',
+      direction: 'unchanged',
+      nPoints: 2,
+    });
+
+    expect(prisma.outcomeMeasure.create).not.toHaveBeenCalled();
   });
 });

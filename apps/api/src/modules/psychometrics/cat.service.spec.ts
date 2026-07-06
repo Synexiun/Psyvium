@@ -161,7 +161,8 @@ function makeHarness(opts: {
   const irt = new IrtScoringService();
   const selection = new CatSelectionService();
   selection.rng = opts.rng ?? (() => 0); // pinned: always THE max-information item
-  const psychometrics = new PsychometricsService(prisma as any, scoring, irt, audit as any, bus as any);
+  const ai = { interpretScore: jest.fn() };
+  const psychometrics = new PsychometricsService(prisma as any, scoring, irt, audit as any, bus as any, ai as any);
   const cat = new CatService(prisma as any, selection, irt, psychometrics, audit as any);
 
   return { cat, irt, selection, prisma, tx, audit, bus, sessions, createdResponses, createdScores, createdRiskFlags, createdEscalations };

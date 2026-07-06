@@ -31,7 +31,11 @@ export class MatchingService implements OnModuleInit {
     });
   }
 
-  /** Deterministic candidate ranking; the AI layer explains + orders; manager decides. */
+  /**
+   * Deterministic candidate ranking; the AI layer only ever EXPLAINS the
+   * top candidates (never reorders them) via `rankCandidates`; the manager
+   * remains the final assignment authority.
+   */
   async proposeForClient(tenantId: string, clientId: string, suggestedSpecialty: string) {
     const client = await this.prisma.client.findUnique({ where: { id: clientId } });
     if (!client) return;
@@ -77,7 +81,18 @@ export class MatchingService implements OnModuleInit {
       };
     });
 
-    const { ranked } = await this.ai.rankCandidates({ tenantId, clientId, candidates });
+    // The RANKING itself is ALWAYS the deterministic sort computed inside
+    // `rankCandidates` — the AI layer NEVER reorders it. When configured +
+    // consented, it additionally returns a short assistive rationale note
+    // per top-3 candidate, which is merged onto the persisted candidates
+    // below purely for display; it never influences `rank`/order.
+    const { ranked, aiRationales } = await this.ai.rankCandidates({ tenantId, clientId, candidates });
+    const rationaleByPsychologist = new Map((aiRationales ?? []).map((r) => [r.psychologistId, r.rationale]));
+    const candidatesWithRationale = ranked.map((c) =>
+      rationaleByPsychologist.has(c.psychologistId)
+        ? { ...c, aiRationale: rationaleByPsychologist.get(c.psychologistId) }
+        : c,
+    );
 
     const assignment = await this.prisma.assignment.create({
       data: {
@@ -85,7 +100,7 @@ export class MatchingService implements OnModuleInit {
         clientId,
         status: AssignmentStatus.PROPOSED,
         proposedBy: 'AI',
-        candidates: ranked as any,
+        candidates: candidatesWithRationale as any,
         rank: 0,
       },
     });

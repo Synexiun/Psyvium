@@ -9,15 +9,20 @@ import {
   type AdministerResponseInput,
   type AssessmentItemDto,
   type AuthPrincipal,
+  type PsychometricAiAssistResult,
   type QuestionnaireResponseDto,
   type VersionItemsResponseDto,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
+import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { ScoringService, type ClassicalScoreResult, type SafetyItemHit } from './scoring.service';
 import { IrtScoringService, type IrtScorableItem } from './irt-scoring.service';
 import { ScoringMethod, type IrtScoreResult } from '@vpsy/contracts';
+
+/** Marker embedded in `PsychometricScore.interpretation` by `buildScoreComputation` when demo/uncalibrated item parameters were used — no dedicated schema column exists (schema.prisma out of scope), so detection is string-based. */
+const SYNTHETIC_CALIBRATION_MARKER = 'SYNTHETIC CALIBRATION';
 
 /**
  * Mirrors the Prisma `AdministrationMode` enum values (STATIC batch form vs
@@ -113,6 +118,7 @@ export class PsychometricsService {
     private readonly irt: IrtScoringService,
     private readonly audit: AuditService,
     private readonly bus: EventBus,
+    private readonly ai: AiGatewayService,
   ) {}
 
   async administer(principal: AuthPrincipal, input: AdministerResponseInput): Promise<QuestionnaireResponseDto> {
@@ -466,6 +472,36 @@ export class PsychometricsService {
     });
     if (!response) throw new NotFoundException('Response not found');
     return this.toDto(response, response.score);
+  }
+
+  /**
+   * Psychometric Interpretation (doc 05 §3.7) — CLINICIAN_ONLY assistive
+   * interpretation of an ALREADY-COMPUTED, deterministic score; never
+   * re-scores or re-bands. Detects the synthetic-calibration caveat via the
+   * string marker `buildScoreComputation`/scoring pipeline embeds into
+   * `interpretation` (no dedicated schema column — schema.prisma is out of
+   * scope for this change) and forwards that boolean, never the raw
+   * interpretation text itself, to the AI Gateway.
+   */
+  async aiInterpret(principal: AuthPrincipal, scoreId: string): Promise<PsychometricAiAssistResult> {
+    const score = await this.prisma.psychometricScore.findFirst({
+      where: { id: scoreId, tenantId: principal.tenantId },
+      include: { response: { include: { version: { include: { questionnaire: true } } } } },
+    });
+    if (!score) throw new NotFoundException('Score not found');
+
+    const synthetic = score.interpretation?.includes(SYNTHETIC_CALIBRATION_MARKER) ?? false;
+
+    return this.ai.interpretScore({
+      tenantId: principal.tenantId,
+      clientId: score.response.clientId,
+      scoreId: score.id,
+      instrumentCode: score.response.version.questionnaire.code,
+      severityBand: score.severityBand,
+      theta: score.thetaEstimate,
+      se: score.standardError,
+      synthetic,
+    });
   }
 
   /** Public: CAT completion reuses the exact same response+score serialization. */

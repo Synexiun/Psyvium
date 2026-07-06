@@ -57,6 +57,19 @@ export class PsychometricsController {
   }
 
   /**
+   * Psychometric Interpretation (doc 05 §3.7) — CLINICIAN_ONLY assistive
+   * interpretation of an already-scored, already-banded result. No request
+   * body: the target score is identified entirely by `:id`, and every signal
+   * sent to the model is derived server-side (never re-scored, never
+   * overridden by AI).
+   */
+  @Post('scores/:id/ai-interpret')
+  @RequirePermissions(Permission.ASSESSMENT_INTERPRET)
+  aiInterpret(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
+    return this.psychometrics.aiInterpret(user, id);
+  }
+
+  /**
    * Serves item stems/response options for the web assessment UI
    * (docs/technical/07-psychometrics-engine.md §9). Same permission as
    * self-administer: a CLIENT reading the questions they're about to answer

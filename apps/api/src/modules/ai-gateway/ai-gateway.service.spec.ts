@@ -487,3 +487,411 @@ describe('AiGatewayService — WAVE CR AI-consent gate', () => {
     });
   });
 });
+
+/**
+ * Wave C completion — the 5 remaining governed agents from doc 05 §3:
+ * Differential Hypothesis (§3.2), Outcome Intelligence (§3.5), Psychometric
+ * Interpretation (§3.7), Crisis context-assembly (§3.6), and the Allocation
+ * rationale extension (§3.8). Same governance invariants proven above,
+ * pinned per-agent, plus the anti-anchoring rule specific to Differentials.
+ */
+describe('AiGatewayService.suggestDifferentials (Differential Hypothesis, §3.2)', () => {
+  const baseParams = {
+    tenantId: 'tenant_demo',
+    clientId: 'client_1',
+    severityBand: 'MODERATE',
+    specialty: 'anxiety disorders',
+    screeningDomainsElevated: ['anxiety', 'sleep'],
+  };
+
+  it('with no ANTHROPIC_API_KEY: returns >= 2 honest rule-based directions and logs a PENDING AIRecommendation', async () => {
+    withNoKey();
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const result = await svc.suggestDifferentials(baseParams);
+
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(result.source).toBe('rule-based');
+    // Anti-anchoring rule: never a single answer, even in the rule-based path.
+    expect(result.directions.length).toBeGreaterThanOrEqual(2);
+    expect(result.directions.every((d) => d.direction && d.rationale)).toBe(true);
+
+    expect(prisma.aIRecommendation.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          agent: 'DIFFERENTIAL',
+          humanDecision: 'PENDING',
+          linkedEntityType: 'Client',
+          linkedEntityId: 'client_1',
+        }),
+      }),
+    );
+  });
+
+  it('PHI minimization: only severity band, specialty, and coded screening domains reach the model', async () => {
+    withKey();
+    mockMessagesCreate.mockResolvedValue({
+      content: [
+        {
+          type: 'text',
+          text:
+            '- Consider a mood-disorder evaluation || Screening indicates elevated depression-adjacent signals\n' +
+            '- Consider an anxiety-disorder evaluation || Screening indicates elevated anxiety signals',
+        },
+      ],
+    });
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const result = await svc.suggestDifferentials(baseParams);
+
+    expect(result.source).toBe('ai');
+    expect(result.directions).toHaveLength(2);
+    const call = mockMessagesCreate.mock.calls[0][0];
+    expect(call.messages[0].content).toContain('severity band: MODERATE');
+    expect(call.messages[0].content).toContain('suggested specialty: anxiety disorders');
+    expect(call.messages[0].content).toContain('elevated screening domains: anxiety, sleep');
+    expect(call.system).toMatch(/NEVER state or imply a diagnosis/);
+    expect(call.system).toMatch(/AT LEAST TWO/);
+  });
+
+  it('anti-anchoring rule: a model response parsed into fewer than 2 directions is treated as incomplete and degrades honestly to rule-based', async () => {
+    withKey();
+    mockMessagesCreate.mockResolvedValue({
+      content: [{ type: 'text', text: '- Only one direction || only one rationale' }],
+    });
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const result = await svc.suggestDifferentials(baseParams);
+
+    expect(result.source).toBe('rule-based');
+    expect(result.directions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('WAVE CR consent gate: withholds AI and never invokes the model without an active AI_ASSISTED_ANALYSIS consent', async () => {
+    withKey();
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const consent = makeConsent(false);
+    const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+
+    const result = await svc.suggestDifferentials(baseParams);
+
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(result.source).toBe('rule-based');
+    expect(result.withheldReason).toBe('no-ai-consent');
+  });
+});
+
+describe('AiGatewayService.narrateOutcomeTrend (Outcome Intelligence, §3.5)', () => {
+  const baseParams = {
+    tenantId: 'tenant_demo',
+    clientId: 'client_1',
+    construct: 'depression',
+    rciClassification: 'reliably-improved',
+    direction: 'decreased',
+    nPoints: 4,
+  };
+
+  it('with no ANTHROPIC_API_KEY: returns an honest rule-based narrative and logs a PENDING AIRecommendation', async () => {
+    withNoKey();
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const result = await svc.narrateOutcomeTrend(baseParams);
+
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(result.source).toBe('rule-based');
+    expect(result.narrative).toMatch(/reliably improved/);
+
+    expect(prisma.aIRecommendation.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ agent: 'OUTCOME', humanDecision: 'PENDING', linkedEntityId: 'client_1' }),
+      }),
+    );
+  });
+
+  it('PHI minimization: only the already-computed construct/RCI classification/direction/nPoints reach the model — never raw scores/dates', async () => {
+    withKey();
+    mockMessagesCreate.mockResolvedValue({ content: [{ type: 'text', text: 'Assistive trend narrative.' }] });
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const result = await svc.narrateOutcomeTrend(baseParams);
+
+    expect(result.source).toBe('ai');
+    const call = mockMessagesCreate.mock.calls[0][0];
+    expect(call.messages[0].content).toContain('construct: depression');
+    expect(call.messages[0].content).toContain('deterministic RCI classification: reliably-improved');
+    expect(call.messages[0].content).toContain('direction: decreased');
+    expect(call.messages[0].content).toContain('number of data points in series: 4');
+    expect(call.system).toMatch(/never recompute, contradict, or second-guess/);
+  });
+
+  it('WAVE CR consent gate: withholds AI and never invokes the model without an active AI_ASSISTED_ANALYSIS consent', async () => {
+    withKey();
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const consent = makeConsent(false);
+    const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+
+    const result = await svc.narrateOutcomeTrend(baseParams);
+
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(result.source).toBe('rule-based');
+    expect(result.withheldReason).toBe('no-ai-consent');
+  });
+});
+
+describe('AiGatewayService.interpretScore (Psychometric Interpretation, §3.7, CLINICIAN_ONLY)', () => {
+  const baseParams = {
+    tenantId: 'tenant_demo',
+    clientId: 'client_1',
+    scoreId: 'score_1',
+    instrumentCode: 'PHQ-9',
+    severityBand: 'MODERATE' as string | null,
+    theta: 0.4 as number | null,
+    se: 0.3 as number | null,
+    synthetic: false,
+  };
+
+  it('with no ANTHROPIC_API_KEY: returns an honest rule-based interpretation and logs a PENDING AIRecommendation', async () => {
+    withNoKey();
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const result = await svc.interpretScore(baseParams);
+
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(result.source).toBe('rule-based');
+
+    expect(prisma.aIRecommendation.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          agent: 'PSYCHOMETRIC',
+          humanDecision: 'PENDING',
+          linkedEntityType: 'PsychometricScore',
+          linkedEntityId: 'score_1',
+        }),
+      }),
+    );
+  });
+
+  it('must state the synthetic-calibration caveat when synthetic=true (both AI and rule-based paths)', async () => {
+    withNoKey();
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const result = await svc.interpretScore({ ...baseParams, synthetic: true });
+
+    expect(result.source).toBe('rule-based');
+    expect(result.interpretation).toMatch(/synthetic|demo/i);
+  });
+
+  it('PHI minimization: only instrument/severity/theta/se/synthetic reach the model — never client identifiers', async () => {
+    withKey();
+    mockMessagesCreate.mockResolvedValue({
+      content: [{ type: 'text', text: 'Assistive interpretation with no caveat needed.' }],
+    });
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const result = await svc.interpretScore(baseParams);
+
+    expect(result.source).toBe('ai');
+    const call = mockMessagesCreate.mock.calls[0][0];
+    expect(call.messages[0].content).toContain('instrument: PHQ-9');
+    expect(call.messages[0].content).toContain('severity band: MODERATE');
+    expect(call.messages[0].content).toContain('theta estimate: 0.4');
+    expect(call.messages[0].content).toContain('synthetic/demo calibration: no');
+    expect(call.system).not.toMatch(/client name|date of birth/i);
+  });
+
+  it('degrades honestly to rule-based when the model omits the required synthetic-calibration caveat', async () => {
+    withKey();
+    mockMessagesCreate.mockResolvedValue({
+      content: [{ type: 'text', text: 'An interpretation that never mentions the calibration caveat.' }],
+    });
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const result = await svc.interpretScore({ ...baseParams, synthetic: true });
+
+    expect(result.source).toBe('rule-based');
+    expect(result.interpretation).toMatch(/synthetic|demo/i);
+  });
+
+  it('WAVE CR consent gate: withholds AI and never invokes the model without an active AI_ASSISTED_ANALYSIS consent', async () => {
+    withKey();
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const consent = makeConsent(false);
+    const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+
+    const result = await svc.interpretScore(baseParams);
+
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(result.source).toBe('rule-based');
+    expect(result.withheldReason).toBe('no-ai-consent');
+  });
+});
+
+describe('AiGatewayService.summarizeRiskContext (Crisis context-assembly, §3.6 — advisory only)', () => {
+  const baseParams = {
+    tenantId: 'tenant_demo',
+    clientId: 'client_1',
+    riskFlagId: 'flag_1',
+    severity: 'HIGH',
+    riskType: 'suicidal_ideation',
+    openEscalations: 1,
+    hasActiveSafetyPlan: true,
+    slaDueInMinutes: 30,
+  };
+
+  it('with no ANTHROPIC_API_KEY: returns an honest rule-based summary and logs a PENDING AIRecommendation', async () => {
+    withNoKey();
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const result = await svc.summarizeRiskContext(baseParams);
+
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(result.source).toBe('rule-based');
+    expect(result.summary).toMatch(/human responder decides and acts/);
+
+    expect(prisma.aIRecommendation.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          agent: 'CRISIS_RISK',
+          humanDecision: 'PENDING',
+          linkedEntityType: 'RiskFlag',
+          linkedEntityId: 'flag_1',
+        }),
+      }),
+    );
+  });
+
+  it('PHI minimization: only severity/riskType/openEscalations/hasActiveSafetyPlan/slaDueInMinutes reach the model', async () => {
+    withKey();
+    mockMessagesCreate.mockResolvedValue({ content: [{ type: 'text', text: 'Brief situational summary.' }] });
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const result = await svc.summarizeRiskContext(baseParams);
+
+    expect(result.source).toBe('ai');
+    const call = mockMessagesCreate.mock.calls[0][0];
+    expect(call.messages[0].content).toContain('severity: HIGH');
+    expect(call.messages[0].content).toContain('risk type: suicidal_ideation');
+    expect(call.messages[0].content).toContain('other open escalations for this client: 1');
+    expect(call.messages[0].content).toContain('active safety plan on file: yes');
+    expect(call.messages[0].content).toContain('SLA time remaining: 30 minute(s)');
+    expect(call.system).toMatch(/DETECTION already happened deterministically elsewhere/);
+  });
+
+  it('WAVE CR consent gate: withholds AI and never invokes the model without an active AI_ASSISTED_ANALYSIS consent', async () => {
+    withKey();
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const consent = makeConsent(false);
+    const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+
+    const result = await svc.summarizeRiskContext(baseParams);
+
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(result.source).toBe('rule-based');
+    expect(result.withheldReason).toBe('no-ai-consent');
+  });
+});
+
+describe('AiGatewayService.rankCandidates (Allocation rationale extension, §3.8)', () => {
+  function candidate(overrides: Partial<{ psychologistId: string; score: number; fitWarnings: string[] }> = {}) {
+    return {
+      psychologistId: overrides.psychologistId ?? 'psy_1',
+      displayName: 'Dr. Test',
+      specialties: ['anxiety disorders'],
+      languages: ['en'],
+      jurisdiction: 'CA',
+      caseloadUtilization: 0.5,
+      outcomeIndex: 80,
+      score: overrides.score ?? 90,
+      rationale: 'deterministic rationale',
+      fitWarnings: overrides.fitWarnings ?? [],
+    };
+  }
+
+  it('the ranking is ALWAYS the deterministic sort — the AI layer never reorders, even when unconfigured', async () => {
+    withNoKey();
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const candidates = [candidate({ psychologistId: 'psy_low', score: 40 }), candidate({ psychologistId: 'psy_high', score: 95 })];
+    const result = await svc.rankCandidates({ tenantId: 'tenant_demo', clientId: 'client_1', candidates });
+
+    expect(result.ranked.map((c) => c.psychologistId)).toEqual(['psy_high', 'psy_low']);
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(result.source).toBe('rule-based');
+    expect(result.aiRationales).toHaveLength(2);
+  });
+
+  it('PHI minimization: only score/specialtyMatch/caseloadUtilization per top-3 candidate reach the model — never client identifiers', async () => {
+    withKey();
+    mockMessagesCreate.mockResolvedValue({ content: [{ type: 'text', text: '1: Strong specialty and score match.' }] });
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const candidates = [candidate({ psychologistId: 'psy_only' })];
+    const result = await svc.rankCandidates({ tenantId: 'tenant_demo', clientId: 'client_1', candidates });
+
+    expect(result.source).toBe('ai');
+    expect(result.aiRationales).toEqual([{ psychologistId: 'psy_only', rationale: 'Strong specialty and score match.' }]);
+    const call = mockMessagesCreate.mock.calls[0][0];
+    expect(call.messages[0].content).toContain('match score: 90.00');
+    expect(call.messages[0].content).toContain('specialty match: yes');
+    expect(call.messages[0].content).toContain('caseload utilization: 50%');
+    expect(call.system).toMatch(/NEVER reorder/);
+  });
+
+  it('degrades honestly to rule-based rationale when the model call fails', async () => {
+    withKey();
+    mockMessagesCreate.mockRejectedValue(new Error('provider down'));
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+
+    const result = await svc.rankCandidates({ tenantId: 'tenant_demo', clientId: 'client_1', candidates: [candidate()] });
+
+    expect(result.source).toBe('rule-based');
+    expect(result.aiRationales).toHaveLength(1);
+  });
+
+  it('WAVE CR consent gate: withholds AI rationale and never invokes the model without an active AI_ASSISTED_ANALYSIS consent, while the ranking itself still returns', async () => {
+    withKey();
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const consent = makeConsent(false);
+    const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+
+    const result = await svc.rankCandidates({ tenantId: 'tenant_demo', clientId: 'client_1', candidates: [candidate()] });
+
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(result.source).toBe('rule-based');
+    expect(result.withheldReason).toBe('no-ai-consent');
+    expect(result.ranked).toHaveLength(1);
+  });
+});
