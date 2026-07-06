@@ -20,12 +20,34 @@ type NoteRow = {
   signedBy: string | null;
   version: number;
   createdAt: Date;
+  planId: string | null;
+  goalIds: string[];
+  formulationId: string | null;
+  riskStatusAtNote: string | null;
+  sessionSnapshot: unknown;
+  amendsVersionId: string | null;
+  amendmentReason: string | null;
 };
 
 /**
  * Clinical Documentation. Session notes are append-only: `create` always adds
  * the next version for a session rather than mutating an existing row, and
  * `sign` is a one-way transition that makes that row immutable thereafter.
+ *
+ * WAVE CR item 8 — golden-thread enforcement (docs/10-10-PROGRAM.md): the CMS/
+ * Medicaid audit standard that diagnosis -> plan -> note is traceable.
+ * `create()` requires `planId` + >=1 valid `goalId` whenever the client has
+ * an ACTIVE TreatmentPlan (400 with the valid goal list otherwise); when
+ * there is no active plan, the note is still allowed but honestly flagged
+ * `sessionSnapshot.goldenThread = 'no-active-plan'` rather than silently
+ * looking complete. `sessionSnapshot`/`riskStatusAtNote` are populated from
+ * the Session/Client rows AT CREATE TIME — a note-time snapshot, never
+ * recomputed later.
+ *
+ * WAVE CR P1 — amendment semantics: once a session already has a prior
+ * SIGNED note, any further note for that session is a post-signature
+ * addendum and `amendmentReason` is required (400 otherwise) — no silent
+ * addenda.
  */
 @Injectable()
 export class ClinicalDocumentationService {
@@ -39,6 +61,7 @@ export class ClinicalDocumentationService {
   async create(principal: AuthPrincipal, input: CreateSessionNoteInput): Promise<SessionNoteDto> {
     const session = await this.prisma.session.findFirst({
       where: { id: input.sessionId, tenantId: principal.tenantId },
+      include: { appointment: { include: { client: true } } },
     });
     if (!session) throw new NotFoundException('Session not found');
 
@@ -47,6 +70,72 @@ export class ClinicalDocumentationService {
       orderBy: { version: 'desc' },
     });
 
+    // Amendment semantics (WAVE CR P1): once this session already has a
+    // SIGNED note, any further note is a post-signature addendum — never a
+    // silent one.
+    const priorSigned = await this.prisma.sessionNote.findFirst({
+      where: { tenantId: principal.tenantId, sessionId: input.sessionId, signedAt: { not: null } },
+    });
+    if (priorSigned && !input.amendmentReason) {
+      throw new BadRequestException(
+        'This session already has a signed note; amendmentReason is required to file a post-signature amendment.',
+      );
+    }
+
+    const clientId = session.appointment.clientId;
+    const activePlan = await this.prisma.treatmentPlan.findFirst({
+      where: { tenantId: principal.tenantId, clientId, status: 'active' },
+      include: { goals: true },
+    });
+
+    let planId: string | null | undefined = input.planId;
+    let goalIds: string[] = input.goalIds ?? [];
+    let goldenThreadFlag: string | undefined;
+
+    if (activePlan) {
+      const validGoalIds = activePlan.goals.map((g) => g.id);
+      if (!planId || goalIds.length === 0) {
+        throw new BadRequestException(
+          `Golden-thread enforcement: client has an active treatment plan (${activePlan.id}) — the note must reference planId and at least one goalId. Valid goals: [${validGoalIds.join(', ')}]`,
+        );
+      }
+      if (planId !== activePlan.id) {
+        throw new BadRequestException(
+          `planId must reference the client's active treatment plan (${activePlan.id}), not ${planId}.`,
+        );
+      }
+      const validSet = new Set(validGoalIds);
+      const invalidGoalIds = goalIds.filter((id) => !validSet.has(id));
+      if (invalidGoalIds.length > 0) {
+        throw new BadRequestException(
+          `goalIds must belong to the active plan (${activePlan.id}). Invalid: [${invalidGoalIds.join(', ')}]. Valid goals: [${validGoalIds.join(', ')}]`,
+        );
+      }
+    } else {
+      // Honest, not silently green: no active plan exists to anchor to.
+      planId = null;
+      goalIds = [];
+      goldenThreadFlag = 'no-active-plan';
+    }
+
+    if (input.formulationId) {
+      const formulation = await this.prisma.formulation.findFirst({
+        where: { id: input.formulationId, tenantId: principal.tenantId, clientId },
+      });
+      if (!formulation) throw new NotFoundException('Referenced formulation not found for this client');
+    }
+
+    const durationMin =
+      session.startedAt && session.endedAt
+        ? Math.round((session.endedAt.getTime() - session.startedAt.getTime()) / 60000)
+        : null;
+    const sessionSnapshot = {
+      date: (session.startedAt ?? session.appointment.startsAt).toISOString(),
+      durationMin,
+      modality: session.modality,
+      ...(goldenThreadFlag ? { goldenThread: goldenThreadFlag } : {}),
+    };
+
     const note = await this.prisma.sessionNote.create({
       data: {
         tenantId: principal.tenantId,
@@ -54,6 +143,13 @@ export class ClinicalDocumentationService {
         content: input.content as any,
         continuitySummary: input.continuitySummary,
         version: (latest?.version ?? 0) + 1,
+        planId,
+        goalIds,
+        formulationId: input.formulationId,
+        riskStatusAtNote: session.appointment.client.riskLevel,
+        sessionSnapshot,
+        amendsVersionId: input.amendsVersionId,
+        amendmentReason: input.amendmentReason,
       },
     });
 
@@ -63,7 +159,7 @@ export class ClinicalDocumentationService {
       action: 'note.created',
       entityType: 'SessionNote',
       entityId: note.id,
-      after: { sessionId: input.sessionId, version: note.version },
+      after: { sessionId: input.sessionId, version: note.version, goldenThread: goldenThreadFlag ?? 'anchored' },
     });
 
     return this.toDto(note);
@@ -139,6 +235,13 @@ export class ClinicalDocumentationService {
       signedBy: note.signedBy,
       version: note.version,
       createdAt: note.createdAt.toISOString(),
+      planId: note.planId,
+      goalIds: note.goalIds,
+      formulationId: note.formulationId,
+      riskStatusAtNote: note.riskStatusAtNote,
+      sessionSnapshot: (note.sessionSnapshot as Record<string, unknown> | null) ?? null,
+      amendsVersionId: note.amendsVersionId,
+      amendmentReason: note.amendmentReason,
     };
   }
 }

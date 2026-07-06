@@ -36,10 +36,26 @@ export const sessionNoteContentSchema = z.discriminatedUnion('format', [
 ]);
 export type SessionNoteContent = z.infer<typeof sessionNoteContentSchema>;
 
+/**
+ * WAVE CR item 8 — golden-thread enforcement (docs/10-10-PROGRAM.md): CMS/
+ * Medicaid audit standard that diagnosis -> plan -> note is traceable.
+ * `planId`/`goalIds` are the caller-supplied thread anchors; the service
+ * requires them when the client has an ACTIVE TreatmentPlan (400 otherwise)
+ * and honestly flags `sessionSnapshot.goldenThread: 'no-active-plan'` when
+ * there is none to anchor to. `formulationId` optionally cites the coded
+ * diagnosis the session addressed. `amendsVersionId`/`amendmentReason` are
+ * the WAVE CR P1 amendment-semantics fields — the service requires a reason
+ * whenever the session already has a prior SIGNED note.
+ */
 export const createSessionNoteSchema = z.object({
   sessionId: z.string(),
   content: sessionNoteContentSchema,
   continuitySummary: z.string().max(2000).optional(),
+  planId: z.string().optional(),
+  goalIds: z.array(z.string()).default([]),
+  formulationId: z.string().optional(),
+  amendsVersionId: z.string().optional(),
+  amendmentReason: z.string().max(2000).optional(),
 });
 export type CreateSessionNoteInput = z.infer<typeof createSessionNoteSchema>;
 
@@ -52,5 +68,12 @@ export const sessionNoteSchema = z.object({
   signedBy: z.string().nullable(),
   version: z.number().int(),
   createdAt: z.string(),
+  planId: z.string().nullable(),
+  goalIds: z.array(z.string()),
+  formulationId: z.string().nullable(),
+  riskStatusAtNote: z.string().nullable(),
+  sessionSnapshot: z.record(z.unknown()).nullable(),
+  amendsVersionId: z.string().nullable(),
+  amendmentReason: z.string().nullable(),
 });
 export type SessionNoteDto = z.infer<typeof sessionNoteSchema>;

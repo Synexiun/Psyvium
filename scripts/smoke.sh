@@ -49,7 +49,18 @@ SEV=$(curl -s -X POST "$BASE/intake" -H "$AH $CLI" -H 'Content-Type: application
 check "matching proposals available" "true" "$(curl -s "$BASE/assignments/proposals" -H "$AH $MGR" | py "import sys,json;print(str(len(json.load(sys.stdin))>=0).lower())")"
 
 # ── Clinical documentation — license gate lets a credentialed clinician write ──
-check "note write (active license)" "201" "$(code -X POST "$BASE/session-notes" -H "$AH $PSY" -H 'Content-Type: application/json' -d '{"sessionId":"session_demo_1","content":{"format":"narrative","narrative":"Smoke-test note."}}')"
+# WAVE CR item 8 (golden-thread enforcement): session_demo_1's client has an
+# ACTIVE treatment plan, so a new note must reference planId + >=1 real goalId
+# from that plan (400 otherwise). Fetch the live plan/goal ids rather than
+# hard-coding them — seed.ts upserts are deterministic today but the golden
+# thread is enforced against whatever plan is actually active. session_demo_1
+# also already carries a SIGNED note from seed (note_demo_signed), so any
+# further note for it is a post-signature amendment (WAVE CR P1) and must
+# supply amendmentReason too.
+PLAN_JSON=$(curl -s "$BASE/treatment-plans/client/$ALEX_CLIENT_ID/active" -H "$AH $PSY")
+PLAN_ID=$(echo "$PLAN_JSON" | py "import sys,json;d=json.load(sys.stdin);print(d['id'] if d else '')")
+GOAL_ID=$(echo "$PLAN_JSON" | py "import sys,json;d=json.load(sys.stdin);print(d['goals'][0]['id'] if d and d.get('goals') else '')")
+check "note write (active license, golden-thread anchored)" "201" "$(code -X POST "$BASE/session-notes" -H "$AH $PSY" -H 'Content-Type: application/json' -d "{\"sessionId\":\"session_demo_1\",\"content\":{\"format\":\"narrative\",\"narrative\":\"Smoke-test note.\"},\"planId\":\"$PLAN_ID\",\"goalIds\":[\"$GOAL_ID\"],\"amendmentReason\":\"Smoke-test documented addendum.\"}")"
 
 # ── Psychometrics — patient self-administers (NOT license-gated) ──
 check "assessment self-administer" "201" "$(code -X POST "$BASE/assessments/responses" -H "$AH $CLI" -H 'Content-Type: application/json' -d "{\"versionId\":\"${VERSION_ID:-cmr8h028p001wdaycd7e7pcc1}\",\"clientId\":\"$ALEX_CLIENT_ID\",\"answers\":{\"q1\":1,\"q2\":1}}")"

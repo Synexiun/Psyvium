@@ -2,11 +2,15 @@ import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/co
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   createDiagnosisHypothesisSchema,
+  createFormulationSchema,
   updateDiagnosisHypothesisStatusSchema,
+  updateFormulationStatusSchema,
   Permission,
   type AuthPrincipal,
   type CreateDiagnosisHypothesisInput,
+  type CreateFormulationInput,
   type UpdateDiagnosisHypothesisStatusInput,
+  type UpdateFormulationStatusInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
@@ -56,5 +60,51 @@ export class DiagnosisController {
   @RequirePermissions(Permission.NOTE_READ)
   listForClient(@CurrentUser() user: AuthPrincipal, @Param('clientId') clientId: string) {
     return this.diagnosis.listForClient(user, clientId);
+  }
+}
+
+/**
+ * WAVE CR item 7 — coded Formulation/Diagnosis (DSM-5-TR/ICD-10/11). A
+ * separate controller/route namespace from the hypothesis endpoints above:
+ * `Formulation` is the clinician's ACTUAL diagnosis, not an assistive
+ * differential. Same permission model as diagnosis-hypotheses (no dedicated
+ * `DIAGNOSIS_*` permission exists yet) — writes require ClinicalWriteGuard +
+ * NOTE_WRITE (licensed clinicians only), reads require NOTE_READ. There is
+ * NO AI-write path here: nothing in the AI Gateway ever calls
+ * `createFormulation`/`updateFormulationStatus` (asserted in
+ * diagnosis.service.spec.ts).
+ */
+@ApiTags('formulations')
+@ApiBearerAuth()
+@Controller('formulations')
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+export class FormulationController {
+  constructor(private readonly diagnosis: DiagnosisService) {}
+
+  @Post()
+  @UseGuards(ClinicalWriteGuard)
+  @RequirePermissions(Permission.NOTE_WRITE)
+  create(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(createFormulationSchema)) body: CreateFormulationInput,
+  ) {
+    return this.diagnosis.createFormulation(user, body);
+  }
+
+  @Patch(':id/status')
+  @UseGuards(ClinicalWriteGuard)
+  @RequirePermissions(Permission.NOTE_WRITE)
+  updateStatus(
+    @CurrentUser() user: AuthPrincipal,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(updateFormulationStatusSchema)) body: UpdateFormulationStatusInput,
+  ) {
+    return this.diagnosis.updateFormulationStatus(user, id, body);
+  }
+
+  @Get('client/:clientId')
+  @RequirePermissions(Permission.NOTE_READ)
+  listForClient(@CurrentUser() user: AuthPrincipal, @Param('clientId') clientId: string) {
+    return this.diagnosis.listFormulationsForClient(user, clientId);
   }
 }

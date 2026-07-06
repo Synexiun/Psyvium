@@ -278,6 +278,14 @@ enum MediaKind {
   VIDEO
 }
 
+// WAVE CR item 7 (docs/10-10-PROGRAM.md): the clinician's actual coded
+// diagnosis — distinct from DiagnosisHypothesis (assistive differential).
+enum FormulationStatus {
+  PROVISIONAL
+  CONFIRMED
+  RULED_OUT
+}
+
 // ─────────────────────────────────────────────────────────────
 // Group A — Identity, Tenancy, Access
 // ─────────────────────────────────────────────────────────────
@@ -401,6 +409,7 @@ model Client {
   wearableDevices     WearableDevice[]
   invoices            Invoice[]
   diagnosisHypotheses DiagnosisHypothesis[]
+  formulations        Formulation[]
   responses           QuestionnaireResponse[]
   safetyPlans         SafetyPlan[]
   outcomeMeasures     OutcomeMeasure[]
@@ -660,7 +669,30 @@ model SessionNote {
   createdAt         DateTime  @default(now())
   deletedAt         DateTime?
 
+  // WAVE CR item 8 — golden-thread enforcement (docs/10-10-PROGRAM.md):
+  // diagnosis -> plan -> note must be traceable (CMS/Medicaid audit
+  // standard). `planId`/`goalIds` anchor the note to the active
+  // TreatmentPlan/Goal(s) it documents; `formulationId` optionally cites the
+  // coded Formulation the session addressed. `riskStatusAtNote` and
+  // `sessionSnapshot` are NOTE-TIME snapshots (never recomputed later), so
+  // the record reflects what was true when the note was filed, not today.
+  planId           String?
+  plan             TreatmentPlan? @relation(fields: [planId], references: [id])
+  goalIds          String[]       @default([])
+  formulationId    String?
+  formulation      Formulation?   @relation(fields: [formulationId], references: [id])
+  riskStatusAtNote String?
+  sessionSnapshot  Json?
+
+  // WAVE CR P1 — amendment semantics (audit): additive, explicit
+  // post-signature addenda. `amendsVersionId` points at the SessionNote
+  // version this one amends; `amendmentReason` is required by the service
+  // whenever the session already has a prior SIGNED note.
+  amendsVersionId String?
+  amendmentReason String?
+
   @@index([sessionId])
+  @@index([planId])
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -680,7 +712,38 @@ model DiagnosisHypothesis {
   createdAt          DateTime  @default(now())
   deletedAt          DateTime?
 
+  formulations Formulation[]
+
   @@index([clientId])
+}
+
+// WAVE CR item 7 — the clinician's ACTUAL coded diagnosis/formulation
+// (DSM-5-TR/ICD-10/11 conventions). Distinct from DiagnosisHypothesis (an
+// assistive, non-diagnostic differential): this is the human clinical act,
+// recorded as such. `authorId` is the licensed clinician who authored it;
+// there is no AI-write path to this model anywhere in the codebase.
+model Formulation {
+  id                  String               @id @default(cuid())
+  tenantId            String
+  clientId            String
+  client              Client               @relation(fields: [clientId], references: [id])
+  authorId            String
+  icdCode             String
+  dsmCode             String?
+  description         String
+  status              FormulationStatus    @default(PROVISIONAL)
+  basedOnHypothesisId String?
+  basedOnHypothesis   DiagnosisHypothesis? @relation(fields: [basedOnHypothesisId], references: [id])
+  specifiers          Json?
+  onsetDate           DateTime?
+  resolvedDate        DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  deletedAt           DateTime?
+
+  sessionNotes SessionNote[]
+
+  @@index([tenantId, clientId])
 }
 
 model TreatmentPlan {
@@ -701,6 +764,7 @@ model TreatmentPlan {
 
   goals         Goal[]
   interventions Intervention[]
+  sessionNotes  SessionNote[]
 
   @@index([clientId, status])
 }
@@ -785,23 +849,23 @@ model OutcomeMeasure {
 }
 
 model RiskFlag {
-  id        String       @id @default(cuid())
-  tenantId  String
-  clientId  String
-  client    Client       @relation(fields: [clientId], references: [id])
-  intakeId  String?
-  intake    Intake?      @relation(fields: [intakeId], references: [id])
-  type      RiskType
-  severity  SeverityBand
-  source    RiskSource
-  evidence  String?
+  id             String       @id @default(cuid())
+  tenantId       String
+  clientId       String
+  client         Client       @relation(fields: [clientId], references: [id])
+  intakeId       String?
+  intake         Intake?      @relation(fields: [intakeId], references: [id])
+  type           RiskType
+  severity       SeverityBand
+  source         RiskSource
+  evidence       String?
   /// Structured C-SSRS-style triage detail (ideation level, behavior history,
   /// raw safety-item answer, etc.) — additive alongside the human-readable
   /// `evidence` string (WAVE CR item 1/2, Posner 2011 C-SSRS).
   evidenceDetail Json?
-  status    RiskStatus   @default(OPEN)
-  createdAt DateTime     @default(now())
-  deletedAt DateTime?
+  status         RiskStatus   @default(OPEN)
+  createdAt      DateTime     @default(now())
+  deletedAt      DateTime?
 
   escalations Escalation[]
 
@@ -810,18 +874,18 @@ model RiskFlag {
 }
 
 model Escalation {
-  id          String    @id @default(cuid())
-  tenantId    String
-  riskFlagId  String
-  riskFlag    RiskFlag  @relation(fields: [riskFlagId], references: [id])
-  openedAt    DateTime  @default(now())
-  assignedTo  String?
-  resolvedAt  DateTime?
-  resolution  String?
-  slaBreached Boolean   @default(false)
+  id                    String        @id @default(cuid())
+  tenantId              String
+  riskFlagId            String
+  riskFlag              RiskFlag      @relation(fields: [riskFlagId], references: [id])
+  openedAt              DateTime      @default(now())
+  assignedTo            String?
+  resolvedAt            DateTime?
+  resolution            String?
+  slaBreached           Boolean       @default(false)
   /// Per-severity response-time target set at creation (WAVE CR item 3 —
   /// SEVERE 60min / HIGH 4h / else 24h). Swept by RiskSlaService.
-  slaDueAt    DateTime?
+  slaDueAt              DateTime?
   /// SAFE-T/Joint Commission NPSG 15.01.01 structured resolution (WAVE CR
   /// item 4) — the clinician's risk-level snapshot and interventions at close.
   riskLevelAtResolution SeverityBand?
@@ -830,7 +894,7 @@ model Escalation {
   /// HIGH/SEVERE resolutions, enforced in the application layer.
   followUpDueAt         DateTime?
   followUpCompletedAt   DateTime?
-  deletedAt   DateTime?
+  deletedAt             DateTime?
 
   @@index([tenantId, resolvedAt])
 }

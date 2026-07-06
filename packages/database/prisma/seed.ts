@@ -401,46 +401,9 @@ async function main() {
     },
   });
 
-  await prisma.sessionNote.upsert({
-    where: { id: 'note_demo_signed' },
-    update: {},
-    create: {
-      id: 'note_demo_signed',
-      tenantId: tenant.id,
-      sessionId: session.id,
-      content: {
-        format: 'SOAP',
-        subjective: 'Client reports mood has been "a bit better" this week; sleep still inconsistent.',
-        objective: 'Alert and oriented; mild psychomotor slowing; affect congruent with restricted range.',
-        assessment:
-          'Depressive symptoms trending downward per self-report and screening trend; sleep remains a target.',
-        plan: 'Continue weekly CBT; add sleep hygiene homework; reassess depression screen in two weeks.',
-      },
-      continuitySummary: 'Third session; steady engagement, gradual symptom improvement.',
-      signedAt: new Date(pastAppointment.endsAt.getTime() + 60 * 60 * 1000),
-      signedBy: psyUserA.id,
-      version: 1,
-    },
-  });
-
-  await prisma.sessionNote.upsert({
-    where: { id: 'note_demo_draft' },
-    update: {},
-    create: {
-      id: 'note_demo_draft',
-      tenantId: tenant.id,
-      sessionId: session.id,
-      content: {
-        format: 'SOAP',
-        subjective: 'Draft — pending review of homework completion before finalizing.',
-        objective: 'TBD',
-        assessment: 'TBD',
-        plan: 'TBD',
-      },
-      version: 2,
-    },
-  });
-
+  // Treatment plan + goals are created BEFORE the session notes below so the
+  // notes' golden-thread FKs (planId/goalIds reference real rows, never
+  // forward references) resolve cleanly.
   const plan = await prisma.treatmentPlan.upsert({
     where: { id: 'plan_demo_1' },
     update: {},
@@ -486,6 +449,94 @@ async function main() {
       target: 7.5,
       progressPct: 30,
       status: 'active',
+    },
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // WAVE CR item 7 — coded Formulation (provisional) for alex.client, so
+  // GET /formulations/client/:id renders against a real row and the demo
+  // note below has a real formulationId to golden-thread against.
+  // Idempotent (fixed id).
+  // ─────────────────────────────────────────────────────────────
+  const formulation = await prisma.formulation.upsert({
+    where: { id: 'formulation_demo_1' },
+    update: {},
+    create: {
+      id: 'formulation_demo_1',
+      tenantId: tenant.id,
+      clientId: client.id,
+      authorId: psyUserA.id,
+      icdCode: 'F41.1',
+      dsmCode: '300.02',
+      description: 'Generalized Anxiety Disorder, with prominent depressive features under evaluation.',
+      status: 'PROVISIONAL',
+      specifiers: { severity: 'moderate' },
+      onsetDate: daysAgo(180),
+    },
+  });
+
+  await prisma.sessionNote.upsert({
+    where: { id: 'note_demo_signed' },
+    update: {},
+    create: {
+      id: 'note_demo_signed',
+      tenantId: tenant.id,
+      sessionId: session.id,
+      content: {
+        format: 'SOAP',
+        subjective: 'Client reports mood has been "a bit better" this week; sleep still inconsistent.',
+        objective: 'Alert and oriented; mild psychomotor slowing; affect congruent with restricted range.',
+        assessment:
+          'Depressive symptoms trending downward per self-report and screening trend; sleep remains a target.',
+        plan: 'Continue weekly CBT; add sleep hygiene homework; reassess depression screen in two weeks.',
+      },
+      continuitySummary: 'Third session; steady engagement, gradual symptom improvement.',
+      signedAt: new Date(pastAppointment.endsAt.getTime() + 60 * 60 * 1000),
+      signedBy: psyUserA.id,
+      version: 1,
+      // WAVE CR item 8 — golden thread: this seeded note is fully anchored
+      // to the demo's active plan/goals + coded formulation, and carries a
+      // note-time snapshot + risk-status-at-note (never recomputed later).
+      planId: 'plan_demo_1',
+      goalIds: ['goal_demo_1', 'goal_demo_2'],
+      formulationId: formulation.id,
+      riskStatusAtNote: client.riskLevel,
+      sessionSnapshot: {
+        date: pastAppointment.startsAt.toISOString(),
+        durationMin: 50,
+        modality: 'VIDEO',
+      },
+    },
+  });
+
+  await prisma.sessionNote.upsert({
+    where: { id: 'note_demo_draft' },
+    update: {},
+    create: {
+      id: 'note_demo_draft',
+      tenantId: tenant.id,
+      sessionId: session.id,
+      content: {
+        format: 'SOAP',
+        subjective: 'Draft — pending review of homework completion before finalizing.',
+        objective: 'TBD',
+        assessment: 'TBD',
+        plan: 'TBD',
+      },
+      version: 2,
+      // Post-signature addendum to note_demo_signed above (WAVE CR P1
+      // amendment semantics) — explicit, never silent.
+      planId: 'plan_demo_1',
+      goalIds: ['goal_demo_1', 'goal_demo_2'],
+      formulationId: formulation.id,
+      riskStatusAtNote: client.riskLevel,
+      sessionSnapshot: {
+        date: pastAppointment.startsAt.toISOString(),
+        durationMin: 50,
+        modality: 'VIDEO',
+      },
+      amendsVersionId: 'note_demo_signed',
+      amendmentReason: 'Adding homework-completion follow-up after client provided sleep log at next check-in.',
     },
   });
 
@@ -931,6 +982,7 @@ async function main() {
   console.log('   Finance: 5-account chart of accounts, dr.rivera 60% revenue-share contract, 1 OPEN invoice ($180.00).');
   console.log('   National Analytics: 8 PopulationMetric rows across US-NY/US-CA/US-TX/US-VT (2 below k-anonymity floor 5).');
   console.log('   WAVE CR: Stanley-Brown-complete safety plan; 1 graduated C-SSRS SEVERE RiskFlag + SLA-overdue unassigned Escalation (auto-breach/auto-assign on first sweep).');
+  console.log('   WAVE CR: 1 provisional Formulation (F41.1) on alex.client; note_demo_signed is golden-thread-anchored (plan+2 goals); note_demo_draft is a documented amendment.');
 }
 
 main()

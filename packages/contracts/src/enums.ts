@@ -263,3 +263,16 @@ export const CommsLogKind = {
   MEDIA_MESSAGE: 'MEDIA_MESSAGE',
 } as const;
 export type CommsLogKind = (typeof CommsLogKind)[keyof typeof CommsLogKind];
+
+/**
+ * WAVE CR item 7 (docs/10-10-PROGRAM.md) — the clinician's coded
+ * Formulation/Diagnosis status. Mirrors the Prisma `FormulationStatus` enum.
+ * Distinct from `DiagnosisHypothesis.clinicianConfirmed` (a boolean on the
+ * assistive differential) — this is the lifecycle of the actual diagnosis.
+ */
+export const FormulationStatus = {
+  PROVISIONAL: 'PROVISIONAL',
+  CONFIRMED: 'CONFIRMED',
+  RULED_OUT: 'RULED_OUT',
+} as const;
+export type FormulationStatus = (typeof FormulationStatus)[keyof typeof FormulationStatus];

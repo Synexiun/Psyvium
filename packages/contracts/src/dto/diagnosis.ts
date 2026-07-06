@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { FormulationStatus } from '../enums';
 
 /**
  * Diagnosis Support DTOs (context 13). `DiagnosisHypothesis` is a
@@ -44,3 +45,48 @@ export const diagnosisHypothesisSchema = z.object({
   createdAt: z.string(),
 });
 export type DiagnosisHypothesisDto = z.infer<typeof diagnosisHypothesisSchema>;
+
+/**
+ * WAVE CR item 7 — coded Formulation/Diagnosis (DSM-5-TR/ICD-10/11
+ * conventions). This is the clinician's ACTUAL diagnosis, recorded as such —
+ * distinct from `DiagnosisHypothesis` above (a non-diagnostic differential).
+ * `authorId` is always the licensed clinician who authored it; there is no
+ * AI-write path to this record anywhere in the codebase (enforced by
+ * ClinicalWriteGuard + NOTE_WRITE at the controller, asserted in
+ * diagnosis.service.spec.ts).
+ */
+export const createFormulationSchema = z.object({
+  clientId: z.string(),
+  icdCode: z.string().min(2).max(20),
+  dsmCode: z.string().max(20).optional(),
+  description: z.string().min(3).max(2000),
+  status: z.nativeEnum(FormulationStatus).default(FormulationStatus.PROVISIONAL),
+  basedOnHypothesisId: z.string().optional(),
+  specifiers: z.record(z.unknown()).optional(),
+  onsetDate: z.string().optional(),
+  resolvedDate: z.string().optional(),
+});
+export type CreateFormulationInput = z.infer<typeof createFormulationSchema>;
+
+export const updateFormulationStatusSchema = z.object({
+  status: z.nativeEnum(FormulationStatus),
+  resolvedDate: z.string().optional(),
+});
+export type UpdateFormulationStatusInput = z.infer<typeof updateFormulationStatusSchema>;
+
+export const formulationSchema = z.object({
+  id: z.string(),
+  clientId: z.string(),
+  authorId: z.string(),
+  icdCode: z.string(),
+  dsmCode: z.string().nullable(),
+  description: z.string(),
+  status: z.nativeEnum(FormulationStatus),
+  basedOnHypothesisId: z.string().nullable(),
+  specifiers: z.record(z.unknown()).nullable(),
+  onsetDate: z.string().nullable(),
+  resolvedDate: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type FormulationDto = z.infer<typeof formulationSchema>;

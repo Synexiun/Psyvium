@@ -2,8 +2,11 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   AuthPrincipal,
   CreateDiagnosisHypothesisInput,
+  CreateFormulationInput,
   DiagnosisHypothesisDto,
+  FormulationDto,
   UpdateDiagnosisHypothesisStatusInput,
+  UpdateFormulationStatusInput,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
@@ -17,6 +20,14 @@ import { EventBus } from '../../common/events/event-bus.service';
  */
 const HYPOTHESIS_SUGGESTED = 'hypothesis.suggested';
 
+/**
+ * WAVE CR item 7 — Formulation lifecycle events. Also a literal string for
+ * the same reason as HYPOTHESIS_SUGGESTED above (context 13 is not yet
+ * represented in the shared `Events` const).
+ */
+const FORMULATION_RECORDED = 'formulation.recorded';
+const FORMULATION_STATUS_UPDATED = 'formulation.status_updated';
+
 type HypothesisRow = {
   id: string;
   clientId: string;
@@ -29,11 +40,35 @@ type HypothesisRow = {
   createdAt: Date;
 };
 
+type FormulationRow = {
+  id: string;
+  clientId: string;
+  authorId: string;
+  icdCode: string;
+  dsmCode: string | null;
+  description: string;
+  status: string;
+  basedOnHypothesisId: string | null;
+  specifiers: unknown;
+  onsetDate: Date | null;
+  resolvedDate: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 /**
  * Diagnosis Support (context 13). `DiagnosisHypothesis` is a
  * clinician-authored DIFFERENTIAL — the AI Gateway may only ever SUGGEST
  * (via `aiRecommendationId` provenance), never write this record itself.
  * There is no AI-write path in this service by design.
+ *
+ * WAVE CR item 7 adds `Formulation` — the clinician's ACTUAL coded diagnosis
+ * (DSM-5-TR/ICD-10/11), anchoring the golden thread (docs/10-10-PROGRAM.md).
+ * It is a DISTINCT record from DiagnosisHypothesis: a Formulation is the
+ * human clinical act, recorded as such. Every write is audited `critical:
+ * true` — a diagnosis record must never silently fail its audit trail — and,
+ * like DiagnosisHypothesis, there is no AI-write path to it anywhere in this
+ * service (see diagnosis.service.spec.ts for the explicit assertion).
  */
 @Injectable()
 export class DiagnosisService {
@@ -125,6 +160,111 @@ export class DiagnosisService {
     return hypotheses.map((h) => this.toDto(h));
   }
 
+  // ---------------------------------------------------------------------
+  // WAVE CR item 7 — Formulation (coded Formulation/Diagnosis)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Records the clinician's actual coded diagnosis. Audited `critical: true`
+   * (docs/technical/06-security-and-rbac.md §5): if the audit write fails,
+   * this action fails closed rather than silently succeeding without its
+   * tamper-evident trail — appropriate for a diagnosis record.
+   */
+  async createFormulation(principal: AuthPrincipal, input: CreateFormulationInput): Promise<FormulationDto> {
+    const client = await this.prisma.client.findFirst({
+      where: { id: input.clientId, tenantId: principal.tenantId },
+    });
+    if (!client) throw new NotFoundException('Client not found');
+
+    if (input.basedOnHypothesisId) {
+      const hypothesis = await this.prisma.diagnosisHypothesis.findFirst({
+        where: { id: input.basedOnHypothesisId, tenantId: principal.tenantId, clientId: input.clientId },
+      });
+      if (!hypothesis) throw new NotFoundException('Referenced diagnosis hypothesis not found for this client');
+    }
+
+    const formulation = await this.prisma.formulation.create({
+      data: {
+        tenantId: principal.tenantId,
+        clientId: input.clientId,
+        authorId: principal.userId,
+        icdCode: input.icdCode,
+        dsmCode: input.dsmCode,
+        description: input.description,
+        status: input.status,
+        basedOnHypothesisId: input.basedOnHypothesisId,
+        specifiers: input.specifiers as any,
+        onsetDate: input.onsetDate ? new Date(input.onsetDate) : undefined,
+        resolvedDate: input.resolvedDate ? new Date(input.resolvedDate) : undefined,
+      },
+    });
+
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'formulation.recorded',
+      entityType: 'Formulation',
+      entityId: formulation.id,
+      after: { clientId: input.clientId, icdCode: input.icdCode, status: formulation.status },
+      critical: true,
+    });
+    await this.bus.publish(FORMULATION_RECORDED, principal.tenantId, {
+      formulationId: formulation.id,
+      clientId: input.clientId,
+    });
+
+    return this.toFormulationDto(formulation);
+  }
+
+  /** Provisional -> confirmed / ruled_out (or any other status transition). Audited `critical: true`. */
+  async updateFormulationStatus(
+    principal: AuthPrincipal,
+    formulationId: string,
+    input: UpdateFormulationStatusInput,
+  ): Promise<FormulationDto> {
+    const existing = await this.prisma.formulation.findFirst({
+      where: { id: formulationId, tenantId: principal.tenantId },
+    });
+    if (!existing) throw new NotFoundException('Formulation not found');
+
+    const updated = await this.prisma.formulation.update({
+      where: { id: formulationId },
+      data: {
+        status: input.status,
+        resolvedDate: input.resolvedDate ? new Date(input.resolvedDate) : undefined,
+      },
+    });
+
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'formulation.status_updated',
+      entityType: 'Formulation',
+      entityId: updated.id,
+      after: { status: updated.status },
+      critical: true,
+    });
+    await this.bus.publish(FORMULATION_STATUS_UPDATED, principal.tenantId, {
+      formulationId: updated.id,
+      status: updated.status,
+    });
+
+    return this.toFormulationDto(updated);
+  }
+
+  async listFormulationsForClient(principal: AuthPrincipal, clientId: string): Promise<FormulationDto[]> {
+    const client = await this.prisma.client.findFirst({
+      where: { id: clientId, tenantId: principal.tenantId },
+    });
+    if (!client) throw new NotFoundException('Client not found');
+
+    const formulations = await this.prisma.formulation.findMany({
+      where: { tenantId: principal.tenantId, clientId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+    return formulations.map((f) => this.toFormulationDto(f));
+  }
+
   private toDto(h: HypothesisRow): DiagnosisHypothesisDto {
     return {
       id: h.id,
@@ -136,6 +276,24 @@ export class DiagnosisService {
       clinicianConfirmed: h.clinicianConfirmed,
       aiRecommendationId: h.aiRecommendationId,
       createdAt: h.createdAt.toISOString(),
+    };
+  }
+
+  private toFormulationDto(f: FormulationRow): FormulationDto {
+    return {
+      id: f.id,
+      clientId: f.clientId,
+      authorId: f.authorId,
+      icdCode: f.icdCode,
+      dsmCode: f.dsmCode,
+      description: f.description,
+      status: f.status as FormulationDto['status'],
+      basedOnHypothesisId: f.basedOnHypothesisId,
+      specifiers: (f.specifiers as Record<string, unknown> | null) ?? null,
+      onsetDate: f.onsetDate ? f.onsetDate.toISOString() : null,
+      resolvedDate: f.resolvedDate ? f.resolvedDate.toISOString() : null,
+      createdAt: f.createdAt.toISOString(),
+      updatedAt: f.updatedAt.toISOString(),
     };
   }
 }
