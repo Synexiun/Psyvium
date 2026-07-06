@@ -1,90 +1,135 @@
 'use client';
 
+/**
+ * Portal shell — the CLINICAL COMMAND CENTER.
+ *
+ * Anatomy (all logical-property based, so RTL mirrors correctly):
+ *   ┌ rail ┬ command strip ──────────────────────────────┐
+ *   │ nav  ├ main column          ┊ context panel (xl)   │
+ *   │ +    │                      ┊ pages fill via       │
+ *   │ live │                      ┊ <ContextPanel>       │
+ *   └──────┴──────────────────────┴──────────────────────┘
+ * - The rail collapses to icons at md and disappears below md, where the
+ *   mobile bottom bar takes over (PWA-native).
+ * - The thin command strip carries the current section, the ⌘K trigger,
+ *   language, theme, and sign-in.
+ * - ⌘K / Ctrl-K opens the command palette anywhere in the portal.
+ */
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useCallback, useEffect, useState } from 'react';
 import { useI18n } from '@/i18n';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
-
-/**
- * Portal shell. Mobile-first: a fixed bottom navigation that makes the PWA
- * feel native. On desktop the same destinations sit in a slim top bar.
- * All four role surfaces share this shell in the demo.
- */
-const NAV: { href: string; key: 'nav.home' | 'nav.intake' | 'nav.workspace' | 'nav.triage' | 'nav.crm' | 'nav.comms' | 'nav.risk' | 'nav.schedule' | 'nav.finance' | 'nav.reports'; icon: string }[] = [
-  { href: '/home', key: 'nav.home', icon: 'M3 11l9-8 9 8M5 10v10h14V10' },
-  { href: '/intake', key: 'nav.intake', icon: 'M12 4v16m8-8H4' },
-  { href: '/session', key: 'nav.workspace', icon: 'M4 19V5a2 2 0 012-2h12a2 2 0 012 2v14M8 7h8M8 11h8M8 15h5' },
-  { href: '/manager', key: 'nav.triage', icon: 'M4 6h16M4 12h16M4 18h10' },
-  { href: '/crm', key: 'nav.crm', icon: 'M3 5h18l-7 8v5l-4 2v-7z' },
-  { href: '/comms', key: 'nav.comms', icon: 'M4 4h16v12H7l-3 3z' },
-  { href: '/risk', key: 'nav.risk', icon: 'M12 3l9 16H3zM12 10v4M12 17v.5' },
-  { href: '/schedule', key: 'nav.schedule', icon: 'M4 5h16v15H4zM4 9h16M8 3v4M16 3v4' },
-  { href: '/finance', key: 'nav.finance', icon: 'M3 6h18v12H3zM3 10h18M7 15h4' },
-  { href: '/reports', key: 'nav.reports', icon: 'M4 20V10M10 20V4M16 20v-7M20 20H3' },
-];
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { CommandPalette, useCommandPaletteHotkey } from '@/components/CommandPalette';
+import { CommandRail, PORTAL_NAV } from '@/components/CommandRail';
+import { ContextPanelHostProvider } from '@/components/ContextPanel';
 
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
   const { t } = useI18n();
   const pathname = usePathname();
 
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const togglePalette = useCallback(() => setPaletteOpen((o) => !o), []);
+  useCommandPaletteHotkey(togglePalette);
+
+  // ⌘K vs Ctrl-K label — resolved after mount to avoid hydration mismatch.
+  const [isMac, setIsMac] = useState(false);
+  useEffect(() => {
+    setIsMac(/mac|iphone|ipad/i.test(navigator.platform ?? ''));
+  }, []);
+
+  const [panelHost, setPanelHost] = useState<HTMLElement | null>(null);
+
+  const current = PORTAL_NAV.find((n) => pathname?.startsWith(n.href));
+
   return (
-    <div className="min-h-screen bg-console-900 pb-24 md:pb-0">
-      <a href="#portal-content" className="skip-link">{t('common.skipToContent')}</a>
-      <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-console-900/85 backdrop-blur-md">
-        <div className="container-vpsy flex h-14 items-center justify-between gap-3">
-          <Link href="/" className="font-display text-base font-semibold text-mist">
-            VPSY<span className="text-teal"> OS</span>
-          </Link>
-          <nav className="hidden items-center gap-6 md:flex">
-            {NAV.map((n) => {
+    <ContextPanelHostProvider value={panelHost}>
+      <div className="flex min-h-dvh bg-console-900">
+        <a href="#portal-content" className="skip-link">{t('common.skipToContent')}</a>
+
+        <CommandRail />
+
+        <div className="flex min-w-0 flex-1 flex-col pb-20 md:pb-0">
+          {/* ── Command strip — thin, persistent, keyboard-first ── */}
+          <header className="hairline-b sticky top-0 z-40 flex h-11 items-center gap-3 bg-console-900/90 px-4 backdrop-blur-sm">
+            <Link href="/" className="font-display text-sm font-semibold tracking-tight text-mist md:hidden">
+              VPSY<span className="text-haze"> OS</span>
+            </Link>
+            <p className="hidden font-mono text-[11px] uppercase tracking-eyebrow text-haze md:block">
+              {current ? t(current.key) : t('common.appName')}
+            </p>
+
+            <div className="ms-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={togglePalette}
+                aria-haspopup="dialog"
+                aria-expanded={paletteOpen}
+                className="inline-flex h-7 items-center gap-2 rounded-sm border border-line/25 px-2 font-mono text-[10px] uppercase tracking-wider text-mist/70 transition hover:border-line/45 hover:text-mist focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal"
+              >
+                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="M21 21l-4.3-4.3" strokeLinecap="round" />
+                </svg>
+                <span className="hidden sm:inline">{t('shell.openPalette')}</span>
+                <kbd className="rounded-sm border border-line/25 bg-console-700/60 px-1 py-px normal-case" dir="ltr">
+                  {isMac ? '⌘K' : 'Ctrl K'}
+                </kbd>
+              </button>
+              <ThemeToggle />
+              <LanguageSwitcher compact />
+              <Link
+                href="/login"
+                className="hidden font-mono text-[10px] uppercase tracking-wider text-mist/55 transition hover:text-mist sm:block"
+              >
+                {t('common.signIn')}
+              </Link>
+            </div>
+          </header>
+
+          {/* ── Main + context panel ── */}
+          <div className="mx-auto w-full max-w-7xl flex-1 gap-6 px-4 py-6 sm:px-6 xl:grid xl:grid-cols-[minmax(0,1fr)_300px]">
+            <main id="portal-content" className="min-w-0">{children}</main>
+            {/* Pages portal content here via <ContextPanel>. Below xl the aside
+                stacks after main; when empty it collapses entirely. */}
+            <aside
+              ref={setPanelHost}
+              aria-label={t('shell.contextEyebrow')}
+              className="mt-6 space-y-4 empty:hidden xl:mt-0"
+            />
+          </div>
+        </div>
+
+        {/* ── Mobile bottom bar — all destinations, dense mono labels ── */}
+        <nav
+          aria-label={t('shell.mainMenu')}
+          className="pb-safe hairline-t fixed inset-x-0 bottom-0 z-40 bg-console-950/95 backdrop-blur-lg md:hidden"
+        >
+          <div className="flex items-stretch overflow-x-auto px-1 py-1.5">
+            {PORTAL_NAV.map((n) => {
               const active = pathname?.startsWith(n.href);
               return (
                 <Link
                   key={n.href}
                   href={n.href}
                   aria-current={active ? 'page' : undefined}
-                  className={`text-sm transition ${active ? 'text-teal-soft' : 'text-mist/60 hover:text-mist'}`}
+                  className={`flex min-w-[64px] flex-col items-center gap-1 rounded-sm px-2 py-1.5 transition ${
+                    active ? 'text-mist' : 'text-mist/55 hover:text-mist'
+                  }`}
                 >
-                  {t(n.key)}
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+                    <path d={n.icon} strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span className="font-mono text-[9px] uppercase tracking-wider">{t(n.key)}</span>
                 </Link>
               );
             })}
-          </nav>
-          <div className="flex items-center gap-3">
-            <LanguageSwitcher compact />
-            <Link
-              href="/login"
-              className="font-mono text-[11px] uppercase tracking-wider text-mist/50 transition hover:text-mist"
-            >
-              {t('common.signIn')}
-            </Link>
           </div>
-        </div>
-      </header>
+        </nav>
 
-      <main id="portal-content" className="container-vpsy py-8">{children}</main>
-
-      {/* Fixed bottom navigation — mobile */}
-      <nav className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.06] bg-console-950/90 backdrop-blur-lg md:hidden">
-        <div className="mx-auto flex max-w-md items-center justify-around px-2 py-2">
-          {NAV.map((n) => {
-            const active = pathname?.startsWith(n.href);
-            return (
-              <Link
-                key={n.href}
-                href={n.href}
-                aria-current={active ? 'page' : undefined}
-                className={`flex flex-col items-center gap-1 px-3 py-2 transition ${active ? 'text-teal-soft' : 'text-mist/60 hover:text-teal'}`}
-              >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
-                  <path d={n.icon} strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <span className="font-mono text-[10px] uppercase tracking-wider">{t(n.key)}</span>
-              </Link>
-            );
-          })}
-        </div>
-      </nav>
-    </div>
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      </div>
+    </ContextPanelHostProvider>
   );
 }

@@ -15,21 +15,31 @@
  * The AI case-formulation panel has no live endpoint yet (that ships in a
  * later sub-project) — it renders an honest "pending clinician review"
  * placeholder rather than fabricated model output.
+ *
+ * Command Center flagship: the client identity + latest assessment + wearable
+ * rollup live in the shell's context panel; outcome measures render as a
+ * dense hairline DataTable with mono/tabular figures.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '@/i18n';
 import { api, getToken, setToken, ApiError } from '@/lib/api';
-import type { CaseloadEntry, ClinicalSummary, TrendDirection } from '@/lib/clinical-types';
+import type { CaseloadEntry, ClinicalSummary, OutcomePoint, TrendDirection } from '@/lib/clinical-types';
 import { Sparkline } from '@/components/Sparkline';
 import { useResource } from '@/lib/use-resource';
+import { ContextPanel } from '@/components/ContextPanel';
+import { SkeletonCard, SkeletonStack } from '@/components/Skeleton';
+import { ErrorPanel } from '@/components/ErrorPanel';
+import { EmptyState } from '@/components/EmptyState';
+import { StatTile } from '@/components/StatTile';
+import { DataTable, type DataColumn } from '@/components/DataTable';
 
 const NOTE_KEY = 'vpsy.session.note.draft';
 const NOTE_TS_KEY = 'vpsy.session.note.ts';
 const DEMO_PSYCHOLOGIST = { email: 'dr.rivera@vpsy.health', password: 'Vpsy!2026' };
 
 const KIND_STYLE: Record<'note' | 'outcome', { dot: string; label: 'workspace.evNote' | 'workspace.evOutcome' }> = {
-  note: { dot: 'bg-console-500 ring-1 ring-teal/40', label: 'workspace.evNote' },
-  outcome: { dot: 'bg-teal-soft', label: 'workspace.evOutcome' },
+  note: { dot: 'bg-console-500 ring-1 ring-teal/50', label: 'workspace.evNote' },
+  outcome: { dot: 'bg-teal', label: 'workspace.evOutcome' },
 };
 
 const TREND_KEY: Record<TrendDirection, 'common.trendIncreased' | 'common.trendDecreased' | 'common.trendUnchanged' | 'common.trendBaseline'> = {
@@ -210,6 +220,49 @@ export default function SessionWorkspacePage() {
     });
   }, [summary, t, fmtNumber]);
 
+  // Outcome measures, newest first — the dense DataTable view of the signal.
+  const measureRows = useMemo<OutcomePoint[]>(
+    () => (summary ? [...summary.outcomes].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)) : []),
+    [summary],
+  );
+
+  const measureColumns = useMemo<DataColumn<OutcomePoint>[]>(
+    () => [
+      {
+        id: 'construct',
+        header: t('workspace.tblConstruct'),
+        cell: (o) => <span className="font-mono text-[11px] uppercase tracking-wider text-mist/80">{o.construct}</span>,
+      },
+      {
+        id: 'value',
+        header: t('workspace.tblValue'),
+        numeric: true,
+        cell: (o) => fmtNumber(o.value, { maximumFractionDigits: 1 }),
+      },
+      {
+        id: 'delta',
+        header: t('workspace.tblChange'),
+        numeric: true,
+        cell: (o) =>
+          o.trend.delta === null
+            ? '—'
+            : `${o.trend.delta > 0 ? '+' : ''}${fmtNumber(o.trend.delta, { maximumFractionDigits: 1 })}`,
+      },
+      {
+        id: 'trend',
+        header: t('workspace.tblTrend'),
+        cell: (o) => <span className="text-xs text-mist/60">{t(TREND_KEY[o.trend.direction] ?? 'common.trendBaseline')}</span>,
+      },
+      {
+        id: 'date',
+        header: t('workspace.tblDate'),
+        numeric: true,
+        cell: (o) => fmtDate(new Date(o.occurredAt), { day: '2-digit', month: 'short' }),
+      },
+    ],
+    [t, fmtNumber, fmtDate],
+  );
+
   const planGoals = summary?.activePlan?.goals ?? [];
   const assessment = summary?.latestAssessment ?? null;
   const wearable = summary?.wearable ?? null;
@@ -227,72 +280,38 @@ export default function SessionWorkspacePage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="eyebrow">{t('workspace.eyebrow')}</p>
-          <h1 className="mt-3 font-display text-3xl font-semibold text-mist">{t('workspace.title')}</h1>
+          <h1 className="mt-2 font-display text-2xl font-semibold text-mist">{t('workspace.title')}</h1>
         </div>
-        <p className="font-mono text-[10px] uppercase tracking-wider text-mist/30" role="status">
+        <p className="font-mono text-[10px] uppercase tracking-wider text-haze/70" role="status">
           {statusLabel}
         </p>
       </div>
 
-      {loading && <WorkspaceSkeleton />}
-
-      {!loading && !!error && (
-        <section className="mt-6 rounded-2xl border border-signal/30 bg-signal/[0.06] p-6">
-          <p className="eyebrow text-signal-soft/90">{t('common.connectionIssue')}</p>
-          <p className="mt-2 max-w-md text-sm leading-relaxed text-mist/70">{errorMessage}</p>
-          <button onClick={reloadAll} className="btn-primary mt-4 px-5 py-2.5 text-sm">
-            {t('common.refresh')}
-          </button>
-        </section>
+      {loading && (
+        <div className="mt-5 grid gap-4 lg:grid-cols-[300px_1fr]" aria-hidden>
+          <SkeletonCard className="h-64" />
+          <SkeletonStack count={2} />
+        </div>
       )}
 
-      {emptyCaseload && (
-        <section className="card mt-6 p-6">
-          <p className="text-sm leading-relaxed text-mist/60">{t('workspace.emptyCaseload')}</p>
-        </section>
-      )}
+      {!loading && !!error && <ErrorPanel className="mt-5" message={errorMessage} onRetry={reloadAll} />}
+
+      {emptyCaseload && <EmptyState className="mt-5" body={t('workspace.emptyCaseload')} />}
 
       {!loading && !error && summary && (
         <>
-          {/* Client band */}
-          <div className="mt-6 card flex flex-wrap items-center justify-between gap-4 p-5">
-            <div className="flex items-center gap-4">
-              <span className="grid h-11 w-11 place-items-center rounded-full bg-teal/15 font-display text-base font-semibold text-teal-soft ring-1 ring-teal/30">
-                {clientName.split(' ').map((p) => p[0]).join('').slice(0, 2)}
-              </span>
-              <div>
-                <p className="font-display text-lg font-medium text-mist">{clientName}</p>
-                <p className="text-xs text-mist/50">
-                  {t('workspace.recordId', { id: summary.client.id.slice(0, 8) })} ·{' '}
-                  {t('workspace.caseloadCount', { n: fmtNumber(caseloadSize) })}
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={highRisk ? 'chip-signal' : 'chip text-teal-soft/80'}>
-                {t('workspace.riskLevel')}: {bandLabel}
-              </span>
-              <span className="chip text-teal-soft/80">
-                {t('workspace.nextSession')}:{' '}
-                {nextSessionDate
-                  ? fmtDate(nextSessionDate, { weekday: 'short', day: 'numeric', month: 'short' })
-                  : '—'}
-              </span>
-            </div>
-          </div>
-
-          <div className="mt-6 grid gap-6 lg:grid-cols-[320px_1fr]">
+          <div className="mt-5 grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
             {/* ── Timeline rail — the client's signal, vertical ── */}
-            <aside className="card h-fit p-5">
+            <aside className="card h-fit p-4">
               <p className="eyebrow">{t('workspace.timelineEyebrow')}</p>
-              <ol className="relative mt-5 space-y-5 border-s border-white/[0.08] ps-5">
+              <ol className="relative mt-4 space-y-4 border-s border-line/20 ps-4">
                 {liveTimeline.map((ev) => (
                   <li key={ev.id} className="relative">
                     <span
-                      className={`absolute -start-[26.5px] top-1 h-3 w-3 rounded-full ${KIND_STYLE[ev.kind].dot}`}
+                      className={`absolute -start-[21.5px] top-1 h-2.5 w-2.5 rounded-full ${KIND_STYLE[ev.kind].dot}`}
                       aria-hidden
                     />
-                    <p className="font-mono text-[10px] uppercase tracking-wider text-mist/40">
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-haze/90">
                       {ev.date ? fmtDate(new Date(ev.date), { day: 'numeric', month: 'short' }) : '—'} ·{' '}
                       {t(KIND_STYLE[ev.kind].label)}
                     </p>
@@ -305,30 +324,30 @@ export default function SessionWorkspacePage() {
             </aside>
 
             {/* ── Main column ── */}
-            <div className="space-y-6">
+            <div className="space-y-4">
               {/* Risk banner — only when the live record actually flags high/severe risk */}
               {highRisk && (
-                <section className="rounded-2xl border border-signal/30 bg-signal/[0.07] p-5">
+                <section className="rounded-md border border-signal/45 bg-signal/[0.07] p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex items-start gap-3">
                       <svg viewBox="0 0 24 24" className="mt-0.5 h-5 w-5 shrink-0 text-signal" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
                         <path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                       <div>
-                        <p className="eyebrow text-signal-soft/90">{t('workspace.alertsEyebrow')}</p>
+                        <p className="eyebrow text-signal">{t('workspace.alertsEyebrow')}</p>
                         <p className="mt-1 max-w-xl text-sm leading-relaxed text-mist/80">
                           {t('workspace.riskBanner', { band: bandLabel })}
                         </p>
                       </div>
                     </div>
                     {ackedAt ? (
-                      <span className="chip border-teal/25 bg-teal/10 text-teal-soft">
+                      <span className="chip" role="status">
                         ✓ {t('workspace.acked', { time: fmtTime(ackedAt) })}
                       </span>
                     ) : (
                       <button
                         onClick={() => setAckedAt(new Date())}
-                        className="rounded-xl border border-signal/50 px-4 py-2 text-sm font-medium text-signal-soft transition hover:bg-signal/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal-soft"
+                        className="rounded border border-signal/60 px-3.5 py-1.5 text-sm font-medium text-signal transition hover:bg-signal/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal"
                       >
                         {t('workspace.ack')}
                       </button>
@@ -338,14 +357,14 @@ export default function SessionWorkspacePage() {
               )}
 
               {/* Session notes — draft locally, file + sign through the API */}
-              <section className="card p-6">
+              <section className="card p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="eyebrow">{t('workspace.notesEyebrow')}</p>
-                    <h2 className="mt-1 font-display text-xl font-medium text-mist">{t('workspace.notesTitle')}</h2>
+                    <h2 className="mt-1 font-display text-lg font-medium text-mist">{t('workspace.notesTitle')}</h2>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <button onClick={() => saveDraft()} className="btn-ghost px-4 py-2 text-sm">
+                    <button onClick={() => saveDraft()} className="btn-ghost">
                       {t('workspace.saveDraft')}
                     </button>
                     {!filed && (
@@ -353,7 +372,7 @@ export default function SessionWorkspacePage() {
                         onClick={fileNote}
                         disabled={!canFile}
                         title={!sessionId ? t('workspace.noSessionForNote') : undefined}
-                        className="btn-primary px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                        className="btn-primary disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {noteBusy === 'filing' ? t('workspace.filingNote') : t('workspace.fileNote')}
                       </button>
@@ -362,13 +381,13 @@ export default function SessionWorkspacePage() {
                       <button
                         onClick={signFiledNote}
                         disabled={noteBusy !== 'idle'}
-                        className="btn-primary px-4 py-2 text-sm disabled:opacity-60"
+                        className="btn-primary disabled:opacity-60"
                       >
                         {noteBusy === 'signing' ? t('workspace.signingNote') : t('workspace.signNote')}
                       </button>
                     )}
                     {filed?.signedAt && (
-                      <span className="chip border-teal/25 bg-teal/10 text-teal-soft" role="status">
+                      <span className="chip" role="status">
                         ✓ {t('workspace.noteSignedAt', { time: fmtTime(filed.signedAt) })}
                       </span>
                     )}
@@ -383,7 +402,7 @@ export default function SessionWorkspacePage() {
                   className="field mt-4 min-h-[160px] leading-relaxed read-only:opacity-70"
                 />
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-mono text-[10px] uppercase tracking-wider text-mist/40" role="status">
+                  <p className="font-mono text-[10px] uppercase tracking-wider text-haze/90" role="status">
                     {filed && !filed.signedAt
                       ? t('workspace.noteFiled')
                       : savedAt
@@ -401,132 +420,61 @@ export default function SessionWorkspacePage() {
                 )}
               </section>
 
-              {/* Latest assessment + wearable rollup — live signal row */}
-              {(assessment || wearable) && (
-                <div className="grid gap-6 xl:grid-cols-2">
-                  {assessment && (
-                    <section className="card p-6">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="eyebrow">{t('workspace.assessEyebrow')}</p>
-                        <span className="chip text-teal-soft/80">
-                          {t('workspace.assessCompleted', {
-                            date: fmtDate(new Date(assessment.completedAt), { day: 'numeric', month: 'short' }),
-                          })}
-                        </span>
-                      </div>
-                      <div className="mt-5 grid grid-cols-2 gap-4">
-                        <div className="card-inset p-4 text-center">
-                          <p className="font-mono text-[10px] uppercase tracking-wider text-mist/40">{t('workspace.assessScore')}</p>
-                          <p className="mt-1.5 font-display text-3xl font-semibold text-mist">
-                            {assessment.rawScore === null ? '—' : fmtNumber(assessment.rawScore)}
-                          </p>
-                        </div>
-                        <div className="card-inset p-4 text-center">
-                          <p className="font-mono text-[10px] uppercase tracking-wider text-mist/40">{t('workspace.assessBand')}</p>
-                          <p className="mt-1.5 font-display text-3xl font-semibold text-mist">
-                            {assessment.severityBand
-                              ? dict.intake.bands[assessment.severityBand.toUpperCase() as keyof typeof dict.intake.bands] ??
-                                assessment.severityBand
-                              : '—'}
-                          </p>
-                        </div>
-                      </div>
-                      {assessment.interpretation && (
-                        <p className="mt-4 text-sm leading-relaxed text-mist/60">{assessment.interpretation}</p>
-                      )}
-                    </section>
-                  )}
-                  {wearable && (
-                    <section className="card p-6">
-                      <p className="eyebrow">{t('workspace.wearableEyebrow', { n: fmtNumber(wearable.windowDays) })}</p>
-                      <div className="mt-5 grid grid-cols-3 gap-3">
-                        <div className="card-inset p-3 text-center">
-                          <p className="font-mono text-[10px] uppercase tracking-wider text-mist/40">{t('patient.avgHrv')}</p>
-                          <p className="mt-1 font-display text-xl font-semibold text-mist">
-                            {wearable.avgHrvMs === null ? '—' : fmtNumber(Math.round(wearable.avgHrvMs))}
-                            {wearable.avgHrvMs !== null && (
-                              <span className="ms-1 text-xs font-normal text-mist/50">{t('patient.unitMs')}</span>
-                            )}
-                          </p>
-                        </div>
-                        <div className="card-inset p-3 text-center">
-                          <p className="font-mono text-[10px] uppercase tracking-wider text-mist/40">{t('patient.avgSleep')}</p>
-                          <p className="mt-1 font-display text-xl font-semibold text-mist">
-                            {wearable.avgSleepHours === null
-                              ? '—'
-                              : fmtNumber(wearable.avgSleepHours, { maximumFractionDigits: 1 })}
-                            {wearable.avgSleepHours !== null && (
-                              <span className="ms-1 text-xs font-normal text-mist/50">{t('patient.unitHours')}</span>
-                            )}
-                          </p>
-                        </div>
-                        <div className="card-inset p-3 text-center">
-                          <p className="font-mono text-[10px] uppercase tracking-wider text-mist/40">{t('patient.restingHr')}</p>
-                          <p className="mt-1 font-display text-xl font-semibold text-mist">
-                            {wearable.restingHrBpm === null ? '—' : fmtNumber(Math.round(wearable.restingHrBpm))}
-                            {wearable.restingHrBpm !== null && (
-                              <span className="ms-1 text-xs font-normal text-mist/50">{t('patient.unitBpm')}</span>
-                            )}
-                          </p>
-                        </div>
-                      </div>
-                      {wearable.series.length > 0 && (
-                        <div className="mt-4 card-inset p-4">
-                          <p className="font-mono text-[10px] uppercase tracking-wider text-mist/40">{t('patient.hrvDaily')}</p>
-                          <div className="mt-2 text-teal" dir="ltr">
-                            <Sparkline values={wearable.series.map((d) => d.hrvMs)} className="h-8 w-full" />
-                          </div>
-                        </div>
-                      )}
-                      {wearable.arousalNote && (
-                        <p className="mt-4 text-sm leading-relaxed text-mist/60">{wearable.arousalNote}</p>
-                      )}
-                      <p className="mt-3 text-xs leading-relaxed text-mist/40">{t('patient.wearableNote')}</p>
-                    </section>
-                  )}
-                </div>
+              {/* Outcome measures — the dense hairline grid of the client's signal */}
+              {measureRows.length > 0 && (
+                <section>
+                  <p className="eyebrow mb-2">{t('workspace.measuresEyebrow')}</p>
+                  <DataTable
+                    columns={measureColumns}
+                    rows={measureRows}
+                    rowKey={(o) => `${o.construct}-${o.occurredAt}`}
+                    caption={t('workspace.measuresCaption')}
+                  />
+                </section>
               )}
 
               {/* AI case formulation — no live endpoint yet; honest pending state, never fabricated */}
               <section className="card overflow-hidden">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] bg-console-950/40 px-6 py-4">
+                <div className="hairline-b flex flex-wrap items-center justify-between gap-3 bg-console-700/40 px-5 py-3">
                   <div className="flex items-center gap-3">
-                    <span className="grid h-8 w-8 place-items-center rounded-lg bg-teal/15 ring-1 ring-teal/30" aria-hidden>
-                      <svg viewBox="0 0 24 24" className="h-4 w-4 text-teal-soft" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <span className="grid h-7 w-7 place-items-center rounded-sm border border-line/30" aria-hidden>
+                      <svg viewBox="0 0 24 24" className="h-4 w-4 text-haze" fill="none" stroke="currentColor" strokeWidth="1.6">
                         <path d="M12 3a4.5 4.5 0 00-4.4 5.5A4 4 0 006 16h2m4-13a4.5 4.5 0 014.4 5.5A4 4 0 0118 16h-2m-4-13v18m0 0l-2.5-2.5M12 21l2.5-2.5" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     </span>
                     <p className="eyebrow mb-0">{t('workspace.aiEyebrow')}</p>
                   </div>
                 </div>
-                <div className="p-6">
+                <div className="p-5">
                   <p className="text-sm leading-relaxed text-mist/75">{t('workspace.aiPending')}</p>
                   <p className="mt-2 text-xs leading-relaxed text-mist/45">{t('workspace.aiPendingBody')}</p>
-                  <p className="mt-4 text-center text-xs text-mist/35">{t('common.aiMotto')}</p>
+                  <p className="mt-4 text-center font-mono text-[10px] uppercase tracking-wider text-haze/70">
+                    {t('common.aiMotto')}
+                  </p>
                 </div>
               </section>
 
               {/* Treatment plan snapshot */}
-              <section className="card p-6">
+              <section className="card p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="eyebrow">{t('workspace.planEyebrow')}</p>
                   {summary.activePlan && (
-                    <span className="chip text-teal-soft/80">
+                    <span className="chip">
                       {t('workspace.planVersion', { n: fmtNumber(summary.activePlan.version) })}
                     </span>
                   )}
                 </div>
-                <ul className="mt-5 space-y-4">
+                <ul className="mt-4 space-y-4">
                   {planGoals.length > 0 ? (
                     planGoals.map((g) => (
                       <li key={g.id}>
                         <div className="flex items-baseline justify-between gap-3">
                           <p className="text-sm font-medium text-mist/85">{g.description}</p>
-                          <span className="font-mono text-xs text-teal-soft">{fmtPercent(g.progressPct / 100)}</span>
+                          <span className="figure text-xs text-mist" dir="ltr">{fmtPercent(g.progressPct / 100)}</span>
                         </div>
-                        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-console-600" dir="ltr">
+                        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-console-600" dir="ltr">
                           <div
-                            className="h-full rounded-full bg-teal/70"
+                            className="h-full rounded-full bg-teal"
                             style={{ width: `${Math.max(0, Math.min(100, g.progressPct))}%` }}
                           />
                         </div>
@@ -544,29 +492,113 @@ export default function SessionWorkspacePage() {
               </section>
             </div>
           </div>
+
+          {/* ── Context panel: client identity + latest assessment + wearable ── */}
+          <ContextPanel>
+            <section className="card p-4">
+              <p className="eyebrow">{t('workspace.clientEyebrow')}</p>
+              <div className="mt-3 flex items-center gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-sm border border-line/30 bg-console-700/60 font-display text-sm font-semibold text-mist">
+                  {clientName.split(' ').map((p) => p[0]).join('').slice(0, 2)}
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate font-display text-base font-medium text-mist">{clientName}</p>
+                  <p className="figure text-[11px] text-haze/90" dir="ltr">
+                    {t('workspace.recordId', { id: summary.client.id.slice(0, 8) })}
+                  </p>
+                </div>
+              </div>
+              <dl className="hairline-t mt-3 space-y-2 pt-3 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-mist/55">{t('workspace.riskLevel')}</dt>
+                  <dd>
+                    <span className={highRisk ? 'chip-signal' : 'chip'}>{bandLabel}</span>
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-mist/55">{t('workspace.nextSession')}</dt>
+                  <dd className="figure text-mist" dir="ltr">
+                    {nextSessionDate
+                      ? fmtDate(nextSessionDate, { weekday: 'short', day: 'numeric', month: 'short' })
+                      : '—'}
+                  </dd>
+                </div>
+              </dl>
+              <p className="mt-2 text-xs text-mist/55">{t('workspace.caseloadCount', { n: fmtNumber(caseloadSize) })}</p>
+            </section>
+
+            {assessment && (
+              <section className="card p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="eyebrow">{t('workspace.assessEyebrow')}</p>
+                </div>
+                <p className="mt-1.5 font-mono text-[10px] uppercase tracking-wider text-haze/80">
+                  {t('workspace.assessCompleted', {
+                    date: fmtDate(new Date(assessment.completedAt), { day: 'numeric', month: 'short' }),
+                  })}
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <StatTile
+                    label={t('workspace.assessScore')}
+                    value={assessment.rawScore === null ? '—' : fmtNumber(assessment.rawScore)}
+                  />
+                  <div className="card-inset p-3">
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-haze/90">{t('workspace.assessBand')}</p>
+                    <p className="mt-1.5 text-lg font-medium leading-none text-mist">
+                      {assessment.severityBand
+                        ? dict.intake.bands[assessment.severityBand.toUpperCase() as keyof typeof dict.intake.bands] ??
+                          assessment.severityBand
+                        : '—'}
+                    </p>
+                  </div>
+                </div>
+                {assessment.interpretation && (
+                  <p className="mt-3 text-xs leading-relaxed text-mist/60">{assessment.interpretation}</p>
+                )}
+              </section>
+            )}
+
+            {wearable && (
+              <section className="card p-4">
+                <p className="eyebrow">{t('workspace.wearableEyebrow', { n: fmtNumber(wearable.windowDays) })}</p>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <StatTile
+                    label={t('patient.avgHrv')}
+                    value={wearable.avgHrvMs === null ? '—' : fmtNumber(Math.round(wearable.avgHrvMs))}
+                    unit={wearable.avgHrvMs === null ? undefined : t('patient.unitMs')}
+                  />
+                  <StatTile
+                    label={t('patient.avgSleep')}
+                    value={
+                      wearable.avgSleepHours === null
+                        ? '—'
+                        : fmtNumber(wearable.avgSleepHours, { maximumFractionDigits: 1 })
+                    }
+                    unit={wearable.avgSleepHours === null ? undefined : t('patient.unitHours')}
+                  />
+                  <StatTile
+                    label={t('patient.restingHr')}
+                    value={wearable.restingHrBpm === null ? '—' : fmtNumber(Math.round(wearable.restingHrBpm))}
+                    unit={wearable.restingHrBpm === null ? undefined : t('patient.unitBpm')}
+                  />
+                </div>
+                {wearable.series.length > 0 && (
+                  <div className="card-inset mt-2 p-3">
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-haze/90">{t('patient.hrvDaily')}</p>
+                    <div className="mt-2 text-teal" dir="ltr">
+                      <Sparkline values={wearable.series.map((d) => d.hrvMs)} className="h-7 w-full" />
+                    </div>
+                  </div>
+                )}
+                {wearable.arousalNote && (
+                  <p className="mt-3 text-xs leading-relaxed text-mist/60">{wearable.arousalNote}</p>
+                )}
+                <p className="mt-2 text-[11px] leading-relaxed text-mist/40">{t('patient.wearableNote')}</p>
+              </section>
+            )}
+          </ContextPanel>
         </>
       )}
-    </div>
-  );
-}
-
-function WorkspaceSkeleton() {
-  return (
-    <div className="mt-6 grid gap-6 lg:grid-cols-[320px_1fr]" aria-hidden>
-      <div className="card h-64 animate-pulse p-5">
-        <div className="h-3 w-24 rounded-full bg-console-600/50" />
-        <div className="mt-6 h-3 w-32 rounded-full bg-console-600/40" />
-        <div className="mt-4 h-3 w-28 rounded-full bg-console-600/40" />
-      </div>
-      <div className="space-y-6">
-        {[0, 1].map((i) => (
-          <div key={i} className="card animate-pulse p-6">
-            <div className="h-3 w-28 rounded-full bg-console-600/50" />
-            <div className="mt-4 h-5 w-56 rounded-full bg-console-600/50" />
-            <div className="mt-3 h-3 w-40 rounded-full bg-console-600/40" />
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

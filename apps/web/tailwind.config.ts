@@ -1,10 +1,23 @@
 import type { Config } from 'tailwindcss';
 
 /**
- * VPSY "Clinical Aurora" design tokens. Deliberately not the AI-default cream/
- * serif or acid-green looks — a slate-indigo monitoring-console base with a calm
- * therapeutic teal primary and a signal-amber reserved for risk/attention.
+ * VPSY "Clinical Command Center" design tokens.
+ *
+ * Every color resolves through a CSS custom property (RGB triplet) defined in
+ * globals.css, so the SAME utility class renders correctly in both the dark
+ * and light themes — pages never branch on theme.
+ *
+ * Legacy token NAMES are preserved (console/teal/signal/risk/mist/haze) so all
+ * routes keep compiling, but their VALUES are remapped to the Command Center
+ * palette:
+ *   console.* → the neutral graphite/paper surface scale
+ *   mist/haze → primary / secondary ink (text)
+ *   teal.*    → "steel" — the calm, nearly-neutral interactive tone
+ *   signal.*  → THE single reserved accent: risk / attention amber
+ *   risk      → critical red
  */
+const rgb = (v: string) => `rgb(var(${v}) / <alpha-value>)`;
+
 const config: Config = {
   darkMode: 'class',
   content: ['./src/**/*.{ts,tsx}'],
@@ -12,45 +25,46 @@ const config: Config = {
     extend: {
       colors: {
         console: {
-          950: '#070B16',
-          900: '#0B1020',
-          800: '#0E1428',
-          700: '#161E38',
-          600: '#1F2A4A',
-          500: '#2B3862',
+          950: rgb('--vc-surface-deep'),
+          900: rgb('--vc-surface-0'),
+          800: rgb('--vc-surface-1'),
+          700: rgb('--vc-surface-2'),
+          600: rgb('--vc-surface-3'),
+          500: rgb('--vc-surface-4'),
         },
         teal: {
-          DEFAULT: '#38BDC9',
-          soft: '#7CD9E1',
-          deep: '#1B7E88',
+          DEFAULT: rgb('--vc-steel'),
+          soft: rgb('--vc-steel-soft'),
+          deep: rgb('--vc-steel-deep'),
         },
         signal: {
-          DEFAULT: '#F5A623',
-          soft: '#FBCB72',
-          deep: '#B9761A',
+          DEFAULT: rgb('--vc-signal'),
+          soft: rgb('--vc-signal-soft'),
+          deep: rgb('--vc-signal-deep'),
         },
-        risk: '#F26D6D',
-        mist: '#F6F7F9',
-        haze: '#E7EBF0',
-        ink: '#0B1020',
+        risk: rgb('--vc-risk'),
+        mist: rgb('--vc-ink'),
+        haze: rgb('--vc-ink-2'),
+        ink: rgb('--vc-ink-inverse'),
+        line: rgb('--vc-line'),
       },
       fontFamily: {
-        // Noto families cover Arabic / CJK / Devanagari so the identity holds
-        // across every supported script (unicode-range keeps downloads lean).
-        display: ['var(--font-display)', 'Space Grotesk', 'Noto Sans Arabic', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans Devanagari', 'system-ui', 'sans-serif'],
-        sans: ['var(--font-body)', 'Inter', 'Noto Sans Arabic', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans Devanagari', 'system-ui', 'sans-serif'],
-        mono: ['var(--font-mono)', 'IBM Plex Mono', 'monospace'],
+        // System stacks only — zero network font fetches. Bahnschrift (a DIN
+        // grotesque, ships with Windows 10+) gives the display voice its
+        // instrument-panel character; Avenir Next covers macOS; everything
+        // else falls to the platform UI face, which also covers Arabic/CJK/
+        // Devanagari natively.
+        display: ['var(--font-display)', 'Bahnschrift', 'Avenir Next', 'Segoe UI Variable Display', 'Segoe UI', 'system-ui', 'sans-serif'],
+        sans: ['var(--font-body)', 'Segoe UI Variable Text', 'Segoe UI', '-apple-system', 'SF Pro Text', 'Helvetica Neue', 'Arial', 'system-ui', 'sans-serif'],
+        mono: ['var(--font-mono)', 'Cascadia Mono', 'Cascadia Code', 'ui-monospace', 'SF Mono', 'JetBrains Mono', 'IBM Plex Mono', 'Consolas', 'Liberation Mono', 'monospace'],
       },
       letterSpacing: {
-        eyebrow: '0.22em',
+        eyebrow: '0.18em',
       },
       boxShadow: {
-        console: '0 20px 60px -20px rgba(56, 189, 201, 0.25)',
-        lift: '0 24px 80px -32px rgba(7, 11, 22, 0.55)',
-      },
-      backgroundImage: {
-        aurora:
-          'radial-gradient(60% 80% at 20% 10%, rgba(56,189,201,0.18) 0%, transparent 60%), radial-gradient(50% 60% at 90% 0%, rgba(245,166,35,0.10) 0%, transparent 55%)',
+        // Hairline-first elevation: a crisp 1px ring + a soft neutral drop.
+        console: '0 0 0 1px rgb(var(--vc-line) / 0.35), 0 12px 32px -16px rgb(var(--vc-shadow) / 0.5)',
+        lift: '0 0 0 1px rgb(var(--vc-line) / 0.4), 0 24px 56px -24px rgb(var(--vc-shadow) / 0.65)',
       },
       keyframes: {
         pulseline: {
@@ -61,10 +75,15 @@ const config: Config = {
           '0%': { opacity: '0', transform: 'translateY(16px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
+        palettein: {
+          '0%': { opacity: '0', transform: 'translateY(-8px) scale(0.99)' },
+          '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+        },
       },
       animation: {
         pulseline: 'pulseline 3s ease-in-out infinite',
         rise: 'rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both',
+        palettein: 'palettein 0.16s cubic-bezier(0.22, 1, 0.36, 1) both',
       },
     },
   },
