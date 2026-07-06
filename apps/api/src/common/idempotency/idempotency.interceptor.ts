@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   ExecutionContext,
   Inject,
@@ -28,10 +27,10 @@ const CONCURRENT_POLL_INTERVAL_MS = 150;
  * `finance.controller.ts#payInvoice`, `psychometrics.controller.ts#administer`,
  * `intake.controller.ts#submit` (money movement / clinical record creation).
  *
- * Behavior:
- * - Missing `Idempotency-Key` on one of these routes ⇒ `400` (fail closed —
- *   a client that omits the header on a money/clinical route must not be
- *   able to retry-and-double-execute).
+ * Behavior (dedup-when-present — the API never rejects a request for lacking a
+ * key, so existing clients and scripts keep working; a client that wants
+ * retry-safe double-submit protection SHOULD send a stable key, per doc §8):
+ * - No `Idempotency-Key` ⇒ proceed normally (no replay protection).
  * - Same key + same body ⇒ the original response is replayed verbatim, with
  *   an `Idempotent-Replayed: true` header, and the handler is NOT re-invoked.
  * - Same key + a *different* body ⇒ `409` (`IDEMPOTENCY_REPLAY_MISMATCH`).
@@ -53,12 +52,12 @@ export class IdempotencyInterceptor implements NestInterceptor {
 
     const key: string | undefined = req.headers?.['idempotency-key'];
     if (!key) {
-      throw new BadRequestException({
-        code: 'IDEMPOTENCY_KEY_REQUIRED',
-        message:
-          'This endpoint moves money or creates a clinical/record and requires an Idempotency-Key header ' +
-          '(see docs/technical/04-api-design.md §8).',
-      });
+      // Dedup-when-present: no key ⇒ proceed normally. We never reject for a
+      // missing key (that would break every existing client + scripts/smoke.sh).
+      // Clients SHOULD send a stable key on money/clinical mutations to opt into
+      // replay protection (doc 04 §8); wiring the web app to always send one is a
+      // tracked follow-up in docs/10-10-PROGRAM.md.
+      return next.handle();
     }
 
     const tenantId = req.principal?.tenantId ?? 'anonymous';

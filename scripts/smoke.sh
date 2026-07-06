@@ -52,7 +52,7 @@ check "matching proposals available" "true" "$(curl -s "$BASE/assignments/propos
 check "note write (active license)" "201" "$(code -X POST "$BASE/session-notes" -H "$AH $PSY" -H 'Content-Type: application/json' -d '{"sessionId":"session_demo_1","content":{"format":"narrative","narrative":"Smoke-test note."}}')"
 
 # ── Psychometrics — patient self-administers (NOT license-gated) ──
-check "assessment self-administer" "201" "$(code -X POST "$BASE/assessments/responses" -H "$AH $CLI" -H 'Content-Type: application/json' -d "{\"versionId\":\"cmr8h028p001wdaycd7e7pcc1\",\"clientId\":\"$ALEX_CLIENT_ID\",\"answers\":{\"q1\":1,\"q2\":1}}")"
+check "assessment self-administer" "201" "$(code -X POST "$BASE/assessments/responses" -H "$AH $CLI" -H 'Content-Type: application/json' -d "{\"versionId\":\"${VERSION_ID:-cmr8h028p001wdaycd7e7pcc1}\",\"clientId\":\"$ALEX_CLIENT_ID\",\"answers\":{\"q1\":1,\"q2\":1}}")"
 
 # ── Clinical summary + wearables ──
 check "clients/me summary" "200" "$(code "$BASE/clients/me" -H "$AH $CLI")"

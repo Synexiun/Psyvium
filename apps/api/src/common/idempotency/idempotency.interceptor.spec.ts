@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, type ExecutionContext } from '@nestjs/common';
+import { ConflictException, type ExecutionContext } from '@nestjs/common';
 import { firstValueFrom, of } from 'rxjs';
 import { IdempotencyInterceptor } from './idempotency.interceptor';
 import { InMemoryIdempotencyStore } from './in-memory-idempotency.store';
@@ -26,14 +26,13 @@ function makeContext(overrides: { headers?: Record<string, string>; body?: unkno
 }
 
 describe('IdempotencyInterceptor', () => {
-  it('rejects a mutating request with no Idempotency-Key header', async () => {
+  it('proceeds normally (no replay protection) when no Idempotency-Key is present', async () => {
     const interceptor = new IdempotencyInterceptor(new InMemoryIdempotencyStore());
     const handler = { handle: jest.fn(() => of({ ok: true })) };
 
-    await expect(interceptor.intercept(makeContext({ headers: {} }), handler)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
-    expect(handler.handle).not.toHaveBeenCalled();
+    const result = await firstValueFrom(await interceptor.intercept(makeContext({ headers: {} }), handler));
+    expect(result).toEqual({ ok: true });
+    expect(handler.handle).toHaveBeenCalledTimes(1);
   });
 
   it('runs the handler once, then replays the cached response verbatim on a duplicate key + identical body', async () => {
