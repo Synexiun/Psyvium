@@ -43,7 +43,7 @@ export default function CommsPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="eyebrow">{t('comms.eyebrow')}</p>
-          <h1 className="mt-3 font-display text-3xl font-semibold text-mist">{t('comms.title')}</h1>
+          <h1 className="mt-2 font-display text-2xl font-semibold text-mist">{t('comms.title')}</h1>
         </div>
         <span role="status" className={`chip ${live === 'live' ? 'text-teal-soft/80' : live === 'offline' ? 'chip-signal' : 'text-mist/50'}`}>
           {live === 'live' ? t('common.liveData') : live === 'offline' ? t('common.offlineDemo') : t('common.loadingLive')}
@@ -204,7 +204,7 @@ function MediaMessagesPanel() {
       <p className="mt-2 text-xs text-mist/50">{t('comms.mediaIntro')}</p>
 
       {recording === 'VIDEO' && (
-        <video ref={previewRef} muted playsInline dir="ltr" className="mt-3 aspect-video w-full rounded-xl bg-console-950 object-cover" />
+        <video ref={previewRef} muted playsInline dir="ltr" className="mt-3 aspect-video w-full rounded bg-console-950 object-cover" />
       )}
 
       <div className="mt-3 flex flex-wrap gap-2">
@@ -215,7 +215,7 @@ function MediaMessagesPanel() {
           </>
         ) : (
           <>
-            <span className="chip chip-signal">{t('comms.recording', { sec: seconds })}</span>
+            <span className="chip chip-signal figure">{t('comms.recording', { sec: seconds })}</span>
             <button onClick={stopAndSend} className="btn-primary px-4 py-2 text-sm">{t('comms.stopSend')}</button>
             <button onClick={discard} className="btn-ghost px-4 py-2 text-sm">{t('comms.discard')}</button>
           </>
@@ -228,11 +228,11 @@ function MediaMessagesPanel() {
         {messages.length === 0 && <li className="text-xs text-mist/30">{t('comms.mediaEmpty')}</li>}
         {messages.map((m) => (
           <li key={m.id} className="card-inset p-3">
-            <p className="font-mono text-[11px] uppercase tracking-wider text-teal-soft/70">
+            <p className="font-mono text-[11px] uppercase tracking-wider text-teal-soft/70 tabular-nums">
               {m.kind === 'VIDEO' ? t('comms.videoMsg') : t('comms.voiceMsg')} · {m.durationSec}s
             </p>
             {m.kind === 'VIDEO' ? (
-              <video controls playsInline dir="ltr" src={m.storageKey} className="mt-2 aspect-video w-full rounded-lg bg-console-950" />
+              <video controls playsInline dir="ltr" src={m.storageKey} className="mt-2 aspect-video w-full rounded-sm bg-console-950" />
             ) : (
               <audio controls src={m.storageKey} className="mt-2 w-full" />
             )}
@@ -288,7 +288,7 @@ function LiveCallPanel() {
       <h2 className="mt-2 font-display text-lg font-medium text-mist">{t('comms.liveTitle')}</h2>
       <p className="mt-1 text-xs text-mist/50">{t('comms.liveIntro')}</p>
 
-      <div className="mt-3 aspect-video w-full overflow-hidden rounded-xl bg-console-950">
+      <div className="mt-3 aspect-video w-full overflow-hidden rounded bg-console-950">
         <video ref={videoRef} muted playsInline dir="ltr" className="h-full w-full object-cover" />
       </div>
       {inCall && (

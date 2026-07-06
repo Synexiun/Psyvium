@@ -16,18 +16,28 @@
  * - ⌘K / Ctrl-K opens the command palette anywhere in the portal.
  */
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { useI18n } from '@/i18n';
+import { getPrincipal, logout, type Principal } from '@/lib/api';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { CommandPalette, useCommandPaletteHotkey } from '@/components/CommandPalette';
 import { CommandRail, PORTAL_NAV } from '@/components/CommandRail';
 import { ContextPanelHostProvider } from '@/components/ContextPanel';
 
+/** Role code (as carried in the access token) → the existing role-label i18n key. */
+const ROLE_LABEL_KEY: Record<string, 'login.roleClient' | 'login.rolePsychologist' | 'login.roleManager' | 'login.roleExecutive'> = {
+  CLIENT: 'login.roleClient',
+  PSYCHOLOGIST: 'login.rolePsychologist',
+  MANAGER: 'login.roleManager',
+  EXECUTIVE: 'login.roleExecutive',
+};
+
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
   const { t } = useI18n();
   const pathname = usePathname();
+  const router = useRouter();
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const togglePalette = useCallback(() => setPaletteOpen((o) => !o), []);
@@ -38,6 +48,19 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
   useEffect(() => {
     setIsMac(/mac|iphone|ipad/i.test(navigator.platform ?? ''));
   }, []);
+
+  // Signed-in identity — read from the token after mount only (localStorage is
+  // unavailable during SSR; resolving it there would also risk a hydration mismatch).
+  const [principal, setPrincipal] = useState<Principal | null>(null);
+  useEffect(() => {
+    setPrincipal(getPrincipal());
+  }, [pathname]);
+
+  function signOut() {
+    logout();
+    setPrincipal(null);
+    router.push('/login');
+  }
 
   const [panelHost, setPanelHost] = useState<HTMLElement | null>(null);
 
@@ -79,12 +102,29 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
               </button>
               <ThemeToggle />
               <LanguageSwitcher compact />
-              <Link
-                href="/login"
-                className="hidden font-mono text-[10px] uppercase tracking-wider text-mist/55 transition hover:text-mist sm:block"
-              >
-                {t('common.signIn')}
-              </Link>
+              {principal ? (
+                <div className="hidden items-center gap-2 sm:flex">
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-mist/55" role="status">
+                    {t('shell.signedInAs', {
+                      role: t(principal.roles.map((r) => ROLE_LABEL_KEY[r]).find(Boolean) ?? 'login.roleClient'),
+                    })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={signOut}
+                    className="rounded-sm border border-line/25 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-mist/70 transition hover:border-line/45 hover:text-mist focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal"
+                  >
+                    {t('common.signOut')}
+                  </button>
+                </div>
+              ) : (
+                <Link
+                  href="/login"
+                  className="hidden font-mono text-[10px] uppercase tracking-wider text-mist/55 transition hover:text-mist sm:block"
+                >
+                  {t('common.signIn')}
+                </Link>
+              )}
             </div>
           </header>
 

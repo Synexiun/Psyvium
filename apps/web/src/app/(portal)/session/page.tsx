@@ -3,14 +3,16 @@
 /**
  * Clinician Session Workspace — the center of the system.
  *
- * Wired entirely to the live clinical read model: signs in as the demo
- * psychologist (if no usable token), loads GET /clinicians/me/caseload,
- * picks the first client, and renders GET /clients/:id/clinical-summary —
- * real timeline (recent notes + outcome measures), active plan with goal
- * progress, the latest assessment, and the wearable rollup. "File note"
- * POSTs a structured note against the client's session and "Sign" locks it
- * via the API. There is no fallback-to-fake path: the workspace renders
- * loading / error / live (which may itself be empty — e.g. no clients yet).
+ * Wired entirely to the live clinical read model: loads GET
+ * /clinicians/me/caseload using whichever role's token is already on file
+ * from a real /login sign-in (this page never signs anyone in itself — a
+ * token carries exactly one role in production), picks the first client,
+ * and renders GET /clients/:id/clinical-summary — real timeline (recent
+ * notes + outcome measures), active plan with goal progress, the latest
+ * assessment, and the wearable rollup. "File note" POSTs a structured note
+ * against the client's session and "Sign" locks it via the API. There is no
+ * fallback-to-fake path: the workspace renders loading / error / live
+ * (which may itself be empty — e.g. no clients yet).
  *
  * The AI case-formulation panel has no live endpoint yet (that ships in a
  * later sub-project) — it renders an honest "pending clinician review"
@@ -21,8 +23,9 @@
  * dense hairline DataTable with mono/tabular figures.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useI18n } from '@/i18n';
-import { api, getToken, setToken, ApiError } from '@/lib/api';
+import { api, getToken, ApiError } from '@/lib/api';
 import type { CaseloadEntry, ClinicalSummary, OutcomePoint, TrendDirection } from '@/lib/clinical-types';
 import { Sparkline } from '@/components/Sparkline';
 import { useResource } from '@/lib/use-resource';
@@ -35,7 +38,6 @@ import { DataTable, type DataColumn } from '@/components/DataTable';
 
 const NOTE_KEY = 'vpsy.session.note.draft';
 const NOTE_TS_KEY = 'vpsy.session.note.ts';
-const DEMO_PSYCHOLOGIST = { email: 'dr.rivera@vpsy.health', password: 'Vpsy!2026' };
 
 const KIND_STYLE: Record<'note' | 'outcome', { dot: string; label: 'workspace.evNote' | 'workspace.evOutcome' }> = {
   note: { dot: 'bg-console-500 ring-1 ring-teal/50', label: 'workspace.evNote' },
@@ -58,26 +60,20 @@ interface LiveEvent {
   detail: string;
 }
 
-async function fetchCaseload(): Promise<CaseloadEntry[]> {
-  if (!getToken()) {
-    const tok = await api.login(DEMO_PSYCHOLOGIST.email, DEMO_PSYCHOLOGIST.password);
-    setToken(tok.accessToken);
-  }
-  try {
-    return await api.myCaseload();
-  } catch (e) {
-    // Token may belong to another demo role (client/manager) — re-auth.
-    if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
-      const tok = await api.login(DEMO_PSYCHOLOGIST.email, DEMO_PSYCHOLOGIST.password);
-      setToken(tok.accessToken);
-      return await api.myCaseload();
-    }
-    throw e;
-  }
+async function fetchCaseload(): Promise<CaseloadEntry[] | null> {
+  // No session on file — the effect below is redirecting to /login; skip the call.
+  if (!getToken()) return null;
+  return api.myCaseload();
 }
 
 export default function SessionWorkspacePage() {
   const { t, dict, fmtDate, fmtTime, fmtNumber, fmtPercent } = useI18n();
+  const router = useRouter();
+
+  // A real session is required — this page never signs anyone in itself.
+  useEffect(() => {
+    if (!getToken()) router.replace('/login');
+  }, [router]);
 
   // ── Live caseload → clinical summary for the first client — no fallback-to-fake ──
   const { data: caseload, loading: caseloadLoading, error: caseloadError, reload: reloadCaseload } =

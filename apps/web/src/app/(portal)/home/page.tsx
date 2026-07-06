@@ -3,9 +3,11 @@
 /**
  * Patient PWA home — the client's calm daily surface.
  *
- * Wired entirely to the live clinical read model: on load it signs in as the
- * demo client (if no token yet, same convenience as intake) and fetches
- * GET /clients/me → ClinicalSummary. There is no fallback-to-fake path —
+ * Wired entirely to the live clinical read model: GET /clients/me →
+ * ClinicalSummary, using whichever role's token is already on file from a
+ * real /login sign-in (this page never signs anyone in itself — a token
+ * carries exactly one role in production, and the portal layout redirects
+ * here only after authentication). There is no fallback-to-fake path —
  * every section renders one of three honest states: loading (skeleton),
  * error (a real failure + retry), or the live data (which may itself be
  * empty, e.g. no next session yet). The mood check-in persists to the
@@ -18,8 +20,9 @@
  * shell's context panel (<ContextPanel>); figures are mono/tabular.
  */
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useI18n } from '@/i18n';
-import { api, getToken, setToken, ApiError } from '@/lib/api';
+import { api, getToken, ApiError } from '@/lib/api';
 import type { ClinicalSummary, OutcomePoint, TrendDirection } from '@/lib/clinical-types';
 import { Sparkline } from '@/components/Sparkline';
 import { useResource } from '@/lib/use-resource';
@@ -30,7 +33,6 @@ import { EmptyState } from '@/components/EmptyState';
 import { StatTile } from '@/components/StatTile';
 
 const MOOD_KEY_PREFIX = 'vpsy.mood.';
-const DEMO_CLIENT = { email: 'alex.client@example.com', password: 'Vpsy!2026' };
 
 function todayKey(): string {
   return MOOD_KEY_PREFIX + new Date().toISOString().slice(0, 10);
@@ -74,26 +76,20 @@ function buildMoodWeek(outcomes: OutcomePoint[]): (number | null)[] {
   return days;
 }
 
-async function fetchPatientSummary(): Promise<ClinicalSummary> {
-  if (!getToken()) {
-    const tok = await api.login(DEMO_CLIENT.email, DEMO_CLIENT.password);
-    setToken(tok.accessToken);
-  }
-  try {
-    return await api.clientMe();
-  } catch (e) {
-    // Stale token from an earlier role/session — retry once fresh.
-    if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
-      const tok = await api.login(DEMO_CLIENT.email, DEMO_CLIENT.password);
-      setToken(tok.accessToken);
-      return await api.clientMe();
-    }
-    throw e;
-  }
+async function fetchPatientSummary(): Promise<ClinicalSummary | null> {
+  // No session on file — the effect below is redirecting to /login; skip the call.
+  if (!getToken()) return null;
+  return api.clientMe();
 }
 
 export default function PatientHomePage() {
   const { t, dict, fmtDate, fmtTime, fmtNumber, fmtPercent } = useI18n();
+  const router = useRouter();
+
+  // A real session is required — this page never signs anyone in itself.
+  useEffect(() => {
+    if (!getToken()) router.replace('/login');
+  }, [router]);
 
   // ── Live clinical summary — no fallback-to-fake; three honest states only ──
   const { data: summary, loading, error, reload } = useResource(fetchPatientSummary, []);

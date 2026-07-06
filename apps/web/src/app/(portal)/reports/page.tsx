@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react';
 import { api, setToken, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
+import { SkeletonStack } from '@/components/Skeleton';
+import { ErrorPanel } from '@/components/ErrorPanel';
+import { DataTable, type DataColumn } from '@/components/DataTable';
 import type { ExecutiveReportDto, ManagerReportDto, NationalAnalyticsDto, NationalMetricDto } from '@/lib/analytics-types';
 
 function money(amount: string, currency: string): string {
@@ -44,21 +47,21 @@ export default function ReportsPage() {
   }
   useEffect(() => { load(); }, []);
 
-  if (live === 'loading') return <p className="mt-10 font-mono text-sm text-mist/40">{t('analytics.loading')}</p>;
+  if (live === 'loading') return <SkeletonStack count={3} className="mt-8" />;
 
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="eyebrow">{t('analytics.eyebrow')}</p>
-          <h1 className="mt-3 font-display text-3xl font-semibold text-mist">{t('analytics.title')}</h1>
+          <h1 className="mt-2 font-display text-2xl font-semibold text-mist">{t('analytics.title')}</h1>
         </div>
         <span role="status" className={`chip ${live === 'live' ? 'text-teal-soft/80' : 'chip-signal'}`}>
           {live === 'live' ? t('common.liveData') : t('common.offlineDemo')}
         </span>
       </div>
       <p className="mt-3 max-w-3xl text-mist/60">{t('analytics.intro')}</p>
-      {error && <div role="alert" className="mt-5 rounded-xl border border-signal/30 bg-signal/10 px-4 py-3 text-sm text-signal-soft">{error}</div>}
+      {error && <ErrorPanel className="mt-5 max-w-md" message={error} onRetry={load} />}
 
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
         {exec && <ExecutivePanel r={exec} />}
@@ -73,7 +76,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="card-inset p-3">
       <p className="font-mono text-[10px] uppercase tracking-wider text-mist/40">{label}</p>
-      <p className="mt-1 font-display text-lg font-semibold text-mist">{value}</p>
+      <p className="figure mt-1 text-lg font-medium text-mist" dir="ltr">{value}</p>
     </div>
   );
 }
@@ -119,7 +122,7 @@ function ManagerPanel({ r }: { r: ManagerReportDto }) {
             <div className="h-2 flex-1 rounded-full bg-console-950">
               <div className={`h-2 rounded-full ${cls}`} style={{ width: `${(sev[k] / max) * 100}%` }} />
             </div>
-            <span className="w-6 shrink-0 text-end font-mono text-xs text-mist/60">{sev[k]}</span>
+            <span className="w-6 shrink-0 text-end font-mono text-xs text-mist/60 tabular-nums">{sev[k]}</span>
           </div>
         ))}
       </div>
@@ -137,6 +140,12 @@ function ManagerPanel({ r }: { r: ManagerReportDto }) {
 
 function NationalPanel({ r }: { r: NationalAnalyticsDto }) {
   const { t, fmtNumber } = useI18n();
+  const columns: DataColumn<NationalMetricDto>[] = [
+    { id: 'region', header: t('analytics.region'), cell: (m) => <span className="font-mono text-xs text-mist/70">{m.region}</span> },
+    { id: 'metric', header: t('analytics.metric'), cell: (m) => humanize(m.metric) },
+    { id: 'value', header: t('analytics.value'), numeric: true, cell: (m) => m.suppressed ? <span className="chip-signal" title={t('analytics.suppressedNote')}>{t('analytics.suppressed')}</span> : <span>{m.value == null ? '—' : fmtNumber(m.value)}{m.unit ? ` ${m.unit}` : ''}</span> },
+    { id: 'cohort', header: t('analytics.cohort'), numeric: true, cell: (m) => m.suppressed ? `< ${r.kAnonymityFloor}` : fmtNumber(m.cohortSize) },
+  ];
   return (
     <section className="mt-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -144,33 +153,7 @@ function NationalPanel({ r }: { r: NationalAnalyticsDto }) {
         <span className="chip text-teal-soft/70">{t('analytics.kFloor', { n: r.kAnonymityFloor })}</span>
       </div>
       <p className="mt-2 max-w-3xl text-xs text-mist/50">{t('analytics.natIntro')}</p>
-      <div className="mt-3 card overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-wider text-mist/40">
-              <th className="p-3 text-start">{t('analytics.region')}</th>
-              <th className="p-3 text-start">{t('analytics.metric')}</th>
-              <th className="p-3 text-end">{t('analytics.value')}</th>
-              <th className="p-3 text-end">{t('analytics.cohort')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {r.metrics.length === 0 && <tr><td colSpan={4} className="p-6 text-center text-xs text-mist/30">{t('analytics.noMetrics')}</td></tr>}
-            {r.metrics.map((m: NationalMetricDto, i) => (
-              <tr key={i} className={`border-b border-white/[0.04] ${m.suppressed ? 'opacity-60' : ''}`}>
-                <td className="p-3 font-mono text-xs text-mist/70">{m.region}</td>
-                <td className="p-3 text-mist/85">{humanize(m.metric)}</td>
-                <td className="p-3 text-end font-mono">
-                  {m.suppressed
-                    ? <span className="chip chip-signal" title={t('analytics.suppressedNote')}>{t('analytics.suppressed')}</span>
-                    : <span className="text-mist/85">{m.value == null ? '—' : fmtNumber(m.value)}{m.unit ? ` ${m.unit}` : ''}</span>}
-                </td>
-                <td className="p-3 text-end font-mono text-xs text-mist/50">{m.suppressed ? `< ${r.kAnonymityFloor}` : fmtNumber(m.cohortSize)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable className="mt-3" columns={columns} rows={r.metrics} rowKey={(m, i) => String(i)} empty={t('analytics.noMetrics')} />
     </section>
   );
 }

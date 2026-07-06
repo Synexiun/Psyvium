@@ -14,10 +14,10 @@ export function SiteNav() {
   ] as const;
 
   return (
-    <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-console-900/80 backdrop-blur-md">
-      <nav className="container-vpsy flex h-16 items-center justify-between gap-3">
+    <header className="hairline-b sticky top-0 z-40 bg-console-900/85 backdrop-blur-md">
+      <nav className="container-vpsy flex h-14 items-center justify-between gap-3">
         <Link href="/" className="flex items-center gap-2.5">
-          <span className="grid h-8 w-8 place-items-center rounded-lg bg-teal/15 ring-1 ring-teal/30">
+          <span className="grid h-7 w-7 place-items-center rounded-sm border border-teal/30 bg-teal/10">
             <span className="h-2 w-2 rounded-full bg-teal animate-pulseline" />
           </span>
           <span className="font-display text-lg font-semibold tracking-tight text-mist">
@@ -36,7 +36,7 @@ export function SiteNav() {
           <Link href="/login" className="hidden text-sm text-mist/70 transition hover:text-mist sm:block">
             {t('common.signIn')}
           </Link>
-          <Link href="/intake" className="btn-primary px-4 py-2 text-sm">
+          <Link href="/intake" className="btn-primary">
             {t('nav.beginIntake')}
           </Link>
         </div>

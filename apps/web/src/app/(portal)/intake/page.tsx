@@ -28,7 +28,7 @@ function Slider({ label, value, onChange, fmt }: { label: string; value: number;
     <label className="block">
       <div className="mb-2 flex items-center justify-between">
         <span className="field-label mb-0">{label}</span>
-        <span className="font-mono text-xs text-teal-soft">{fmt(value)}</span>
+        <span className="font-mono text-xs tabular-nums text-teal-soft">{fmt(value)}</span>
       </div>
       <input type="range" min={0} max={10} value={value} onChange={(e) => onChange(Number(e.target.value))} />
     </label>
@@ -153,7 +153,7 @@ export default function IntakePage() {
             <Metric label={t('intake.specialty')} value={result.suggestedSpecialty} />
           </div>
           {result.riskFlagsRaised.length > 0 && (
-            <div className="mt-5 rounded-xl border border-signal/30 bg-signal/10 px-4 py-3 text-sm text-signal-soft">
+            <div className="mt-5 rounded border border-signal/30 bg-signal/10 px-4 py-3 text-sm text-signal-soft">
               {t('intake.flagsRaised')}
             </div>
           )}
@@ -166,7 +166,7 @@ export default function IntakePage() {
             </ul>
           )}
           {result.aiSummary && (
-            <div className="mt-5 border-t border-white/[0.06] pt-5">
+            <div className="mt-5 border-t border-line/15 pt-5">
               <p className="eyebrow text-teal-soft/70">{t('intake.aiSummaryEyebrow')}</p>
               <p className="mt-2 text-sm leading-relaxed text-mist/70">{result.aiSummary}</p>
             </div>
@@ -180,7 +180,7 @@ export default function IntakePage() {
   return (
     <div className="mx-auto max-w-3xl">
       <p className="eyebrow">{t('intake.eyebrow')}</p>
-      <h1 className="mt-3 font-display text-3xl font-semibold text-mist">{t('intake.title')}</h1>
+      <h1 className="mt-2 font-display text-2xl font-semibold text-mist">{t('intake.title')}</h1>
       <p className="mt-3 text-mist/60">{t('intake.intro')}</p>
 
       {/* Progress */}
@@ -264,21 +264,21 @@ export default function IntakePage() {
               {safetyItems.map(([key, label]) => (
                 <label
                   key={key}
-                  className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 transition ${
-                    form[key] ? 'border-signal/40 bg-signal/[0.07]' : 'border-white/10 bg-console-950/40 hover:border-white/20'
+                  className={`flex cursor-pointer items-center gap-3 rounded border px-4 py-3 transition ${
+                    form[key] ? 'border-signal/40 bg-signal/[0.07]' : 'border-line/25 bg-console-950/40 hover:border-line/40'
                   }`}
                 >
                   <input
                     type="checkbox"
                     checked={form[key]}
                     onChange={(e) => set(key, e.target.checked)}
-                    className="h-4 w-4 accent-[#F5A623]"
+                    className="h-4 w-4 accent-signal"
                   />
                   <span className="text-sm text-mist/80">{label}</span>
                 </label>
               ))}
             </div>
-            <p className="mt-5 rounded-xl border border-white/[0.08] bg-console-950/50 px-4 py-3 text-xs leading-relaxed text-mist/55">
+            <p className="mt-5 rounded border border-line/20 bg-console-950/50 px-4 py-3 text-xs leading-relaxed text-mist/55">
               {t('intake.crisisNote')}
             </p>
           </div>
@@ -321,7 +321,7 @@ export default function IntakePage() {
         )}
 
         {error && (
-          <div role="alert" className="rounded-xl border border-risk/30 bg-risk/10 px-4 py-3 text-sm text-risk">
+          <div role="alert" className="rounded border border-risk/30 bg-risk/10 px-4 py-3 text-sm text-risk">
             {error}
           </div>
         )}
@@ -349,7 +349,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="card-inset p-4">
       <p className="font-mono text-[10px] uppercase tracking-wider text-mist/40">{label}</p>
-      <p className="mt-1 font-display text-xl font-semibold capitalize text-mist">{value}</p>
+      <p className="figure mt-1 text-xl font-medium capitalize text-mist" dir="ltr">{value}</p>
     </div>
   );
 }

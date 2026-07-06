@@ -4,6 +4,11 @@ import { useEffect, useState } from 'react';
 import { api, setToken, getToken, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
 import type { RiskBoardDto, EscalationDto, RiskFlagDto, SafetyPlanDto, Severity } from '@/lib/risk-types';
+import { SkeletonStack } from '@/components/Skeleton';
+import { ErrorPanel } from '@/components/ErrorPanel';
+import { EmptyState } from '@/components/EmptyState';
+import { StatTile } from '@/components/StatTile';
+import { ContextPanel } from '@/components/ContextPanel';
 
 const sevClass: Record<Severity, string> = {
   SEVERE: 'text-risk border-risk/40 bg-risk/10',
@@ -24,7 +29,7 @@ function currentUserId(): string {
 }
 
 export default function RiskPage() {
-  const { t } = useI18n();
+  const { t, fmtNumber } = useI18n();
   const [board, setBoard] = useState<RiskBoardDto | null>(null);
   const [live, setLive] = useState<'live' | 'offline' | 'loading'>('loading');
   const [error, setError] = useState<string | null>(null);
@@ -49,35 +54,40 @@ export default function RiskPage() {
   }
   useEffect(() => { load(); }, []);
 
-  if (!board) return <p className="mt-10 font-mono text-sm text-mist/40">{t('risk.loading')}</p>;
+  if (!board) return <SkeletonStack count={4} className="mt-6 space-y-3" />;
+
+  const severe =
+    board.escalations.filter((e) => e.severity === 'SEVERE').length +
+    board.openFlags.filter((f) => f.severity === 'SEVERE').length;
+  const slaBreached = board.escalations.filter((e) => e.slaBreached).length;
 
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="eyebrow">{t('risk.eyebrow')}</p>
-          <h1 className="mt-3 font-display text-3xl font-semibold text-mist">{t('risk.title')}</h1>
+          <h1 className="mt-2 font-display text-2xl font-semibold text-mist">{t('risk.title')}</h1>
         </div>
-        <span role="status" className={`chip ${live === 'live' ? 'text-teal-soft/80' : live === 'offline' ? 'chip-signal' : 'text-mist/50'}`}>
+        <span role="status" className={`chip ${live === 'offline' ? 'chip-signal' : ''}`}>
           {live === 'live' ? t('common.liveData') : live === 'offline' ? t('common.offlineDemo') : t('common.loadingLive')}
         </span>
       </div>
       <p className="mt-3 max-w-3xl text-mist/60">{t('risk.intro')}</p>
-      {error && <div role="alert" className="mt-5 rounded-xl border border-signal/30 bg-signal/10 px-4 py-3 text-sm text-signal-soft">{error}</div>}
+      {error && <ErrorPanel className="mt-5 max-w-md" message={error} onRetry={load} />}
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+      <div className="mt-6 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <div className="space-y-6">
           <section>
             <p className="eyebrow mb-3">{t('risk.escalationsEyebrow')}</p>
             <div className="space-y-3">
-              {board.escalations.length === 0 && <p className="card-inset px-4 py-6 text-center text-sm text-mist/40">{t('risk.noEscalations')}</p>}
+              {board.escalations.length === 0 && <EmptyState body={t('risk.noEscalations')} />}
               {board.escalations.map((e) => <EscalationCard key={e.id} esc={e} onChanged={load} />)}
             </div>
           </section>
           <section>
             <p className="eyebrow mb-3">{t('risk.flagsEyebrow')}</p>
             <div className="space-y-3">
-              {board.openFlags.length === 0 && <p className="card-inset px-4 py-6 text-center text-sm text-mist/40">{t('risk.noFlags')}</p>}
+              {board.openFlags.length === 0 && <EmptyState body={t('risk.noFlags')} />}
               {board.openFlags.map((f) => <FlagCard key={f.id} flag={f} onChanged={load} />)}
             </div>
           </section>
@@ -87,6 +97,19 @@ export default function RiskPage() {
           <BreakGlassPanel />
         </aside>
       </div>
+
+      {/* ── Context panel: live board summary from the fetched board ── */}
+      <ContextPanel>
+        <section className="card p-4">
+          <p className="eyebrow">{t('risk.summaryEyebrow')}</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <StatTile label={t('risk.openEscalationsStat')} value={fmtNumber(board.escalations.length)} />
+            <StatTile label={t('risk.openFlagsStat')} value={fmtNumber(board.openFlags.length)} />
+            <StatTile label={t('risk.severeStat')} value={fmtNumber(severe)} />
+            <StatTile label={t('risk.slaBreachedStat')} value={fmtNumber(slaBreached)} />
+          </div>
+        </section>
+      </ContextPanel>
     </div>
   );
 }
@@ -116,7 +139,7 @@ function EscalationCard({ esc, onChanged }: { esc: EscalationDto; onChanged: () 
   }
 
   return (
-    <article className={`card border-l-2 p-4 ${esc.severity === 'SEVERE' ? 'border-l-risk' : esc.severity === 'HIGH' ? 'border-l-signal' : 'border-l-white/10'}`}>
+    <article className={`card border-l-2 p-4 ${esc.severity === 'SEVERE' ? 'border-l-risk' : esc.severity === 'HIGH' ? 'border-l-signal' : 'border-l-line/25'}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="font-medium text-mist">{esc.clientName || '—'}</p>
@@ -188,7 +211,7 @@ function StringList({ label, items, onChange, placeholder }: { label: string; it
       <label className="field-label">{label}</label>
       <ul className="mb-2 space-y-1">
         {items.map((it, i) => (
-          <li key={i} className="flex items-center justify-between gap-2 rounded-lg bg-console-950/40 px-3 py-1.5 text-sm text-mist/80">
+          <li key={i} className="flex items-center justify-between gap-2 rounded-sm bg-console-700/50 px-3 py-1.5 text-sm text-mist/80">
             <span className="min-w-0 truncate">{it}</span>
             <button onClick={() => onChange(items.filter((_, j) => j !== i))} className="shrink-0 text-mist/40 hover:text-risk" aria-label="remove">×</button>
           </li>
@@ -291,7 +314,7 @@ function BreakGlassPanel() {
       <input className="field text-sm" dir="ltr" placeholder={t('risk.clientIdPlaceholder')} value={clientId} onChange={(e) => setClientId(e.target.value)} />
       <label className="field-label mt-3">{t('risk.breakGlassReason')}</label>
       <textarea className="field min-h-[64px] text-sm" placeholder={t('risk.breakGlassReasonPlaceholder')} value={reason} onChange={(e) => setReason(e.target.value)} />
-      <button onClick={invoke} disabled={busy} className="mt-3 inline-flex w-full items-center justify-center rounded-xl border border-signal/50 bg-signal/10 px-5 py-3 font-medium text-signal transition hover:bg-signal/20 disabled:opacity-60">
+      <button onClick={invoke} disabled={busy} className="mt-3 inline-flex w-full items-center justify-center rounded border border-signal/50 bg-signal/10 px-5 py-3 font-medium text-signal transition hover:bg-signal/20 disabled:opacity-60">
         {busy ? t('risk.invoking') : t('risk.invokeBreakGlass')}
       </button>
       {msg && <p role="status" className={`mt-3 text-sm ${msg.ok ? 'text-signal-soft' : 'text-risk'}`}>{msg.text}</p>}

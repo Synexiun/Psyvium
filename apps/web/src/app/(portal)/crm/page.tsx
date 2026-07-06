@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react';
 import { api, setToken, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
+import { SkeletonStack } from '@/components/Skeleton';
+import { ErrorPanel } from '@/components/ErrorPanel';
+import { EmptyState } from '@/components/EmptyState';
 import type {
   CrmBoardDto,
   LeadDto,
@@ -78,20 +81,11 @@ export default function CrmPage() {
   }
 
   if (!board && live === 'loading') {
-    return <p className="mt-10 font-mono text-sm text-mist/40">{t('crm.loading')}</p>;
+    return <SkeletonStack count={3} className="mt-8" />;
   }
 
   if (!board) {
-    return (
-      <div className="mt-10 max-w-md">
-        <div role="alert" className="rounded-xl border border-signal/30 bg-signal/10 px-4 py-3 text-sm text-signal-soft">
-          {error}
-        </div>
-        <button onClick={load} className="btn-primary mt-4 px-5 py-2.5 text-sm">
-          {t('common.refresh')}
-        </button>
-      </div>
-    );
+    return <ErrorPanel className="mt-10 max-w-md" message={error ?? ''} onRetry={load} />;
   }
 
   const stages = [...board.stages].sort((a, b) => a.order - b.order);
@@ -101,7 +95,7 @@ export default function CrmPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="eyebrow">{t('crm.eyebrow')}</p>
-          <h1 className="mt-3 font-display text-3xl font-semibold text-mist">{t('crm.title')}</h1>
+          <h1 className="mt-2 font-display text-2xl font-semibold text-mist">{t('crm.title')}</h1>
         </div>
         <span
           role="status"
@@ -112,11 +106,7 @@ export default function CrmPage() {
       </div>
       <p className="mt-3 max-w-3xl text-mist/60">{t('crm.intro')}</p>
 
-      {error && (
-        <div role="alert" className="mt-5 rounded-xl border border-signal/30 bg-signal/10 px-4 py-3 text-sm text-signal-soft">
-          {error}
-        </div>
-      )}
+      {error && <ErrorPanel className="mt-5 max-w-md" message={error} onRetry={load} />}
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_320px]">
         {/* ── Pipeline board ── */}
@@ -131,7 +121,7 @@ export default function CrmPage() {
                     <span className={`font-mono text-[11px] uppercase tracking-wider ${stage.isWon ? 'text-teal-soft' : stage.isLost ? 'text-mist/40' : 'text-mist/60'}`}>
                       {stage.name}
                     </span>
-                    <span className="font-mono text-[11px] text-mist/40">{t('crm.leadsCount', { n: leads.length })}</span>
+                    <span className="figure font-mono text-[11px] text-mist/40" dir="ltr">{t('crm.leadsCount', { n: leads.length })}</span>
                   </div>
                   <div className="space-y-3">
                     {leads.length === 0 && (
@@ -293,14 +283,14 @@ function ReferrerRegistry({ referrers, onDone, fmtPercent }: { referrers: Referr
               <p className="font-mono text-[10px] uppercase tracking-wider text-teal-soft/60">{dict.crm.refTypes[r.type]}</p>
             </div>
             <div className="shrink-0 text-end">
-              <p className="text-sm text-mist">{fmtPercent(r.referralSharePct / 100)}</p>
+              <p className="figure text-sm text-mist" dir="ltr">{fmtPercent(r.referralSharePct / 100)}</p>
               <p className="font-mono text-[10px] uppercase tracking-wider text-mist/40">{r.active ? t('crm.refActive') : t('crm.refInactive')}</p>
             </div>
           </li>
         ))}
       </ul>
 
-      <form onSubmit={submit} className="mt-4 border-t border-white/[0.06] pt-4">
+      <form onSubmit={submit} className="mt-4 border-t border-line/15 pt-4">
         <p className="eyebrow">{t('crm.addRefEyebrow')}</p>
         <label className="field-label mt-3">{t('crm.refType')}</label>
         <select className="field" value={form.type} onChange={(e) => set('type', e.target.value as ReferrerType)}>

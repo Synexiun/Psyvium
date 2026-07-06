@@ -132,6 +132,28 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         href: '/',
         keywords: 'overview landing about',
       },
+      // Per-route quick actions — each opens the surface where the action lives.
+      {
+        id: 'act-new-intake',
+        labelKey: 'palette.actionNewIntake',
+        group: 'actions',
+        href: '/intake',
+        keywords: 'intake screening new begin start client',
+      },
+      {
+        id: 'act-new-lead',
+        labelKey: 'palette.actionNewLead',
+        group: 'actions',
+        href: '/crm',
+        keywords: 'lead referral new crm capture pipeline',
+      },
+      {
+        id: 'act-new-invoice',
+        labelKey: 'palette.actionNewInvoice',
+        group: 'actions',
+        href: '/finance',
+        keywords: 'invoice billing new finance draft payment',
+      },
     ],
     [],
   );

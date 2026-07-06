@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { api, setToken, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
 import type { AppointmentDto, AvailabilitySlotDto, AppointmentStatus } from '@/lib/scheduling-types';
+import { ErrorPanel } from '@/components/ErrorPanel';
+import { EmptyState } from '@/components/EmptyState';
 
 const statusClass: Record<AppointmentStatus, string> = {
   BOOKED: 'text-teal-soft/80',
@@ -63,20 +65,20 @@ export default function SchedulePage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="eyebrow">{t('schedule.eyebrow')}</p>
-          <h1 className="mt-3 font-display text-3xl font-semibold text-mist">{t('schedule.title')}</h1>
+          <h1 className="mt-2 font-display text-2xl font-semibold text-mist">{t('schedule.title')}</h1>
         </div>
         <span role="status" className={`chip ${live === 'live' ? 'text-teal-soft/80' : live === 'offline' ? 'chip-signal' : 'text-mist/50'}`}>
           {live === 'live' ? t('common.liveData') : live === 'offline' ? t('common.offlineDemo') : t('common.loadingLive')}
         </span>
       </div>
       <p className="mt-3 max-w-3xl text-mist/60">{t('schedule.intro')}</p>
-      {error && <div role="alert" className="mt-5 rounded-xl border border-signal/30 bg-signal/10 px-4 py-3 text-sm text-signal-soft">{error}</div>}
+      {error && <ErrorPanel className="mt-5 max-w-md" message={error} onRetry={load} />}
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <section>
           <p className="eyebrow mb-3">{t('schedule.agendaEyebrow')}</p>
           <div className="space-y-3">
-            {agenda.length === 0 && <p className="card-inset px-4 py-6 text-center text-sm text-mist/40">{t('schedule.noAppointments')}</p>}
+            {agenda.length === 0 && <EmptyState body={t('schedule.noAppointments')} />}
             {agenda.map((a) => <AppointmentCard key={a.id} appt={a} onChanged={load} />)}
           </div>
         </section>
@@ -110,7 +112,7 @@ function AppointmentCard({ appt, onChanged }: { appt: AppointmentDto; onChanged:
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="font-medium text-mist">{appt.clientName || '—'}</p>
-          <p className="mt-0.5 text-sm text-mist/60">{fmtDate(appt.startsAt)} · {fmtTime(appt.startsAt)}–{fmtTime(appt.endsAt)}</p>
+          <p dir="ltr" className="figure mt-0.5 text-sm text-mist/60">{fmtDate(appt.startsAt)} · {fmtTime(appt.startsAt)}–{fmtTime(appt.endsAt)}</p>
         </div>
         <div className="flex flex-col items-end gap-1">
           <span className="chip text-teal-soft/70">{dict.schedule.format[appt.format]}</span>
@@ -164,11 +166,11 @@ function AvailabilityPanel({ psychId, slots, onChanged }: { psychId: string | nu
       </button>
       {msg && <p role="status" className={`mt-3 text-sm ${msg.ok ? 'text-teal-soft' : 'text-risk'}`}>{msg.text}</p>}
 
-      <ul className="mt-4 space-y-2 border-t border-white/[0.06] pt-4">
+      <ul className="mt-4 space-y-2 border-t border-line/15 pt-4">
         {slots.length === 0 && <li className="text-xs text-mist/30">{t('schedule.noSlots')}</li>}
         {slots.map((s) => (
           <li key={s.id} className="card-inset flex items-center justify-between gap-2 px-3 py-2">
-            <span className="text-sm text-mist/80">{fmtDate(s.startsAt)} · {fmtTime(s.startsAt)}–{fmtTime(s.endsAt)}</span>
+            <span dir="ltr" className="figure text-sm text-mist/80">{fmtDate(s.startsAt)} · {fmtTime(s.startsAt)}–{fmtTime(s.endsAt)}</span>
             <span className={`font-mono text-[10px] uppercase tracking-wider ${s.isBooked ? 'text-mist/40' : 'text-teal-soft/70'}`}>
               {s.isBooked ? t('schedule.slotBooked') : t('schedule.slotOpen')}
             </span>

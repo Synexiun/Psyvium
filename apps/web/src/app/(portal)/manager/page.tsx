@@ -1,8 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, setToken, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
+import { SkeletonStack } from '@/components/Skeleton';
+import { ErrorPanel } from '@/components/ErrorPanel';
+import { EmptyState } from '@/components/EmptyState';
+import { StatTile } from '@/components/StatTile';
+import { ContextPanel } from '@/components/ContextPanel';
 
 type Candidate = {
   psychologistId: string;
@@ -76,23 +81,30 @@ export default function ManagerPage() {
     ? [...proposals].sort((a, b) => attentionScore(b) - attentionScore(a))
     : proposals;
 
+  // Queue stats for the context panel — derived from already-fetched proposals.
+  const stats = useMemo(() => {
+    const attention = proposals.filter((p) => attentionScore(p) > 0).length;
+    const candidates = proposals.reduce((n, p) => n + p.candidates.length, 0);
+    return { pending: proposals.length, attention, candidates };
+  }, [proposals]);
+
   return (
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="eyebrow">{t('manager.eyebrow')}</p>
-          <h1 className="mt-3 font-display text-3xl font-semibold text-mist">{t('manager.title')}</h1>
+          <h1 className="mt-2 font-display text-2xl font-semibold text-mist">{t('manager.title')}</h1>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {/* Risk lens — signal-amber because it is an attention tool */}
           <button
             onClick={() => setRiskLens((r) => !r)}
             aria-pressed={riskLens}
             title={t('manager.riskLensHint')}
-            className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-soft ${
+            className={`inline-flex items-center gap-2 rounded border px-3.5 py-2 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal ${
               riskLens
-                ? 'border-signal/50 bg-signal/15 text-signal-soft'
-                : 'border-white/10 text-mist/70 hover:border-signal/40 hover:text-mist'
+                ? 'border-signal/50 bg-signal/15 text-signal'
+                : 'border-line/25 text-mist/70 hover:border-signal/40 hover:text-mist'
             }`}
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
@@ -101,72 +113,66 @@ export default function ManagerPage() {
             </svg>
             {t('manager.riskLens')}
           </button>
-          <button onClick={load} className="btn-ghost px-4 py-2 text-sm">{t('common.refresh')}</button>
+          <button onClick={load} className="btn-ghost">{t('common.refresh')}</button>
         </div>
       </div>
       <p className="mt-3 max-w-2xl text-mist/60">{t('manager.intro')}</p>
-      {riskLens && <p className="mt-2 text-xs text-signal-soft/80">{t('manager.riskLensHint')}</p>}
+      {riskLens && <p className="mt-2 text-xs text-signal">{t('manager.riskLensHint')}</p>}
 
-      {error && (
-        <div role="alert" className="mt-6 rounded-xl border border-signal/30 bg-signal/10 px-4 py-3 text-sm text-signal-soft">
-          {error}
-        </div>
-      )}
+      {error && <ErrorPanel className="mt-6 max-w-md" message={error} onRetry={load} />}
 
       {loading ? (
-        <p className="mt-10 font-mono text-sm text-mist/40" role="status">{t('manager.loading')}</p>
+        <SkeletonStack count={3} className="mt-6 space-y-4" />
       ) : shown.length === 0 && !error ? (
-        <div className="mt-10 card p-10 text-center text-mist/50">{t('manager.empty')}</div>
+        <EmptyState className="mt-6" body={t('manager.empty')} />
       ) : (
-        <div className="mt-8 space-y-6">
+        <div className="mt-6 space-y-4">
           {shown.map((p) => {
             const needsAttention = attentionScore(p) > 0;
             return (
-              <article key={p.id} className={`card p-6 ${riskLens && needsAttention ? 'border-signal/30' : ''}`}>
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] pb-4">
+              <article key={p.id} className={`card p-5 ${riskLens && needsAttention ? 'border-signal/40' : ''}`}>
+                <div className="hairline-b flex flex-wrap items-center justify-between gap-3 pb-3">
                   <div>
-                    <p className="font-display text-lg font-medium text-mist">
+                    <p className="font-display text-base font-medium text-mist">
                       {p.client?.user?.fullName ?? t('manager.client')}
                     </p>
-                    <p className="font-mono text-[11px] uppercase tracking-wider text-mist/40">
+                    <p className="font-mono text-[11px] uppercase tracking-wider text-haze/90">
                       {t('manager.assignment')} {p.id.slice(-6)}
                       {p.createdAt ? <> · {fmtDate(p.createdAt)}</> : null}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
                     {riskLens && needsAttention && <span className="chip-signal">{t('manager.attention')}</span>}
-                    <span className="chip text-teal-soft/80">{t('manager.candidates', { n: fmtNumber(p.candidates.length) })}</span>
+                    <span className="chip">{t('manager.candidates', { n: fmtNumber(p.candidates.length) })}</span>
                   </div>
                 </div>
-                <div className="mt-4 space-y-3">
+                <div className="mt-3 space-y-2.5">
                   {p.candidates.map((c, i) => {
                     const saturated = c.caseloadUtilization > 0.85;
                     return (
                       <div
                         key={c.psychologistId}
-                        className={`flex flex-col gap-4 rounded-xl border p-4 md:flex-row md:items-center md:justify-between ${
+                        className={`flex flex-col gap-4 rounded border p-4 md:flex-row md:items-center md:justify-between ${
                           riskLens && (c.fitWarnings.length > 0 || saturated)
-                            ? 'border-signal/25 bg-signal/[0.04]'
-                            : 'border-white/[0.06] bg-console-950/40'
+                            ? 'border-signal/40 bg-signal/[0.05]'
+                            : 'border-line/15 bg-console-700/50'
                         }`}
                       >
                         <div className="flex items-start gap-4">
-                          <span className={`mt-0.5 font-mono text-sm ${i === 0 ? 'text-teal' : 'text-mist/40'}`}>
+                          <span className={`figure mt-0.5 text-sm ${i === 0 ? 'text-teal' : 'text-mist/40'}`}>
                             {String(i + 1).padStart(2, '0')}
                           </span>
                           <div>
                             <div className="flex flex-wrap items-center gap-2">
                               <p className="font-medium text-mist">{c.displayName}</p>
-                              {i === 0 && (
-                                <span className="chip border-teal/25 bg-teal/10 px-2 py-0.5 text-teal-soft">{t('manager.topFit')}</span>
-                              )}
+                              {i === 0 && <span className="chip">{t('manager.topFit')}</span>}
                             </div>
                             <p className="mt-1 text-xs text-mist/50">
                               {c.specialties.join(' · ')} — {c.languages.join('/')} — {c.jurisdiction}
                             </p>
                             <p className="mt-1.5 max-w-xl text-xs leading-relaxed text-mist/45">{c.rationale}</p>
                             {c.fitWarnings.length > 0 && (
-                              <p className="mt-1.5 text-xs text-signal-soft/90">⚠ {c.fitWarnings.join(' · ')}</p>
+                              <p className="mt-1.5 text-xs text-signal">⚠ {c.fitWarnings.join(' · ')}</p>
                             )}
                           </div>
                         </div>
@@ -186,7 +192,7 @@ export default function ManagerPage() {
                           <button
                             onClick={() => approve(p, c)}
                             disabled={approving === p.id}
-                            className="btn-primary px-4 py-2 text-sm disabled:opacity-60"
+                            className="btn-primary disabled:opacity-60"
                           >
                             {approving === p.id ? t('manager.approving') : t('manager.approve')}
                           </button>
@@ -200,6 +206,26 @@ export default function ManagerPage() {
           })}
         </div>
       )}
+
+      {/* ── Context panel: live triage-queue stats ── */}
+      <ContextPanel>
+        <section className="card p-4">
+          <p className="eyebrow">{t('manager.queueEyebrow')}</p>
+          {loading ? (
+            <p className="mt-3 font-mono text-[11px] uppercase tracking-wider text-haze/80" role="status">
+              {t('common.loadingLive')}
+            </p>
+          ) : proposals.length === 0 ? (
+            <p className="mt-2 text-xs text-mist/55">{t('manager.queueClear')}</p>
+          ) : (
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <StatTile label={t('manager.queuePending')} value={fmtNumber(stats.pending)} />
+              <StatTile label={t('manager.queueAttention')} value={fmtNumber(stats.attention)} />
+              <StatTile label={t('manager.queueCandidates')} value={fmtNumber(stats.candidates)} />
+            </div>
+          )}
+        </section>
+      </ContextPanel>
     </div>
   );
 }
@@ -207,10 +233,10 @@ export default function ManagerPage() {
 function MiniStat({ label, value, accent = false, warn = false }: { label: string; value: string; accent?: boolean; warn?: boolean }) {
   return (
     <div className="text-end">
-      <p className={`font-display text-base font-semibold ${warn ? 'text-signal-soft' : accent ? 'text-teal-soft' : 'text-mist/85'}`}>
+      <p className={`figure text-base ${warn ? 'text-signal' : accent ? 'text-teal-soft' : 'text-mist/85'}`} dir="ltr">
         {value}
       </p>
-      <p className="font-mono text-[10px] uppercase tracking-wider text-mist/40">{label}</p>
+      <p className="font-mono text-[10px] uppercase tracking-wider text-haze/90">{label}</p>
     </div>
   );
 }

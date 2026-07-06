@@ -64,6 +64,47 @@ export function clearToken() {
   if (typeof window !== 'undefined') localStorage.removeItem(TOKEN_KEY);
 }
 
+/** Clears the stored session. Real sign-out — the server session (if any) is stateless JWT. */
+export function logout() {
+  clearToken();
+}
+
+export interface Principal {
+  sub: string;
+  roles: string[];
+  permissions: string[];
+}
+
+/**
+ * Decodes the access token's payload for UI role-routing only — the signature is
+ * NOT verified client-side (the server is the sole authority on every request).
+ * Returns null when there is no token or it cannot be decoded as a JWT.
+ */
+export function getPrincipal(): Principal | null {
+  const token = getToken();
+  if (!token) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const base64url = parts[1]!;
+    const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    const json = typeof window !== 'undefined' ? window.atob(padded) : Buffer.from(padded, 'base64').toString('utf-8');
+    const decoded = decodeURIComponent(
+      Array.prototype.map.call(json, (c: string) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''),
+    );
+    const payload = JSON.parse(decoded);
+    if (!payload || typeof payload.sub !== 'string') return null;
+    return {
+      sub: payload.sub,
+      roles: Array.isArray(payload.roles) ? payload.roles : [],
+      permissions: Array.isArray(payload.permissions) ? payload.permissions : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
 export class ApiError extends Error {
   constructor(public status: number, public body: unknown) {
     super(`API ${status}`);
