@@ -1,0 +1,804 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05060E">
+<title>Psyvium — The Clinical Psychology Operating System</title>
+<meta name="description" content="Psyvium: the operating system for clinical psychology — AI-assisted, clinician-decided. IRT/CAT psychometrics, evidence-based crisis care, in-house telehealth, country-scale compliance.">
+<style>
+/* ═══════════════ THE MIND, MAPPED — Psyvium marketing site ═══════════════
+   A deliberate single-theme world: deep clinical night. Self-contained —
+   no CDNs, no external fonts, hand-written WebGL. */
+:root{
+  --void:#05060E; --void-2:#0A0D1C; --panel:rgba(16,20,40,.55);
+  --ink:#EDF1FF; --ink-2:#B9C2E8; --haze:#8B93B8; --line:rgba(139,147,184,.18);
+  --pulse:#64F0D2; --neuro:#7C6CFF; --ember:#FFB454;
+  --grad:linear-gradient(120deg,var(--neuro),var(--pulse));
+  --disp:"Bahnschrift","Avenir Next Condensed","Segoe UI Variable Display",system-ui,sans-serif;
+  --body:"Segoe UI Variable Text",-apple-system,"Segoe UI",system-ui,sans-serif;
+  --mono:"Cascadia Mono","SF Mono",Consolas,monospace;
+  --tabbar-h:64px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}
+  .rise,.rise-l,.rise-r{transition:none!important;opacity:1!important;transform:none!important}
+  .pulse-dot::before{animation:none!important}}
+body{background:var(--void);color:var(--ink);font-family:var(--body);line-height:1.6;
+  overflow-x:hidden;-webkit-font-smoothing:antialiased}
+::selection{background:var(--neuro);color:#fff}
+a{color:inherit;text-decoration:none}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.grad-text{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+/* ── canvas cosmos ── */
+#cosmos{position:fixed;inset:0;z-index:0;display:block}
+.veil{position:fixed;inset:0;z-index:1;pointer-events:none;
+  background:radial-gradient(120% 90% at 50% 0%,transparent 40%,var(--void) 100%)}
+
+/* ── top bar ── */
+.top{position:fixed;top:0;inset-inline:0;z-index:50;display:flex;align-items:center;
+  justify-content:space-between;padding:14px clamp(16px,4vw,40px);
+  background:linear-gradient(180deg,rgba(5,6,14,.85),transparent);backdrop-filter:blur(8px)}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-size:19px;letter-spacing:.06em}
+.brand b{color:var(--pulse)}
+.brand .sig{width:26px;height:26px;border-radius:7px;background:var(--grad);
+  display:grid;place-items:center;font-size:12px;color:#04121000;position:relative;overflow:hidden}
+.brand .sig::after{content:"";position:absolute;inset:3px;border-radius:5px;background:var(--void)}
+.brand .sig i{position:relative;z-index:1;width:10px;height:10px;border-radius:50%;
+  background:var(--grad);display:block}
+.topnav{display:flex;gap:26px;font-size:13.5px;color:var(--ink-2)}
+.topnav a{position:relative;padding:4px 0;transition:color .25s}
+.topnav a:hover,.topnav a:focus-visible{color:var(--ink)}
+.topnav a::after{content:"";position:absolute;inset-inline:0;bottom:0;height:1.5px;background:var(--grad);
+  transform:scaleX(0);transition:transform .3s;transform-origin:var(--tx-origin,left)}
+.topnav a:hover::after{transform:scaleX(1)}
+.lang{position:relative}
+.lang select{appearance:none;background:var(--panel);border:1px solid var(--line);color:var(--ink);
+  font-family:var(--mono);font-size:12px;padding:7px 28px 7px 12px;border-radius:8px;cursor:pointer}
+.lang::after{content:"▾";position:absolute;inset-inline-end:10px;top:50%;transform:translateY(-50%);
+  color:var(--pulse);pointer-events:none;font-size:10px}
+[dir="rtl"] .lang select{padding:7px 12px 7px 28px}
+
+/* ── hero ── */
+main{position:relative;z-index:2}
+.hero{min-height:100svh;display:flex;flex-direction:column;justify-content:center;
+  padding:96px clamp(18px,6vw,64px) 80px;max-width:1200px;margin-inline:auto}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.28em;text-transform:uppercase;
+  color:var(--pulse);display:flex;align-items:center;gap:10px}
+.pulse-dot{position:relative;width:8px;height:8px;border-radius:50%;background:var(--pulse)}
+.pulse-dot::before{content:"";position:absolute;inset:-5px;border-radius:50%;border:1px solid var(--pulse);
+  animation:ripple 2.2s ease-out infinite}
+@keyframes ripple{0%{transform:scale(.4);opacity:.9}100%{transform:scale(1.8);opacity:0}}
+h1{font-family:var(--disp);font-weight:650;font-size:clamp(40px,7.5vw,92px);line-height:1.02;
+  letter-spacing:-.015em;margin-top:22px;max-width:13ch;text-wrap:balance}
+.hero p.lede{margin-top:26px;font-size:clamp(16px,2vw,20px);color:var(--ink-2);max-width:56ch}
+.hero-cta{margin-top:40px;display:flex;gap:16px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:10px;font-family:var(--disp);font-size:15px;
+  letter-spacing:.04em;padding:15px 30px;border-radius:14px;cursor:pointer;border:0;
+  transition:transform .25s cubic-bezier(.2,.9,.3,1.4),box-shadow .25s;will-change:transform}
+.btn-primary{background:var(--grad);color:#071018;box-shadow:0 8px 30px -8px rgba(100,240,210,.45)}
+.btn-primary:hover{box-shadow:0 12px 44px -8px rgba(124,108,255,.6)}
+.btn-ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.btn-ghost:hover{border-color:var(--pulse)}
+.hero-stats{margin-top:64px;display:flex;gap:clamp(24px,5vw,64px);flex-wrap:wrap}
+.stat .v{font-family:var(--mono);font-size:clamp(26px,3.4vw,40px);font-weight:600;color:var(--ink)}
+.stat .v em{font-style:normal;color:var(--pulse)}
+.stat .k{font-size:12px;color:var(--haze);letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
+.scroll-hint{position:absolute;bottom:26px;left:50%;transform:translateX(-50%);color:var(--haze);
+  font-family:var(--mono);font-size:10px;letter-spacing:.3em;text-transform:uppercase;
+  writing-mode:vertical-rl;opacity:.7}
+
+/* ── sections ── */
+section{position:relative;padding:clamp(72px,10vw,130px) clamp(18px,6vw,64px);max-width:1200px;margin-inline:auto}
+.sec-head{max-width:760px}
+.sec-head .eyebrow{color:var(--neuro)}
+h2{font-family:var(--disp);font-weight:640;font-size:clamp(30px,4.6vw,54px);line-height:1.08;
+  letter-spacing:-.01em;margin-top:16px;text-wrap:balance}
+.sec-head p{margin-top:18px;color:var(--ink-2);font-size:clamp(15px,1.6vw,17.5px)}
+
+/* layer cards — the six-layer stack */
+.layers{margin-top:56px;display:grid;gap:14px}
+.layer{display:grid;grid-template-columns:56px 1fr auto;gap:22px;align-items:center;
+  padding:26px 28px;border:1px solid var(--line);border-radius:18px;background:var(--panel);
+  backdrop-filter:blur(14px);transition:transform .35s,border-color .35s;position:relative;overflow:hidden}
+.layer::before{content:"";position:absolute;inset-inline-start:0;top:0;bottom:0;width:2px;
+  background:var(--grad);opacity:0;transition:opacity .35s}
+.layer:hover{transform:translateX(6px);border-color:rgba(124,108,255,.5)}
+[dir="rtl"] .layer:hover{transform:translateX(-6px)}
+.layer:hover::before{opacity:1}
+.layer .n{font-family:var(--mono);font-size:24px;color:var(--neuro);opacity:.85}
+.layer h3{font-family:var(--disp);font-size:19px;letter-spacing:.02em}
+.layer p{color:var(--haze);font-size:14px;margin-top:4px;max-width:62ch}
+.layer .tag{font-family:var(--mono);font-size:10.5px;color:var(--pulse);border:1px solid rgba(100,240,210,.3);
+  padding:4px 10px;border-radius:20px;white-space:nowrap}
+
+/* intelligence grid */
+.grid3{margin-top:56px;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+.cardx{padding:30px;border:1px solid var(--line);border-radius:20px;background:var(--panel);
+  backdrop-filter:blur(14px);position:relative;overflow:hidden;transition:transform .4s,box-shadow .4s}
+.cardx:hover{transform:translateY(-6px);box-shadow:0 24px 60px -24px rgba(124,108,255,.35)}
+.cardx .ico{width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,rgba(124,108,255,.2),rgba(100,240,210,.2));
+  display:grid;place-items:center;margin-bottom:18px}
+.cardx .ico svg{width:22px;height:22px;stroke:var(--pulse);fill:none;stroke-width:1.6}
+.cardx h3{font-family:var(--disp);font-size:18px;margin-bottom:8px}
+.cardx p{color:var(--haze);font-size:14px}
+.cardx .foot{margin-top:16px;font-family:var(--mono);font-size:11px;color:var(--neuro)}
+
+/* evidence strip */
+.evidence{margin-top:56px;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:1px;
+  background:var(--line);border:1px solid var(--line);border-radius:18px;overflow:hidden}
+.ev{background:var(--void-2);padding:26px}
+.ev .src{font-family:var(--mono);font-size:10.5px;color:var(--ember);letter-spacing:.1em;text-transform:uppercase}
+.ev h4{font-family:var(--disp);font-size:16px;margin-top:10px}
+.ev p{font-size:13px;color:var(--haze);margin-top:6px}
+
+/* trust / security */
+.trust{margin-top:56px;display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px}
+.trust .t{padding:24px;border:1px solid var(--line);border-radius:16px;background:var(--panel)}
+.trust .t b{font-family:var(--mono);font-size:12px;color:var(--pulse);letter-spacing:.08em;display:block;margin-bottom:8px}
+.trust .t span{font-size:13.5px;color:var(--ink-2)}
+
+/* languages ribbon */
+.langs{margin-top:48px;display:flex;flex-wrap:wrap;gap:10px}
+.langs span{font-family:var(--mono);font-size:12px;padding:8px 16px;border:1px solid var(--line);
+  border-radius:30px;color:var(--ink-2);transition:border-color .3s,color .3s;cursor:default}
+.langs span:hover{border-color:var(--pulse);color:var(--pulse)}
+
+/* CTA */
+.ctasec{text-align:center;padding-bottom:calc(clamp(72px,10vw,130px) + var(--tabbar-h))}
+.ctasec .orb{width:120px;height:120px;margin:0 auto 34px;border-radius:50%;position:relative;
+  background:radial-gradient(circle at 35% 30%,rgba(124,108,255,.8),rgba(100,240,210,.25) 60%,transparent 75%);
+  filter:blur(1px);animation:breathe 5s ease-in-out infinite}
+@keyframes breathe{50%{transform:scale(1.08);filter:blur(0)}}
+.ctasec h2{margin-inline:auto}
+.ctasec .lede{margin:18px auto 0;max-width:52ch;color:var(--ink-2)}
+
+/* footer */
+footer{position:relative;z-index:2;border-top:1px solid var(--line);padding:40px clamp(18px,6vw,64px) calc(36px + var(--tabbar-h));
+  display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;color:var(--haze);font-size:12.5px;
+  max-width:1200px;margin-inline:auto}
+footer .mono{color:var(--ink-2)}
+
+/* reveal animations */
+.rise,.rise-l,.rise-r{opacity:0;transform:translateY(34px);transition:opacity .8s ease,transform .8s cubic-bezier(.2,.7,.2,1)}
+.rise-l{transform:translateX(-40px)}.rise-r{transform:translateX(40px)}
+[dir="rtl"] .rise-l{transform:translateX(40px)}[dir="rtl"] .rise-r{transform:translateX(-40px)}
+.in{opacity:1;transform:none}
+
+/* ── native-app mobile shell ── */
+.tabbar{display:none}
+@media (max-width:820px){
+  .topnav{display:none}
+  .hero{padding-top:110px}
+  .tabbar{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;bottom:0;inset-inline:0;z-index:60;
+    height:calc(var(--tabbar-h) + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);
+    background:rgba(8,10,22,.82);backdrop-filter:blur(20px) saturate(1.4);border-top:1px solid var(--line)}
+  .tabbar a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    color:var(--haze);font-size:10px;letter-spacing:.02em;transition:color .25s;position:relative}
+  .tabbar a svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.7;transition:transform .3s}
+  .tabbar a.on{color:var(--pulse)}
+  .tabbar a.on svg{transform:translateY(-2px) scale(1.08)}
+  .tabbar a.on::after{content:"";position:absolute;top:0;width:26px;height:2.5px;border-radius:2px;background:var(--grad)}
+  .layer{grid-template-columns:40px 1fr}
+  .layer .tag{display:none}
+}
+@media (min-width:821px){body{--tabbar-h:0px}}
+</style>
+</head>
+<body>
+<canvas id="cosmos" aria-hidden="true"></canvas>
+<div class="veil"></div>
+
+<header class="top">
+  <a class="brand" href="#top" aria-label="Psyvium"><span class="sig"><i></i></span>Psy<b>vium</b></a>
+  <nav class="topnav" aria-label="primary">
+    <a href="#platform" data-i18n="nav.platform"></a>
+    <a href="#intelligence" data-i18n="nav.intelligence"></a>
+    <a href="#evidence" data-i18n="nav.evidence"></a>
+    <a href="#trust" data-i18n="nav.trust"></a>
+    <a href="#start" data-i18n="nav.start"></a>
+  </nav>
+  <div class="lang"><select id="langsel" aria-label="Language"></select></div>
+</header>
+
+<main id="top">
+  <!-- HERO -->
+  <div class="hero">
+    <div class="eyebrow"><span class="pulse-dot"></span><span data-i18n="hero.eyebrow"></span></div>
+    <h1><span data-i18n="hero.title1"></span> <span class="grad-text" data-i18n="hero.title2"></span></h1>
+    <p class="lede" data-i18n="hero.lede"></p>
+    <div class="hero-cta">
+      <a class="btn btn-primary magnetic" href="#start" data-i18n="hero.cta1"></a>
+      <a class="btn btn-ghost magnetic" href="#platform" data-i18n="hero.cta2"></a>
+    </div>
+    <div class="hero-stats">
+      <div class="stat"><div class="v"><em data-count="30">0</em>/30</div><div class="k" data-i18n="stats.contexts"></div></div>
+      <div class="stat"><div class="v"><em data-count="8">0</em>/8</div><div class="k" data-i18n="stats.agents"></div></div>
+      <div class="stat"><div class="v"><em data-count="11">0</em></div><div class="k" data-i18n="stats.langs"></div></div>
+      <div class="stat"><div class="v"><em data-count="476">0</em></div><div class="k" data-i18n="stats.tests"></div></div>
+    </div>
+    <div class="scroll-hint mono" data-i18n="hero.scroll"></div>
+  </div>
+
+  <!-- PLATFORM: six layers -->
+  <section id="platform">
+    <div class="sec-head rise">
+      <div class="eyebrow"><span data-i18n="plat.eyebrow"></span></div>
+      <h2 data-i18n="plat.title"></h2>
+      <p data-i18n="plat.lede"></p>
+    </div>
+    <div class="layers">
+      <div class="layer rise"><div class="n mono">01</div><div><h3 data-i18n="plat.l1t"></h3><p data-i18n="plat.l1d"></p></div><span class="tag" data-i18n="plat.l1g"></span></div>
+      <div class="layer rise"><div class="n mono">02</div><div><h3 data-i18n="plat.l2t"></h3><p data-i18n="plat.l2d"></p></div><span class="tag" data-i18n="plat.l2g"></span></div>
+      <div class="layer rise"><div class="n mono">03</div><div><h3 data-i18n="plat.l3t"></h3><p data-i18n="plat.l3d"></p></div><span class="tag" data-i18n="plat.l3g"></span></div>
+      <div class="layer rise"><div class="n mono">04</div><div><h3 data-i18n="plat.l4t"></h3><p data-i18n="plat.l4d"></p></div><span class="tag" data-i18n="plat.l4g"></span></div>
+      <div class="layer rise"><div class="n mono">05</div><div><h3 data-i18n="plat.l5t"></h3><p data-i18n="plat.l5d"></p></div><span class="tag" data-i18n="plat.l5g"></span></div>
+      <div class="layer rise"><div class="n mono">06</div><div><h3 data-i18n="plat.l6t"></h3><p data-i18n="plat.l6d"></p></div><span class="tag" data-i18n="plat.l6g"></span></div>
+    </div>
+  </section>
+
+  <!-- INTELLIGENCE -->
+  <section id="intelligence">
+    <div class="sec-head rise">
+      <div class="eyebrow"><span data-i18n="ai.eyebrow"></span></div>
+      <h2 data-i18n="ai.title"></h2>
+      <p data-i18n="ai.lede"></p>
+    </div>
+    <div class="grid3">
+      <div class="cardx rise"><div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M6 6l2 2m8 8 2 2m0-12-2 2M8 16l-2 2" stroke-linecap="round"/><circle cx="12" cy="12" r="3.5"/></svg></div>
+        <h3 data-i18n="ai.c1t"></h3><p data-i18n="ai.c1d"></p><div class="foot mono" data-i18n="ai.c1f"></div></div>
+      <div class="cardx rise"><div class="ico"><svg viewBox="0 0 24 24"><path d="M4 19V5m0 10 5-4 4 3 7-8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3 data-i18n="ai.c2t"></h3><p data-i18n="ai.c2d"></p><div class="foot mono" data-i18n="ai.c2f"></div></div>
+      <div class="cardx rise"><div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l7 4v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V7z" stroke-linejoin="round"/><path d="M9.5 12l2 2 3.5-4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3 data-i18n="ai.c3t"></h3><p data-i18n="ai.c3d"></p><div class="foot mono" data-i18n="ai.c3f"></div></div>
+    </div>
+  </section>
+
+  <!-- EVIDENCE -->
+  <section id="evidence">
+    <div class="sec-head rise">
+      <div class="eyebrow"><span data-i18n="ev.eyebrow"></span></div>
+      <h2 data-i18n="ev.title"></h2>
+      <p data-i18n="ev.lede"></p>
+    </div>
+    <div class="evidence rise">
+      <div class="ev"><div class="src">C-SSRS · Zero Suicide</div><h4 data-i18n="ev.e1t"></h4><p data-i18n="ev.e1d"></p></div>
+      <div class="ev"><div class="src">Stanley &amp; Brown 2012</div><h4 data-i18n="ev.e2t"></h4><p data-i18n="ev.e2d"></p></div>
+      <div class="ev"><div class="src">AERA · APA · NCME</div><h4 data-i18n="ev.e3t"></h4><p data-i18n="ev.e3d"></p></div>
+      <div class="ev"><div class="src">Jacobson &amp; Truax 1991</div><h4 data-i18n="ev.e4t"></h4><p data-i18n="ev.e4d"></p></div>
+    </div>
+  </section>
+
+  <!-- TRUST -->
+  <section id="trust">
+    <div class="sec-head rise">
+      <div class="eyebrow"><span data-i18n="tr.eyebrow"></span></div>
+      <h2 data-i18n="tr.title"></h2>
+      <p data-i18n="tr.lede"></p>
+    </div>
+    <div class="trust">
+      <div class="t rise"><b data-i18n="tr.t1b"></b><span data-i18n="tr.t1s"></span></div>
+      <div class="t rise"><b data-i18n="tr.t2b"></b><span data-i18n="tr.t2s"></span></div>
+      <div class="t rise"><b data-i18n="tr.t3b"></b><span data-i18n="tr.t3s"></span></div>
+      <div class="t rise"><b data-i18n="tr.t4b"></b><span data-i18n="tr.t4s"></span></div>
+    </div>
+    <div class="langs rise" id="langribbon"></div>
+  </section>
+
+  <!-- CTA -->
+  <section id="start" class="ctasec">
+    <div class="orb rise" aria-hidden="true"></div>
+    <h2 class="rise"><span data-i18n="cta.title1"></span> <span class="grad-text" data-i18n="cta.title2"></span></h2>
+    <p class="lede rise" data-i18n="cta.lede"></p>
+    <div class="hero-cta rise" style="justify-content:center">
+      <a class="btn btn-primary magnetic" href="mailto:hello@vpsy.health" data-i18n="cta.btn"></a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div><span class="mono">Psyvium</span> — <span data-i18n="foot.tag"></span></div>
+  <div class="mono" data-i18n="foot.principle"></div>
+</footer>
+
+<!-- native-app bottom tab bar (mobile) -->
+<nav class="tabbar" aria-label="mobile">
+  <a href="#top" data-sec="top"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9a1 1 0 01-1 1h-5v-6h-4v6H5a1 1 0 01-1-1z" stroke-linejoin="round"/></svg><span data-i18n="tab.home"></span></a>
+  <a href="#platform" data-sec="platform"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round"/></svg><span data-i18n="tab.platform"></span></a>
+  <a href="#intelligence" data-sec="intelligence"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 3v3m0 12v3M3 12h3m12 0h3" stroke-linecap="round"/></svg><span data-i18n="tab.ai"></span></a>
+  <a href="#trust" data-sec="trust"><svg viewBox="0 0 24 24"><path d="M12 3l7 4v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V7z" stroke-linejoin="round"/></svg><span data-i18n="tab.trust"></span></a>
+  <a href="#start" data-sec="start"><svg viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-i18n="tab.start"></span></a>
+</nav>
+
+<script>
+/* ═════════ i18n — 11 languages, all fully translated (fa + ar are RTL) ═════════ */
+const RTL = new Set(['ar','fa']);
+const LANG_NAMES = {en:'English',es:'Español',fr:'Français',de:'Deutsch',pt:'Português',
+  ar:'العربية',fa:'فارسی',zh:'中文',hi:'हिन्दी',ru:'Русский',ja:'日本語'};
+const I = {
+en:{ "nav.platform":"Platform","nav.intelligence":"Intelligence","nav.evidence":"Evidence","nav.trust":"Trust","nav.start":"Get started",
+"hero.eyebrow":"Clinical Psychology Operating System","hero.title1":"The mind,","hero.title2":"mapped.",
+"hero.lede":"Psyvium is the operating system for clinical psychology at country scale — intake to outcome, psychometrics to payroll. AI assists on every step. Licensed clinicians decide on every one.",
+"hero.cta1":"Request access","hero.cta2":"Explore the platform","hero.scroll":"scroll",
+"stats.contexts":"clinical contexts, all real","stats.agents":"governed AI agents","stats.langs":"languages, RTL included","stats.tests":"automated tests",
+"plat.eyebrow":"One platform · six layers","plat.title":"Everything a clinical network runs on.","plat.lede":"Not a therapy app. A full operating system: clinical records, adaptive psychometrics, crisis response, telehealth, communications, and the business engine — one tamper-evident audit trail underneath it all.",
+"plat.l1t":"Clinical core","plat.l1d":"Consent-gated intake, screening, AI-ranked matching with manager-final approval, signable golden-thread notes, SMART treatment plans.","plat.l1g":"EHR / HIS",
+"plat.l2t":"Adaptive psychometrics","plat.l2d":"IRT latent-trait scoring (EAP) and computerized adaptive testing — validated math, honest calibration provenance, item-level safety routing.","plat.l2g":"IRT · CAT",
+"plat.l3t":"Crisis & risk","plat.l3d":"C-SSRS-graduated triage, response-time SLAs with on-call auto-routing, Stanley-Brown safety plans the client actually holds a copy of.","plat.l3g":"Zero Suicide",
+"plat.l4t":"Telehealth & comms","plat.l4d":"In-house video with a true waiting room, secure client–clinician messaging, real SMS and voice — every touch on one engagement timeline.","plat.l4g":"LiveKit · Twilio",
+"plat.l5t":"Business engine","plat.l5d":"Stripe payments into a balanced double-entry ledger, stacked revenue-share compensation, CRM with dedupe, delivered appointment reminders.","plat.l5g":"ERP / CRM",
+"plat.l6t":"National analytics","plat.l6d":"De-identified population insight with k-anonymity enforced by construction — small cohorts are never exposed, period.","plat.l6g":"k-anonymity",
+"ai.eyebrow":"Governed intelligence","ai.title":"AI assists. Clinicians decide.","ai.lede":"Eight clinical AI agents — intake summaries, differential directions, note scaffolds, plan suggestions, outcome narratives — every one consent-gated, PHI-minimized, and locked behind a human decision.",
+"ai.c1t":"Consent-gated by design","ai.c1d":"The model is never invoked without the client's live, separately-revocable AI consent. Refusing AI never blocks care — the system degrades honestly to rule-based support.","ai.c1f":"GDPR Art. 22 · APA 2025",
+"ai.c2t":"De-identified signals only","ai.c2d":"No free text, no names, no identifiers ever reach a model — only coded clinical signals. Every inference is logged, versioned, and pending a human verdict.","ai.c2f":"PHI-minimized · audit-chained",
+"ai.c3t":"Deterministic where it matters","ai.c3d":"Risk detection, psychometric scoring, and candidate ranking are pure deterministic logic. AI explains; it never scores, never flags, never decides.","ai.c3f":"AI never touches safety",
+"ev.eyebrow":"Built on the literature","ev.title":"Clinically defensible, line by line.","ev.lede":"Every clinical pathway was audited against the published evidence base and rebuilt to it — with citations in the code.",
+"ev.e1t":"Graduated crisis triage","ev.e1d":"Ideation intensity and behavior history route to distinct response pathways with hard response-time targets.",
+"ev.e2t":"Safety plans, complete","ev.e2d":"All six steps — including structured means restriction — collaboratively built, client-held, acknowledgment tracked.",
+"ev.e3t":"Testing standards","ev.e3d":"Score reports carry their limits: calibration provenance, no-norm disclosure, and a clinician-confirmation hedge in the record itself.",
+"ev.e4t":"Reliable change, not noise","ev.e4d":"Outcome trends use the Reliable Change Index — improvement is only claimed when it exceeds measurement error.",
+"tr.eyebrow":"Trust architecture","tr.title":"Compliance is the foundation, not a feature.","tr.lede":"Defense in depth from the database up — built for HIPAA-class scrutiny and the EU AI Act from day one.",
+"tr.t1b":"ROW-LEVEL ISOLATION","tr.t1s":"Postgres RLS force-enabled on 55+ tables — even application bugs cannot cross tenant boundaries.",
+"tr.t2b":"ENCRYPTED AT REST","tr.t2s":"Field-level XChaCha20-Poly1305 on clinical content, tenant-bound authenticated encryption, KMS-ready.",
+"tr.t3b":"TAMPER-EVIDENT AUDIT","tr.t3s":"Every clinical action in a SHA-256 hash-chained, append-only log. Critical writes fail closed.",
+"tr.t4b":"HUMAN OVERSIGHT","tr.t4s":"MFA, break-glass with time-boxed grants, post-incident review, and a kill-switch on every AI capability.",
+"cta.title1":"Ready to run psychology","cta.title2":"like it matters?","cta.lede":"From a single clinic to a national network — Psyvium deploys in a day and speaks your language. All eleven of them.",
+"cta.btn":"Talk to us","foot.tag":"The Clinical Psychology Operating System","foot.principle":"AI assists · licensed clinicians decide",
+"tab.home":"Home","tab.platform":"Platform","tab.ai":"AI","tab.trust":"Trust","tab.start":"Start"},
+
+es:{ "nav.platform":"Plataforma","nav.intelligence":"Inteligencia","nav.evidence":"Evidencia","nav.trust":"Confianza","nav.start":"Empezar",
+"hero.eyebrow":"Sistema Operativo de Psicología Clínica","hero.title1":"La mente,","hero.title2":"cartografiada.",
+"hero.lede":"Psyvium es el sistema operativo para la psicología clínica a escala nacional: de la admisión al resultado, de la psicometría a la nómina. La IA asiste en cada paso. Los clínicos titulados deciden en todos.",
+"hero.cta1":"Solicitar acceso","hero.cta2":"Explorar la plataforma","hero.scroll":"desliza",
+"stats.contexts":"contextos clínicos, todos reales","stats.agents":"agentes de IA gobernados","stats.langs":"idiomas, RTL incluido","stats.tests":"pruebas automatizadas",
+"plat.eyebrow":"Una plataforma · seis capas","plat.title":"Todo lo que necesita una red clínica.","plat.lede":"No es una app de terapia. Es un sistema operativo completo: historia clínica, psicometría adaptativa, respuesta a crisis, telesalud, comunicaciones y el motor de negocio — con un registro de auditoría a prueba de manipulación debajo de todo.",
+"plat.l1t":"Núcleo clínico","plat.l1d":"Admisión con consentimiento, cribado, emparejamiento por IA con aprobación final del director, notas firmables con hilo dorado, planes de tratamiento SMART.","plat.l1g":"HCE / HIS",
+"plat.l2t":"Psicometría adaptativa","plat.l2d":"Puntuación de rasgo latente TRI (EAP) y test adaptativo informatizado — matemática validada, procedencia de calibración honesta, enrutamiento de seguridad por ítem.","plat.l2g":"TRI · TAI",
+"plat.l3t":"Crisis y riesgo","plat.l3d":"Triaje graduado tipo C-SSRS, SLA de tiempos de respuesta con guardia automática, planes de seguridad Stanley-Brown de los que el paciente guarda copia.","plat.l3g":"Zero Suicide",
+"plat.l4t":"Telesalud y comunicaciones","plat.l4d":"Vídeo propio con sala de espera real, mensajería segura paciente–clínico, SMS y voz reales — cada contacto en una única línea de tiempo.","plat.l4g":"LiveKit · Twilio",
+"plat.l5t":"Motor de negocio","plat.l5d":"Pagos Stripe en un libro mayor de partida doble equilibrado, compensación por participación apilada, CRM sin duplicados, recordatorios de cita entregados.","plat.l5g":"ERP / CRM",
+"plat.l6t":"Analítica nacional","plat.l6d":"Información poblacional desidentificada con k-anonimato garantizado por construcción — las cohortes pequeñas nunca se exponen.","plat.l6g":"k-anonimato",
+"ai.eyebrow":"Inteligencia gobernada","ai.title":"La IA asiste. El clínico decide.","ai.lede":"Ocho agentes clínicos de IA — resúmenes de admisión, direcciones diferenciales, borradores de notas, sugerencias de plan, narrativas de resultados — todos con consentimiento, PHI minimizado y bloqueados tras una decisión humana.",
+"ai.c1t":"Consentimiento por diseño","ai.c1d":"El modelo nunca se invoca sin el consentimiento de IA vigente y revocable del paciente. Rechazar la IA nunca bloquea la atención: el sistema degrada honestamente a soporte basado en reglas.","ai.c1f":"RGPD Art. 22 · APA 2025",
+"ai.c2t":"Solo señales desidentificadas","ai.c2d":"Ningún texto libre, nombre ni identificador llega jamás al modelo — solo señales clínicas codificadas. Cada inferencia queda registrada, versionada y pendiente de veredicto humano.","ai.c2f":"PHI minimizado · auditoría encadenada",
+"ai.c3t":"Determinista donde importa","ai.c3d":"La detección de riesgo, la puntuación psicométrica y el ranking de candidatos son lógica determinista pura. La IA explica; nunca puntúa, nunca marca, nunca decide.","ai.c3f":"La IA nunca toca la seguridad",
+"ev.eyebrow":"Construido sobre la literatura","ev.title":"Defendible clínicamente, línea a línea.","ev.lede":"Cada vía clínica fue auditada contra la evidencia publicada y reconstruida conforme a ella — con citas en el código.",
+"ev.e1t":"Triaje de crisis graduado","ev.e1d":"La intensidad de la ideación y los antecedentes conductuales dirigen a vías de respuesta distintas con objetivos de tiempo estrictos.",
+"ev.e2t":"Planes de seguridad completos","ev.e2d":"Los seis pasos — incluida la restricción de medios estructurada — construidos en colaboración, en manos del paciente, con acuse registrado.",
+"ev.e3t":"Estándares de testing","ev.e3d":"Los informes de puntuación llevan sus límites: procedencia de calibración, ausencia de normas declarada y reserva de confirmación clínica en el propio registro.",
+"ev.e4t":"Cambio fiable, no ruido","ev.e4d":"Las tendencias usan el Índice de Cambio Fiable — solo se afirma mejoría cuando supera el error de medida.",
+"tr.eyebrow":"Arquitectura de confianza","tr.title":"El cumplimiento es el cimiento, no una función.","tr.lede":"Defensa en profundidad desde la base de datos — construido para escrutinio tipo HIPAA y la Ley de IA de la UE desde el primer día.",
+"tr.t1b":"AISLAMIENTO POR FILA","tr.t1s":"RLS de Postgres forzado en más de 55 tablas — ni siquiera un bug puede cruzar fronteras entre inquilinos.",
+"tr.t2b":"CIFRADO EN REPOSO","tr.t2s":"XChaCha20-Poly1305 a nivel de campo en contenido clínico, cifrado autenticado ligado al inquilino, listo para KMS.",
+"tr.t3b":"AUDITORÍA INVIOLABLE","tr.t3s":"Cada acción clínica en un registro encadenado SHA-256, solo-anexar. Las escrituras críticas fallan cerradas.",
+"tr.t4b":"SUPERVISIÓN HUMANA","tr.t4s":"MFA, acceso de emergencia con límite temporal, revisión post-incidente y un interruptor de apagado en cada capacidad de IA.",
+"cta.title1":"¿Listo para gestionar la psicología","cta.title2":"como se merece?","cta.lede":"De una clínica a una red nacional — Psyvium se despliega en un día y habla tu idioma. Los once.",
+"cta.btn":"Hablemos","foot.tag":"El Sistema Operativo de Psicología Clínica","foot.principle":"La IA asiste · los clínicos titulados deciden",
+"tab.home":"Inicio","tab.platform":"Plataforma","tab.ai":"IA","tab.trust":"Confianza","tab.start":"Empezar"},
+
+fr:{ "nav.platform":"Plateforme","nav.intelligence":"Intelligence","nav.evidence":"Preuves","nav.trust":"Confiance","nav.start":"Commencer",
+"hero.eyebrow":"Système d'Exploitation de Psychologie Clinique","hero.title1":"L'esprit,","hero.title2":"cartographié.",
+"hero.lede":"Psyvium est le système d'exploitation de la psychologie clinique à l'échelle d'un pays — de l'admission au résultat, de la psychométrie à la paie. L'IA assiste à chaque étape. Les cliniciens diplômés décident à chacune.",
+"hero.cta1":"Demander l'accès","hero.cta2":"Explorer la plateforme","hero.scroll":"défiler",
+"stats.contexts":"contextes cliniques, tous réels","stats.agents":"agents IA gouvernés","stats.langs":"langues, RTL inclus","stats.tests":"tests automatisés",
+"plat.eyebrow":"Une plateforme · six couches","plat.title":"Tout ce qui fait tourner un réseau clinique.","plat.lede":"Pas une appli de thérapie. Un système d'exploitation complet : dossiers cliniques, psychométrie adaptative, réponse aux crises, télésanté, communications et moteur d'affaires — avec une piste d'audit infalsifiable sous l'ensemble.",
+"plat.l1t":"Cœur clinique","plat.l1d":"Admission sous consentement, dépistage, appariement classé par IA avec approbation finale du directeur, notes signables à fil conducteur, plans de traitement SMART.","plat.l1g":"DME / SIH",
+"plat.l2t":"Psychométrie adaptative","plat.l2d":"Scores de trait latent TRI (EAP) et testing adaptatif informatisé — mathématiques validées, provenance d'étalonnage honnête, routage de sécurité par item.","plat.l2g":"TRI · TAI",
+"plat.l3t":"Crise et risque","plat.l3d":"Triage gradué type C-SSRS, SLA de temps de réponse avec routage d'astreinte automatique, plans de sécurité Stanley-Brown dont le patient détient une copie.","plat.l3g":"Zero Suicide",
+"plat.l4t":"Télésanté et communications","plat.l4d":"Vidéo maison avec vraie salle d'attente, messagerie sécurisée patient–clinicien, SMS et voix réels — chaque contact sur une même chronologie.","plat.l4g":"LiveKit · Twilio",
+"plat.l5t":"Moteur d'affaires","plat.l5d":"Paiements Stripe dans un grand livre en partie double équilibré, rémunération à partage empilé, CRM dédoublonné, rappels de rendez-vous réellement livrés.","plat.l5g":"ERP / CRM",
+"plat.l6t":"Analytique nationale","plat.l6d":"Vision populationnelle dé-identifiée avec k-anonymat garanti par construction — les petites cohortes ne sont jamais exposées.","plat.l6g":"k-anonymat",
+"ai.eyebrow":"Intelligence gouvernée","ai.title":"L'IA assiste. Le clinicien décide.","ai.lede":"Huit agents cliniques d'IA — synthèses d'admission, pistes différentielles, trames de notes, suggestions de plan, narrations de résultats — tous soumis au consentement, PHI minimisé, et verrouillés derrière une décision humaine.",
+"ai.c1t":"Consentement par conception","ai.c1d":"Le modèle n'est jamais appelé sans le consentement IA actif et révocable du patient. Refuser l'IA ne bloque jamais les soins — le système dégrade honnêtement vers un soutien à base de règles.","ai.c1f":"RGPD Art. 22 · APA 2025",
+"ai.c2t":"Signaux dé-identifiés uniquement","ai.c2d":"Aucun texte libre, nom ou identifiant n'atteint jamais un modèle — seulement des signaux cliniques codés. Chaque inférence est journalisée, versionnée, en attente d'un verdict humain.","ai.c2f":"PHI minimisé · audit chaîné",
+"ai.c3t":"Déterministe là où ça compte","ai.c3d":"La détection du risque, le scoring psychométrique et le classement des candidats sont de la logique déterministe pure. L'IA explique ; elle ne score jamais, ne signale jamais, ne décide jamais.","ai.c3f":"L'IA ne touche jamais la sécurité",
+"ev.eyebrow":"Bâti sur la littérature","ev.title":"Cliniquement défendable, ligne par ligne.","ev.lede":"Chaque parcours clinique a été audité contre la littérature publiée et reconstruit en conséquence — citations dans le code.",
+"ev.e1t":"Triage de crise gradué","ev.e1d":"L'intensité de l'idéation et les antécédents comportementaux orientent vers des parcours distincts avec des délais de réponse stricts.",
+"ev.e2t":"Plans de sécurité complets","ev.e2d":"Les six étapes — y compris la restriction structurée des moyens — co-construites, détenues par le patient, avec accusé enregistré.",
+"ev.e3t":"Standards du testing","ev.e3d":"Les rapports de score portent leurs limites : provenance d'étalonnage, absence de normes déclarée, réserve de confirmation clinique dans le dossier même.",
+"ev.e4t":"Changement fiable, pas du bruit","ev.e4d":"Les tendances utilisent l'Indice de Changement Fiable — l'amélioration n'est affirmée que si elle dépasse l'erreur de mesure.",
+"tr.eyebrow":"Architecture de confiance","tr.title":"La conformité est la fondation, pas une option.","tr.lede":"Défense en profondeur depuis la base de données — conçu pour un examen de type HIPAA et l'AI Act européen dès le premier jour.",
+"tr.t1b":"ISOLATION PAR LIGNE","tr.t1s":"RLS Postgres forcé sur plus de 55 tables — même un bug applicatif ne peut franchir les frontières entre locataires.",
+"tr.t2b":"CHIFFRÉ AU REPOS","tr.t2s":"XChaCha20-Poly1305 au niveau champ sur le contenu clinique, chiffrement authentifié lié au locataire, prêt pour KMS.",
+"tr.t3b":"AUDIT INFALSIFIABLE","tr.t3s":"Chaque acte clinique dans un journal chaîné SHA-256, en ajout seul. Les écritures critiques échouent fermées.",
+"tr.t4b":"SUPERVISION HUMAINE","tr.t4s":"MFA, accès d'urgence borné dans le temps, revue post-incident et coupe-circuit sur chaque capacité d'IA.",
+"cta.title1":"Prêt à faire tourner la psychologie","cta.title2":"à sa juste mesure ?","cta.lede":"D'une clinique à un réseau national — Psyvium se déploie en un jour et parle votre langue. Les onze.",
+"cta.btn":"Parlons-en","foot.tag":"Le Système d'Exploitation de Psychologie Clinique","foot.principle":"L'IA assiste · les cliniciens diplômés décident",
+"tab.home":"Accueil","tab.platform":"Plateforme","tab.ai":"IA","tab.trust":"Confiance","tab.start":"Départ"},
+
+de:{ "nav.platform":"Plattform","nav.intelligence":"Intelligenz","nav.evidence":"Evidenz","nav.trust":"Vertrauen","nav.start":"Loslegen",
+"hero.eyebrow":"Das Betriebssystem der Klinischen Psychologie","hero.title1":"Der Geist,","hero.title2":"kartiert.",
+"hero.lede":"Psyvium ist das Betriebssystem für klinische Psychologie im Landesmaßstab — von der Aufnahme bis zum Ergebnis, von der Psychometrie bis zur Abrechnung. KI assistiert bei jedem Schritt. Approbierte Kliniker entscheiden bei jedem.",
+"hero.cta1":"Zugang anfragen","hero.cta2":"Plattform erkunden","hero.scroll":"scrollen",
+"stats.contexts":"klinische Kontexte, alle real","stats.agents":"governte KI-Agenten","stats.langs":"Sprachen, inkl. RTL","stats.tests":"automatisierte Tests",
+"plat.eyebrow":"Eine Plattform · sechs Schichten","plat.title":"Alles, worauf ein klinisches Netzwerk läuft.","plat.lede":"Keine Therapie-App. Ein vollständiges Betriebssystem: klinische Akten, adaptive Psychometrie, Krisenreaktion, Telemedizin, Kommunikation und die Geschäftsmaschine — darunter ein manipulationssicherer Audit-Trail.",
+"plat.l1t":"Klinischer Kern","plat.l1d":"Einwilligungsgebundene Aufnahme, Screening, KI-gereihtes Matching mit finaler Freigabe der Leitung, signierbare Notizen mit rotem Faden, SMART-Behandlungspläne.","plat.l1g":"EPA / KIS",
+"plat.l2t":"Adaptive Psychometrie","plat.l2d":"IRT-Latenztrait-Scoring (EAP) und computerisiertes adaptives Testen — validierte Mathematik, ehrliche Kalibrierungsherkunft, Item-genaues Sicherheitsrouting.","plat.l2g":"IRT · CAT",
+"plat.l3t":"Krise & Risiko","plat.l3d":"C-SSRS-gestufte Triage, Reaktionszeit-SLAs mit automatischem Bereitschaftsrouting, Stanley-Brown-Sicherheitspläne, von denen der Patient eine Kopie besitzt.","plat.l3g":"Zero Suicide",
+"plat.l4t":"Telemedizin & Kommunikation","plat.l4d":"Hauseigenes Video mit echtem Wartezimmer, sichere Patient–Kliniker-Nachrichten, echtes SMS und Telefon — jeder Kontakt auf einer Zeitleiste.","plat.l4g":"LiveKit · Twilio",
+"plat.l5t":"Geschäftsmaschine","plat.l5d":"Stripe-Zahlungen in ein ausgeglichenes doppeltes Hauptbuch, gestapelte Umsatzbeteiligung, CRM mit Dublettenschutz, zugestellte Terminerinnerungen.","plat.l5g":"ERP / CRM",
+"plat.l6t":"Nationale Analytik","plat.l6d":"De-identifizierte Populationseinblicke mit konstruktiv erzwungener k-Anonymität — kleine Kohorten werden nie offengelegt.","plat.l6g":"k-Anonymität",
+"ai.eyebrow":"Governte Intelligenz","ai.title":"KI assistiert. Kliniker entscheiden.","ai.lede":"Acht klinische KI-Agenten — Aufnahmezusammenfassungen, Differenzialrichtungen, Notiz-Gerüste, Planvorschläge, Verlaufsnarrative — jeder einwilligungsgebunden, PHI-minimiert und hinter einer menschlichen Entscheidung verriegelt.",
+"ai.c1t":"Einwilligung per Design","ai.c1d":"Das Modell wird nie ohne die aktive, separat widerrufbare KI-Einwilligung des Patienten aufgerufen. KI abzulehnen blockiert nie die Versorgung — das System fällt ehrlich auf regelbasierte Unterstützung zurück.","ai.c1f":"DSGVO Art. 22 · APA 2025",
+"ai.c2t":"Nur de-identifizierte Signale","ai.c2d":"Kein Freitext, kein Name, kein Identifikator erreicht je ein Modell — nur codierte klinische Signale. Jede Inferenz wird protokolliert, versioniert und wartet auf ein menschliches Urteil.","ai.c2f":"PHI-minimiert · audit-verkettet",
+"ai.c3t":"Deterministisch, wo es zählt","ai.c3d":"Risikoerkennung, psychometrisches Scoring und Kandidatenreihung sind reine deterministische Logik. KI erklärt; sie bewertet nie, markiert nie, entscheidet nie.","ai.c3f":"KI berührt nie die Sicherheit",
+"ev.eyebrow":"Auf der Literatur gebaut","ev.title":"Klinisch verteidigbar, Zeile für Zeile.","ev.lede":"Jeder klinische Pfad wurde gegen die publizierte Evidenz auditiert und danach neu gebaut — mit Zitaten im Code.",
+"ev.e1t":"Gestufte Krisentriage","ev.e1d":"Ideationsintensität und Verhaltensanamnese führen in unterschiedliche Reaktionspfade mit harten Zeitzielen.",
+"ev.e2t":"Vollständige Sicherheitspläne","ev.e2d":"Alle sechs Schritte — inklusive strukturierter Mittelrestriktion — gemeinsam erstellt, beim Patienten, mit dokumentierter Bestätigung.",
+"ev.e3t":"Teststandards","ev.e3d":"Scoreberichte tragen ihre Grenzen: Kalibrierungsherkunft, Norm-Offenlegung und der Vorbehalt klinischer Bestätigung im Datensatz selbst.",
+"ev.e4t":"Reliable Veränderung statt Rauschen","ev.e4d":"Verlaufstrends nutzen den Reliable-Change-Index — Besserung wird nur behauptet, wenn sie den Messfehler übersteigt.",
+"tr.eyebrow":"Vertrauensarchitektur","tr.title":"Compliance ist das Fundament, kein Feature.","tr.lede":"Verteidigung in der Tiefe von der Datenbank aufwärts — gebaut für HIPAA-Prüfungen und den EU AI Act vom ersten Tag an.",
+"tr.t1b":"ZEILEN-ISOLATION","tr.t1s":"Postgres-RLS auf 55+ Tabellen erzwungen — selbst Anwendungsfehler können Mandantengrenzen nicht überschreiten.",
+"tr.t2b":"VERSCHLÜSSELT IM RUHEZUSTAND","tr.t2s":"Feldgenaues XChaCha20-Poly1305 auf klinischen Inhalten, mandantengebundene authentifizierte Verschlüsselung, KMS-bereit.",
+"tr.t3b":"MANIPULATIONSSICHERES AUDIT","tr.t3s":"Jede klinische Aktion in einem SHA-256-verketteten Nur-Anfügen-Protokoll. Kritische Schreibvorgänge schlagen geschlossen fehl.",
+"tr.t4b":"MENSCHLICHE AUFSICHT","tr.t4s":"MFA, zeitlich begrenzter Notfallzugriff, Post-Incident-Review und ein Kill-Switch an jeder KI-Fähigkeit.",
+"cta.title1":"Bereit, Psychologie zu betreiben,","cta.title2":"als zählte sie?","cta.lede":"Von der Einzelpraxis zum nationalen Netzwerk — Psyvium ist an einem Tag ausgerollt und spricht Ihre Sprache. Alle elf.",
+"cta.btn":"Sprechen wir","foot.tag":"Das Betriebssystem der Klinischen Psychologie","foot.principle":"KI assistiert · approbierte Kliniker entscheiden",
+"tab.home":"Start","tab.platform":"Plattform","tab.ai":"KI","tab.trust":"Vertrauen","tab.start":"Los"},
+
+pt:{ "nav.platform":"Plataforma","nav.intelligence":"Inteligência","nav.evidence":"Evidência","nav.trust":"Confiança","nav.start":"Começar",
+"hero.eyebrow":"Sistema Operacional de Psicologia Clínica","hero.title1":"A mente,","hero.title2":"mapeada.",
+"hero.lede":"O Psyvium é o sistema operacional da psicologia clínica em escala nacional — da admissão ao desfecho, da psicometria à folha de pagamento. A IA assiste em cada passo. Clínicos licenciados decidem em todos.",
+"hero.cta1":"Solicitar acesso","hero.cta2":"Explorar a plataforma","hero.scroll":"rolar",
+"stats.contexts":"contextos clínicos, todos reais","stats.agents":"agentes de IA governados","stats.langs":"idiomas, RTL incluído","stats.tests":"testes automatizados",
+"plat.eyebrow":"Uma plataforma · seis camadas","plat.title":"Tudo o que uma rede clínica precisa para operar.","plat.lede":"Não é um app de terapia. É um sistema operacional completo: prontuários, psicometria adaptativa, resposta a crises, telessaúde, comunicações e o motor de negócios — com uma trilha de auditoria inviolável por baixo de tudo.",
+"plat.l1t":"Núcleo clínico","plat.l1d":"Admissão com consentimento, triagem, pareamento ranqueado por IA com aprovação final do gestor, notas assináveis com fio condutor, planos de tratamento SMART.","plat.l1g":"PEP / HIS",
+"plat.l2t":"Psicometria adaptativa","plat.l2d":"Escore de traço latente TRI (EAP) e testagem adaptativa computadorizada — matemática validada, procedência de calibração honesta, roteamento de segurança por item.","plat.l2g":"TRI · TAC",
+"plat.l3t":"Crise e risco","plat.l3d":"Triagem graduada tipo C-SSRS, SLAs de tempo de resposta com plantão automático, planos de segurança Stanley-Brown dos quais o paciente guarda cópia.","plat.l3g":"Zero Suicide",
+"plat.l4t":"Telessaúde e comunicações","plat.l4d":"Vídeo próprio com sala de espera de verdade, mensagens seguras paciente–clínico, SMS e voz reais — cada contato numa única linha do tempo.","plat.l4g":"LiveKit · Twilio",
+"plat.l5t":"Motor de negócios","plat.l5d":"Pagamentos Stripe num razão de partidas dobradas equilibrado, remuneração por participação empilhada, CRM sem duplicatas, lembretes de consulta entregues.","plat.l5g":"ERP / CRM",
+"plat.l6t":"Analítica nacional","plat.l6d":"Visão populacional desidentificada com k-anonimato garantido por construção — coortes pequenas nunca são expostas.","plat.l6g":"k-anonimato",
+"ai.eyebrow":"Inteligência governada","ai.title":"A IA assiste. O clínico decide.","ai.lede":"Oito agentes clínicos de IA — resumos de admissão, direções diferenciais, esqueletos de notas, sugestões de plano, narrativas de desfecho — todos condicionados a consentimento, com PHI minimizado e travados atrás de uma decisão humana.",
+"ai.c1t":"Consentimento por design","ai.c1d":"O modelo nunca é invocado sem o consentimento de IA vigente e revogável do paciente. Recusar a IA nunca bloqueia o cuidado — o sistema degrada honestamente para suporte baseado em regras.","ai.c1f":"GDPR Art. 22 · APA 2025",
+"ai.c2t":"Só sinais desidentificados","ai.c2d":"Nenhum texto livre, nome ou identificador chega a um modelo — apenas sinais clínicos codificados. Cada inferência é registrada, versionada e aguarda veredito humano.","ai.c2f":"PHI minimizado · auditoria encadeada",
+"ai.c3t":"Determinístico onde importa","ai.c3d":"Detecção de risco, escore psicométrico e ranqueamento de candidatos são lógica determinística pura. A IA explica; nunca pontua, nunca sinaliza, nunca decide.","ai.c3f":"A IA nunca toca na segurança",
+"ev.eyebrow":"Construído sobre a literatura","ev.title":"Clinicamente defensável, linha a linha.","ev.lede":"Cada trajeto clínico foi auditado contra a evidência publicada e reconstruído conforme ela — com citações no código.",
+"ev.e1t":"Triagem de crise graduada","ev.e1d":"Intensidade da ideação e histórico comportamental levam a trajetos distintos com metas de tempo rígidas.",
+"ev.e2t":"Planos de segurança completos","ev.e2d":"Os seis passos — incluindo restrição estruturada de meios — construídos em conjunto, nas mãos do paciente, com ciência registrada.",
+"ev.e3t":"Padrões de testagem","ev.e3d":"Relatórios de escore carregam seus limites: procedência da calibração, ausência de normas declarada e ressalva de confirmação clínica no próprio registro.",
+"ev.e4t":"Mudança confiável, não ruído","ev.e4d":"Tendências usam o Índice de Mudança Confiável — melhora só é afirmada quando supera o erro de medida.",
+"tr.eyebrow":"Arquitetura de confiança","tr.title":"Conformidade é o alicerce, não um recurso.","tr.lede":"Defesa em profundidade desde o banco de dados — feito para escrutínio nível HIPAA e para o AI Act europeu desde o primeiro dia.",
+"tr.t1b":"ISOLAMENTO POR LINHA","tr.t1s":"RLS do Postgres forçado em 55+ tabelas — nem bugs de aplicação cruzam fronteiras de inquilino.",
+"tr.t2b":"CRIPTOGRAFADO EM REPOUSO","tr.t2s":"XChaCha20-Poly1305 em nível de campo no conteúdo clínico, criptografia autenticada vinculada ao inquilino, pronto para KMS.",
+"tr.t3b":"AUDITORIA INVIOLÁVEL","tr.t3s":"Cada ação clínica num log encadeado SHA-256, só-acréscimo. Escritas críticas falham fechadas.",
+"tr.t4b":"SUPERVISÃO HUMANA","tr.t4s":"MFA, acesso de emergência com prazo, revisão pós-incidente e um interruptor de desligamento em cada capacidade de IA.",
+"cta.title1":"Pronto para operar a psicologia","cta.title2":"como ela merece?","cta.lede":"De uma clínica a uma rede nacional — o Psyvium entra no ar em um dia e fala a sua língua. Todas as onze.",
+"cta.btn":"Fale conosco","foot.tag":"O Sistema Operacional de Psicologia Clínica","foot.principle":"A IA assiste · clínicos licenciados decidem",
+"tab.home":"Início","tab.platform":"Plataforma","tab.ai":"IA","tab.trust":"Confiança","tab.start":"Começar"},
+
+ar:{ "nav.platform":"المنصّة","nav.intelligence":"الذكاء","nav.evidence":"الأدلّة","nav.trust":"الثقة","nav.start":"ابدأ الآن",
+"hero.eyebrow":"نظام التشغيل لعلم النفس السريري","hero.title1":"العقل،","hero.title2":"مُخرَّطًا.",
+"hero.lede":"Psyvium هو نظام التشغيل لعلم النفس السريري على مستوى وطني — من الاستقبال إلى النتيجة، ومن القياس النفسي إلى الرواتب. الذكاء الاصطناعي يساعد في كل خطوة، والأخصائيون المرخَّصون يقررون في كل واحدة.",
+"hero.cta1":"اطلب الوصول","hero.cta2":"استكشف المنصّة","hero.scroll":"مرّر",
+"stats.contexts":"سياقًا سريريًا، كلها حقيقية","stats.agents":"وكلاء ذكاء اصطناعي مُحوكَمون","stats.langs":"لغة، مع دعم الكتابة من اليمين","stats.tests":"اختبارًا آليًا",
+"plat.eyebrow":"منصّة واحدة · ست طبقات","plat.title":"كل ما تحتاجه شبكة سريرية للعمل.","plat.lede":"ليس تطبيق علاج، بل نظام تشغيل متكامل: السجلات السريرية، القياس النفسي التكيّفي، الاستجابة للأزمات، الرعاية عن بُعد، الاتصالات، ومحرّك الأعمال — وتحت كل ذلك سجلّ تدقيق غير قابل للتلاعب.",
+"plat.l1t":"النواة السريرية","plat.l1d":"استقبال مشروط بالموافقة، فرز، مطابقة مرتَّبة بالذكاء الاصطناعي مع موافقة نهائية من المدير، ملاحظات قابلة للتوقيع بخيط سريري ذهبي، وخطط علاج SMART.","plat.l1g":"سجل صحي",
+"plat.l2t":"قياس نفسي تكيّفي","plat.l2d":"تقدير السمة الكامنة وفق نظرية الاستجابة للمفردة (EAP) واختبار تكيّفي محوسب — رياضيات مُتحقَّق منها، وشفافية في مصدر المعايرة، وتوجيه أماني على مستوى المفردة.","plat.l2g":"IRT · CAT",
+"plat.l3t":"الأزمات والمخاطر","plat.l3d":"فرز متدرّج على نمط C-SSRS، ومهل استجابة صارمة مع تحويل تلقائي للمناوب، وخطط أمان ستانلي-براون يحتفظ المريض بنسخة منها.","plat.l3g":"Zero Suicide",
+"plat.l4t":"الرعاية عن بُعد والاتصالات","plat.l4d":"فيديو داخلي بغرفة انتظار حقيقية، ومراسلة آمنة بين المريض والمعالج، ورسائل نصية ومكالمات حقيقية — كل تواصل على خطّ زمني واحد.","plat.l4g":"LiveKit · Twilio",
+"plat.l5t":"محرّك الأعمال","plat.l5d":"مدفوعات Stripe في دفتر قيد مزدوج متوازن، وتعويضات بحصص مركّبة، وإدارة علاقات بلا تكرار، وتذكيرات مواعيد تصل فعلًا.","plat.l5g":"ERP / CRM",
+"plat.l6t":"تحليلات وطنية","plat.l6d":"رؤى سكانية منزوعة الهوية مع إخفاء k-مضمون بالبناء — الفئات الصغيرة لا تُكشف أبدًا.","plat.l6g":"k-anonymity",
+"ai.eyebrow":"ذكاء مُحوكَم","ai.title":"الذكاء الاصطناعي يساعد. والأخصائي يقرر.","ai.lede":"ثمانية وكلاء سريريين — ملخصات الاستقبال، اتجاهات تشخيصية تفريقية، هياكل ملاحظات، مقترحات خطط، وسرد للنتائج — كلهم مشروطون بالموافقة، بحد أدنى من البيانات الصحية، وخلف قرار بشري دائمًا.",
+"ai.c1t":"موافقة بالتصميم","ai.c1d":"لا يُستدعى النموذج أبدًا دون موافقة المريض السارية والقابلة للإلغاء على الذكاء الاصطناعي. ورفض الذكاء الاصطناعي لا يمنع الرعاية أبدًا — بل يتراجع النظام بأمانة إلى دعم قائم على القواعد.","ai.c1f":"GDPR م. 22 · APA 2025",
+"ai.c2t":"إشارات منزوعة الهوية فقط","ai.c2d":"لا نص حر ولا أسماء ولا معرّفات تصل إلى أي نموذج — إشارات سريرية مرمّزة فقط. كل استدلال يُسجَّل ويُوثَّق بإصداره وينتظر حكمًا بشريًا.","ai.c2f":"بيانات مُصغَّرة · تدقيق مُسلسَل",
+"ai.c3t":"حتمي حيث يهمّ الأمر","ai.c3d":"كشف المخاطر، والتقييم النفسي، وترتيب المرشحين منطقٌ حتمي خالص. الذكاء الاصطناعي يشرح؛ لا يُقيّم أبدًا، ولا يُعلّم، ولا يقرر.","ai.c3f":"الذكاء الاصطناعي لا يمسّ الأمان",
+"ev.eyebrow":"مبني على الأدبيات العلمية","ev.title":"قابل للدفاع سريريًا، سطرًا بسطر.","ev.lede":"دُقّق كل مسار سريري مقابل الأدلة المنشورة وأُعيد بناؤه وفقها — والاستشهادات موجودة في الشيفرة.",
+"ev.e1t":"فرز أزمات متدرّج","ev.e1d":"شدة الأفكار وتاريخ السلوك يوجّهان إلى مسارات استجابة مختلفة بأهداف زمنية صارمة.",
+"ev.e2t":"خطط أمان مكتملة","ev.e2d":"الخطوات الست كلها — بما فيها تقييد الوسائل المنظَّم — تُبنى بالتشارك، وتبقى بيد المريض، مع توثيق الإقرار.",
+"ev.e3t":"معايير القياس","ev.e3d":"تقارير الدرجات تحمل حدودها: مصدر المعايرة، والإفصاح عن غياب المعايير، وتحفّظ التأكيد السريري في السجل نفسه.",
+"ev.e4t":"تغيّر موثوق لا ضجيج","ev.e4d":"تستخدم الاتجاهات مؤشر التغيّر الموثوق — لا يُدّعى التحسّن إلا إذا تجاوز خطأ القياس.",
+"tr.eyebrow":"هندسة الثقة","tr.title":"الامتثال هو الأساس، لا ميزة إضافية.","tr.lede":"دفاع متعدد الطبقات من قاعدة البيانات صعودًا — مصمَّم لتدقيق بمستوى HIPAA وقانون الذكاء الاصطناعي الأوروبي منذ اليوم الأول.",
+"tr.t1b":"عزل على مستوى الصف","tr.t1s":"RLS في Postgres مفروض على أكثر من 55 جدولًا — حتى أخطاء التطبيق لا تستطيع عبور حدود المستأجرين.",
+"tr.t2b":"تشفير عند السكون","tr.t2s":"تشفير XChaCha20-Poly1305 على مستوى الحقل للمحتوى السريري، مصادَق ومرتبط بالمستأجر، وجاهز لـ KMS.",
+"tr.t3b":"تدقيق غير قابل للتلاعب","tr.t3s":"كل إجراء سريري في سجل مُسلسَل بـ SHA-256، إضافة فقط. والعمليات الحرجة تفشل مغلقة.",
+"tr.t4b":"إشراف بشري","tr.t4s":"مصادقة متعددة العوامل، ووصول طارئ محدود زمنيًا، ومراجعة بعد الحوادث، ومفتاح إيقاف لكل قدرة ذكاء اصطناعي.",
+"cta.title1":"مستعد لإدارة علم النفس","cta.title2":"كما يستحق؟","cta.lede":"من عيادة واحدة إلى شبكة وطنية — يُنشر Psyvium في يوم واحد ويتحدث لغتك. اللغات الإحدى عشرة كلها.",
+"cta.btn":"تواصل معنا","foot.tag":"نظام التشغيل لعلم النفس السريري","foot.principle":"الذكاء الاصطناعي يساعد · الأخصائيون المرخَّصون يقررون",
+"tab.home":"الرئيسية","tab.platform":"المنصّة","tab.ai":"الذكاء","tab.trust":"الثقة","tab.start":"ابدأ"},
+
+fa:{ "nav.platform":"پلتفرم","nav.intelligence":"هوش","nav.evidence":"شواهد","nav.trust":"اعتماد","nav.start":"شروع کنید",
+"hero.eyebrow":"سیستم‌عامل روان‌شناسی بالینی","hero.title1":"ذهن،","hero.title2":"نقشه‌برداری‌شده.",
+"hero.lede":"Psyvium سیستم‌عامل روان‌شناسی بالینی در مقیاس کشوری است — از پذیرش تا پیامد، از روان‌سنجی تا حقوق و دستمزد. هوش مصنوعی در هر گام یاری می‌کند و روان‌شناسان دارای پروانه در هر گام تصمیم می‌گیرند.",
+"hero.cta1":"درخواست دسترسی","hero.cta2":"کاوش در پلتفرم","hero.scroll":"اسکرول",
+"stats.contexts":"بافتار بالینی، همگی واقعی","stats.agents":"عامل هوش مصنوعیِ حاکمیت‌شده","stats.langs":"زبان، با پشتیبانی راست‌به‌چپ","stats.tests":"آزمون خودکار",
+"plat.eyebrow":"یک پلتفرم · شش لایه","plat.title":"همهٔ آنچه یک شبکهٔ بالینی با آن کار می‌کند.","plat.lede":"یک اپ درمانی نیست؛ یک سیستم‌عامل کامل است: پروندهٔ بالینی، روان‌سنجی تطبیقی، پاسخ به بحران، سلامت از راه دور، ارتباطات و موتور کسب‌وکار — و زیر همهٔ این‌ها، یک ردّ حسابرسیِ دستکاری‌ناپذیر.",
+"plat.l1t":"هستهٔ بالینی","plat.l1d":"پذیرش مشروط به رضایت، غربالگری، همتاسازی رتبه‌بندی‌شده با هوش مصنوعی و تأیید نهایی مدیر، یادداشت‌های قابل‌امضا با نخ طلایی بالینی، و طرح‌های درمان SMART.","plat.l1g":"پروندهٔ سلامت",
+"plat.l2t":"روان‌سنجی تطبیقی","plat.l2d":"نمره‌گذاری صفت نهفته با نظریهٔ سؤال‌پاسخ (EAP) و آزمون تطبیقی رایانه‌ای — ریاضیاتِ اعتبارسنجی‌شده، شفافیت در منشأ کالیبراسیون، و مسیریابی ایمنی در سطح هر گویه.","plat.l2g":"IRT · CAT",
+"plat.l3t":"بحران و خطر","plat.l3d":"تریاژ پلکانی به سبک C-SSRS، مهلت‌های پاسخ سخت‌گیرانه با ارجاع خودکار به آنکال، و طرح‌های ایمنی استنلی-براون که نسخه‌ای از آن در دست خود مراجع است.","plat.l3g":"Zero Suicide",
+"plat.l4t":"سلامت از راه دور و ارتباطات","plat.l4d":"ویدیوی داخلی با اتاق انتظار واقعی، پیام‌رسانی امن میان مراجع و درمانگر، پیامک و تماس صوتی واقعی — هر تماس روی یک خط زمانی واحد.","plat.l4g":"LiveKit · Twilio",
+"plat.l5t":"موتور کسب‌وکار","plat.l5d":"پرداخت‌های Stripe در دفترکل دوطرفهٔ تراز، پاداش با سهم‌های ترکیبی، CRM بدون رکورد تکراری، و یادآورهای نوبت که واقعاً ارسال می‌شوند.","plat.l5g":"ERP / CRM",
+"plat.l6t":"تحلیل ملی","plat.l6d":"بینش جمعیتیِ هویت‌زدایی‌شده با k-گمنامیِ تضمین‌شده در معماری — گروه‌های کوچک هرگز افشا نمی‌شوند.","plat.l6g":"k-گمنامی",
+"ai.eyebrow":"هوش حاکمیت‌شده","ai.title":"هوش مصنوعی یاری می‌کند. روان‌شناس تصمیم می‌گیرد.","ai.lede":"هشت عامل بالینی هوش مصنوعی — خلاصهٔ پذیرش، جهت‌های تشخیص افتراقی، چارچوب یادداشت، پیشنهاد طرح درمان، و روایت پیامدها — همگی مشروط به رضایت، با حداقل دادهٔ سلامت، و همیشه پشت یک تصمیم انسانی.",
+"ai.c1t":"رضایت در طراحی","ai.c1d":"مدل هرگز بدون رضایتِ فعال و جداگانه‌قابل‌لغوِ مراجع فراخوانی نمی‌شود. نپذیرفتن هوش مصنوعی هرگز مانع مراقبت نیست — سیستم صادقانه به پشتیبانی قاعده‌محور بازمی‌گردد.","ai.c1f":"GDPR مادهٔ ۲۲ · APA ۲۰۲۵",
+"ai.c2t":"فقط سیگنال‌های هویت‌زدایی‌شده","ai.c2d":"هیچ متن آزاد، نام یا شناسه‌ای هرگز به مدل نمی‌رسد — تنها سیگنال‌های بالینی کدگذاری‌شده. هر استنتاج ثبت و نسخه‌گذاری می‌شود و در انتظار رأی انسانی می‌ماند.","ai.c2f":"دادهٔ کمینه · حسابرسی زنجیره‌ای",
+"ai.c3t":"قطعی، آن‌جا که مهم است","ai.c3d":"تشخیص خطر، نمره‌گذاری روان‌سنجی و رتبه‌بندی نامزدها منطقِ قطعیِ خالص‌اند. هوش مصنوعی توضیح می‌دهد؛ هرگز نمره نمی‌دهد، پرچم نمی‌زند و تصمیم نمی‌گیرد.","ai.c3f":"هوش مصنوعی هرگز به ایمنی دست نمی‌زند",
+"ev.eyebrow":"بنا شده بر ادبیات علمی","ev.title":"از نظر بالینی قابل‌دفاع، سطر به سطر.","ev.lede":"هر مسیر بالینی در برابر شواهد منتشرشده حسابرسی و بر اساس آن بازسازی شد — با ارجاع‌ها در خودِ کد.",
+"ev.e1t":"تریاژ پلکانی بحران","ev.e1d":"شدت افکار و سابقهٔ رفتاری به مسیرهای پاسخ متمایز با اهداف زمانی سخت هدایت می‌شوند.",
+"ev.e2t":"طرح‌های ایمنی کامل","ev.e2d":"هر شش گام — از جمله محدودسازی ساختاریافتهٔ ابزار — مشارکتی ساخته می‌شود، در دست مراجع می‌ماند و تأیید او ثبت می‌شود.",
+"ev.e3t":"استانداردهای سنجش","ev.e3d":"گزارش نمره‌ها حدود خود را با خود دارند: منشأ کالیبراسیون، اعلام نبود هنجار، و قید «نیازمند تأیید بالینی» در خودِ پرونده.",
+"ev.e4t":"تغییر معتبر، نه نویز","ev.e4d":"روندهای پیامد از شاخص تغییر معتبر استفاده می‌کنند — بهبود تنها وقتی ادعا می‌شود که از خطای اندازه‌گیری فراتر رود.",
+"tr.eyebrow":"معماری اعتماد","tr.title":"انطباق، بنیان است؛ نه یک قابلیت.","tr.lede":"دفاع لایه‌لایه از پایگاه‌داده به بالا — از روز نخست برای موشکافی در تراز HIPAA و قانون هوش مصنوعی اروپا ساخته شده است.",
+"tr.t1b":"جداسازی سطرـبه‌ـسطر","tr.t1s":"RLS پستگرس روی بیش از ۵۵ جدول اجباری است — حتی باگ‌های برنامه هم نمی‌توانند از مرز مستأجرها عبور کنند.",
+"tr.t2b":"رمزنگاری در حال سکون","tr.t2s":"رمزنگاری XChaCha20-Poly1305 در سطح فیلد روی محتوای بالینی، احرازشده و مقید به مستأجر، آمادهٔ KMS.",
+"tr.t3b":"حسابرسی دستکاری‌ناپذیر","tr.t3s":"هر اقدام بالینی در گزارشی زنجیره‌ای با SHA-256 و فقط‌افزودنی ثبت می‌شود. نوشتن‌های حیاتی بسته شکست می‌خورند.",
+"tr.t4b":"نظارت انسانی","tr.t4s":"احراز چندعاملی، دسترسی اضطراری زمان‌دار، بازبینی پس از رخداد، و کلید خاموشی برای هر قابلیت هوش مصنوعی.",
+"cta.title1":"آماده‌اید روان‌شناسی را","cta.title2":"آن‌گونه که سزاوار است اداره کنید؟","cta.lede":"از یک کلینیک تا یک شبکهٔ ملی — Psyvium در یک روز مستقر می‌شود و به زبان شما سخن می‌گوید. هر یازده زبان.",
+"cta.btn":"با ما گفت‌وگو کنید","foot.tag":"سیستم‌عامل روان‌شناسی بالینی","foot.principle":"هوش مصنوعی یاری می‌کند · روان‌شناسان دارای پروانه تصمیم می‌گیرند",
+"tab.home":"خانه","tab.platform":"پلتفرم","tab.ai":"هوش","tab.trust":"اعتماد","tab.start":"شروع"},
+
+zh:{ "nav.platform":"平台","nav.intelligence":"智能","nav.evidence":"循证","nav.trust":"信任","nav.start":"立即开始",
+"hero.eyebrow":"临床心理学操作系统","hero.title1":"心智,","hero.title2":"尽在图谱。",
+"hero.lede":"Psyvium 是面向国家级规模的临床心理学操作系统——从接诊到疗效,从心理测量到薪酬结算。AI 在每一步辅助,持照临床医师在每一步决策。",
+"hero.cta1":"申请使用","hero.cta2":"探索平台","hero.scroll":"滚动",
+"stats.contexts":"个临床上下文,全部真实落地","stats.agents":"个受治理的 AI 智能体","stats.langs":"种语言,含 RTL","stats.tests":"项自动化测试",
+"plat.eyebrow":"一个平台 · 六个层级","plat.title":"临床网络运转所需的一切。","plat.lede":"这不是一款治疗 App,而是一套完整的操作系统:临床病历、自适应心理测量、危机响应、远程医疗、通讯与业务引擎——底层是一条防篡改的审计链。",
+"plat.l1t":"临床核心","plat.l1d":"知情同意门控的接诊、筛查、AI 排序 + 主管终审的匹配、可签署的“金线”病程记录、SMART 治疗计划。","plat.l1g":"EHR / HIS",
+"plat.l2t":"自适应心理测量","plat.l2d":"IRT 潜在特质计分(EAP)与计算机化自适应测验——数学经过验证,标定来源诚实透明,条目级安全路由。","plat.l2g":"IRT · CAT",
+"plat.l3t":"危机与风险","plat.l3d":"C-SSRS 分级分诊、带自动值班调度的响应时限 SLA、患者本人持有副本的 Stanley-Brown 安全计划。","plat.l3g":"Zero Suicide",
+"plat.l4t":"远程医疗与通讯","plat.l4d":"自研视频与真正的候诊室、医患安全消息、真实短信与语音——每一次接触都汇入同一条时间线。","plat.l4g":"LiveKit · Twilio",
+"plat.l5t":"业务引擎","plat.l5d":"Stripe 支付进入平衡的复式总账、多层收入分成薪酬、去重 CRM、真正送达的预约提醒。","plat.l5g":"ERP / CRM",
+"plat.l6t":"国家级分析","plat.l6d":"经去标识化的人群洞察,k-匿名由架构强制保证——小样本群体绝不暴露。","plat.l6g":"k-匿名",
+"ai.eyebrow":"受治理的智能","ai.title":"AI 辅助,医师决策。","ai.lede":"八个临床 AI 智能体——接诊摘要、鉴别方向、病程记录框架、治疗计划建议、疗效叙事——全部以知情同意为前提、最小化健康信息,并且锁定在人类决策之后。",
+"ai.c1t":"同意先行的设计","ai.c1d":"未经患者有效且可单独撤回的 AI 同意,模型绝不会被调用。拒绝 AI 永远不会阻碍诊疗——系统会诚实降级为基于规则的支持。","ai.c1f":"GDPR 第22条 · APA 2025",
+"ai.c2t":"仅传递去标识化信号","ai.c2d":"任何自由文本、姓名或标识符都不会触达模型——只有编码化的临床信号。每次推理都被记录、版本化,并等待人类裁定。","ai.c2f":"PHI 最小化 · 审计链",
+"ai.c3t":"关键之处保持确定性","ai.c3d":"风险检测、心理测量计分与候选排序是纯确定性逻辑。AI 负责解释,从不计分、从不标记、从不决策。","ai.c3f":"AI 绝不触碰安全",
+"ev.eyebrow":"以文献为基础","ev.title":"每一行都经得起临床检验。","ev.lede":"每条临床路径都对照已发表的循证证据审计并重建——引用就写在代码里。",
+"ev.e1t":"分级危机分诊","ev.e1d":"意念强度与行为史将个案导入不同的响应路径,并附带严格的时限目标。",
+"ev.e2t":"完整的安全计划","ev.e2d":"全部六个步骤——包括结构化的致命工具限制——协作制定,由患者持有,并记录确认。",
+"ev.e3t":"测验标准","ev.e3d":"分数报告自带边界:标定来源、无常模声明,以及写入记录本身的“需临床确认”限定语。",
+"ev.e4t":"可靠改变,而非噪声","ev.e4d":"疗效趋势使用可靠改变指数——只有超过测量误差才宣告改善。",
+"tr.eyebrow":"信任架构","tr.title":"合规是地基,不是功能。","tr.lede":"自数据库向上的纵深防御——自第一天起即为 HIPAA 级审查与欧盟 AI 法案而构建。",
+"tr.t1b":"行级隔离","tr.t1s":"55+ 张表强制启用 Postgres RLS——即使应用出现缺陷也无法跨越租户边界。",
+"tr.t2b":"静态加密","tr.t2s":"临床内容字段级 XChaCha20-Poly1305 加密,绑定租户的认证加密,可无缝接入 KMS。",
+"tr.t3b":"防篡改审计","tr.t3s":"每个临床操作都写入 SHA-256 链式、只追加的日志。关键写入失败即关闭。",
+"tr.t4b":"人类监督","tr.t4s":"多因素认证、限时紧急访问、事后复盘,以及每项 AI 能力的一键熔断。",
+"cta.title1":"准备好认真地","cta.title2":"运营心理健康了吗?","cta.lede":"从单个诊所到国家级网络——Psyvium 一天即可部署,并说你的语言。十一种,全都会。",
+"cta.btn":"联系我们","foot.tag":"临床心理学操作系统","foot.principle":"AI 辅助 · 持照临床医师决策",
+"tab.home":"首页","tab.platform":"平台","tab.ai":"智能","tab.trust":"信任","tab.start":"开始"},
+
+hi:{ "nav.platform":"प्लैटफ़ॉर्म","nav.intelligence":"इंटेलिजेंस","nav.evidence":"प्रमाण","nav.trust":"भरोसा","nav.start":"शुरू करें",
+"hero.eyebrow":"क्लिनिकल साइकोलॉजी ऑपरेटिंग सिस्टम","hero.title1":"मन का,","hero.title2":"मानचित्र।",
+"hero.lede":"Psyvium देश-स्तर पर क्लिनिकल साइकोलॉजी का ऑपरेटिंग सिस्टम है — प्रवेश से परिणाम तक, साइकोमेट्रिक्स से पेरोल तक। हर क़दम पर AI सहायता करता है, और हर क़दम पर लाइसेंसधारी चिकित्सक निर्णय लेते हैं।",
+"hero.cta1":"एक्सेस का अनुरोध करें","hero.cta2":"प्लैटफ़ॉर्म देखें","hero.scroll":"स्क्रॉल",
+"stats.contexts":"क्लिनिकल संदर्भ, सब वास्तविक","stats.agents":"शासित AI एजेंट","stats.langs":"भाषाएँ, RTL सहित","stats.tests":"स्वचालित परीक्षण",
+"plat.eyebrow":"एक प्लैटफ़ॉर्म · छह परतें","plat.title":"वह सब कुछ जिस पर एक क्लिनिकल नेटवर्क चलता है।","plat.lede":"यह कोई थेरेपी ऐप नहीं है। यह एक संपूर्ण ऑपरेटिंग सिस्टम है: क्लिनिकल रिकॉर्ड, अनुकूली साइकोमेट्रिक्स, संकट प्रतिक्रिया, टेलीहेल्थ, संचार और बिज़नेस इंजन — और इन सबके नीचे एक छेड़छाड़-रोधी ऑडिट ट्रेल।",
+"plat.l1t":"क्लिनिकल कोर","plat.l1d":"सहमति-द्वार वाला प्रवेश, स्क्रीनिंग, AI-रैंक्ड मिलान जिस पर प्रबंधक की अंतिम स्वीकृति, हस्ताक्षर-योग्य गोल्डन-थ्रेड नोट्स, SMART उपचार योजनाएँ।","plat.l1g":"EHR / HIS",
+"plat.l2t":"अनुकूली साइकोमेट्रिक्स","plat.l2d":"IRT लेटेन्ट-ट्रेट स्कोरिंग (EAP) और कंप्यूटरीकृत अनुकूली परीक्षण — प्रमाणित गणित, ईमानदार कैलिब्रेशन स्रोत, आइटम-स्तर की सुरक्षा रूटिंग।","plat.l2g":"IRT · CAT",
+"plat.l3t":"संकट और जोखिम","plat.l3d":"C-SSRS-श्रेणीबद्ध ट्राइएज, ऑन-कॉल स्वतः-रूटिंग के साथ प्रतिक्रिया-समय SLA, स्टैनली-ब्राउन सुरक्षा योजनाएँ जिनकी एक प्रति स्वयं मरीज़ के पास रहती है।","plat.l3g":"Zero Suicide",
+"plat.l4t":"टेलीहेल्थ और संचार","plat.l4d":"असली प्रतीक्षा-कक्ष वाला इन-हाउस वीडियो, मरीज़–चिकित्सक सुरक्षित संदेश, असली SMS और वॉयस — हर संपर्क एक ही टाइमलाइन पर।","plat.l4g":"LiveKit · Twilio",
+"plat.l5t":"बिज़नेस इंजन","plat.l5d":"संतुलित डबल-एंट्री खाते में Stripe भुगतान, बहुस्तरीय राजस्व-साझा मुआवज़ा, डुप्लिकेट-मुक्त CRM, वाक़ई पहुँचने वाले अपॉइंटमेंट रिमाइंडर।","plat.l5g":"ERP / CRM",
+"plat.l6t":"राष्ट्रीय विश्लेषण","plat.l6d":"पहचान-रहित जनसंख्या अंतर्दृष्टि, संरचना से ही लागू k-गुमनामी के साथ — छोटे समूह कभी उजागर नहीं होते।","plat.l6g":"k-गुमनामी",
+"ai.eyebrow":"शासित इंटेलिजेंस","ai.title":"AI सहायता करता है। चिकित्सक निर्णय लेता है।","ai.lede":"आठ क्लिनिकल AI एजेंट — प्रवेश सारांश, विभेदक दिशाएँ, नोट ढाँचे, योजना सुझाव, परिणाम-कथाएँ — हर एक सहमति-द्वार के पीछे, न्यूनतम स्वास्थ्य-डेटा के साथ, और हमेशा मानवीय निर्णय के अधीन।",
+"ai.c1t":"डिज़ाइन से सहमति","ai.c1d":"मरीज़ की सक्रिय, अलग से वापस लेने योग्य AI-सहमति के बिना मॉडल कभी नहीं बुलाया जाता। AI को मना करना देखभाल को कभी नहीं रोकता — सिस्टम ईमानदारी से नियम-आधारित सहयोग पर लौट आता है।","ai.c1f":"GDPR अनु. 22 · APA 2025",
+"ai.c2t":"केवल पहचान-रहित संकेत","ai.c2d":"कोई खुला पाठ, नाम या पहचानकर्ता कभी मॉडल तक नहीं पहुँचता — केवल कोडित क्लिनिकल संकेत। हर अनुमान लॉग होता है, संस्करणबद्ध होता है और मानवीय फ़ैसले की प्रतीक्षा करता है।","ai.c2f":"PHI-न्यूनतम · ऑडिट-श्रृंखलित",
+"ai.c3t":"जहाँ ज़रूरी है, वहाँ नियतात्मक","ai.c3d":"जोखिम पहचान, साइकोमेट्रिक स्कोरिंग और उम्मीदवार रैंकिंग शुद्ध नियतात्मक तर्क हैं। AI समझाता है; वह न कभी स्कोर करता है, न फ़्लैग करता है, न निर्णय लेता है।","ai.c3f":"AI सुरक्षा को कभी नहीं छूता",
+"ev.eyebrow":"शोध-साहित्य पर निर्मित","ev.title":"पंक्ति-दर-पंक्ति, क्लिनिकली रक्षणीय।","ev.lede":"हर क्लिनिकल पथ का प्रकाशित प्रमाणों के विरुद्ध ऑडिट हुआ और उसी के अनुसार पुनर्निर्माण — उद्धरण कोड में मौजूद हैं।",
+"ev.e1t":"श्रेणीबद्ध संकट ट्राइएज","ev.e1d":"विचार-तीव्रता और व्यवहार-इतिहास अलग-अलग प्रतिक्रिया पथों की ओर ले जाते हैं, कठोर समय-लक्ष्यों के साथ।",
+"ev.e2t":"संपूर्ण सुरक्षा योजनाएँ","ev.e2d":"सभी छह चरण — संरचित साधन-प्रतिबंध सहित — मिलकर बनाए जाते हैं, मरीज़ के पास रहते हैं, और स्वीकृति दर्ज होती है।",
+"ev.e3t":"परीक्षण मानक","ev.e3d":"स्कोर रिपोर्टें अपनी सीमाएँ साथ रखती हैं: कैलिब्रेशन स्रोत, मानक-अनुपस्थिति की घोषणा, और रिकॉर्ड में ही ‘क्लिनिकल पुष्टि आवश्यक’ की चेतावनी।",
+"ev.e4t":"विश्वसनीय बदलाव, शोर नहीं","ev.e4d":"परिणाम-रुझान विश्वसनीय परिवर्तन सूचकांक का उपयोग करते हैं — सुधार तभी कहा जाता है जब वह माप-त्रुटि से अधिक हो।",
+"tr.eyebrow":"भरोसे की वास्तुकला","tr.title":"अनुपालन नींव है, फ़ीचर नहीं।","tr.lede":"डेटाबेस से ऊपर तक गहराई में सुरक्षा — पहले दिन से HIPAA-स्तरीय जाँच और EU AI Act के लिए निर्मित।",
+"tr.t1b":"पंक्ति-स्तरीय पृथक्करण","tr.t1s":"55+ तालिकाओं पर Postgres RLS अनिवार्य — एप्लिकेशन बग भी टेनेंट सीमाएँ पार नहीं कर सकते।",
+"tr.t2b":"विश्राम में एन्क्रिप्टेड","tr.t2s":"क्लिनिकल सामग्री पर फ़ील्ड-स्तरीय XChaCha20-Poly1305, टेनेंट-बद्ध प्रमाणित एन्क्रिप्शन, KMS-तैयार।",
+"tr.t3b":"छेड़छाड़-रोधी ऑडिट","tr.t3s":"हर क्लिनिकल क्रिया SHA-256 श्रृंखलाबद्ध, केवल-जोड़ें लॉग में। महत्वपूर्ण लेखन विफल होने पर बंद रहते हैं।",
+"tr.t4b":"मानवीय निगरानी","tr.t4s":"MFA, समय-सीमित आपात पहुँच, घटना-पश्चात समीक्षा, और हर AI क्षमता पर किल-स्विच।",
+"cta.title1":"तैयार हैं मनोविज्ञान को","cta.title2":"उसकी गरिमा से चलाने के लिए?","cta.lede":"एक क्लिनिक से राष्ट्रीय नेटवर्क तक — Psyvium एक दिन में तैनात होता है और आपकी भाषा बोलता है। सभी ग्यारह।",
+"cta.btn":"हमसे बात करें","foot.tag":"क्लिनिकल साइकोलॉजी ऑपरेटिंग सिस्टम","foot.principle":"AI सहायता करता है · लाइसेंसधारी चिकित्सक निर्णय लेते हैं",
+"tab.home":"होम","tab.platform":"प्लैटफ़ॉर्म","tab.ai":"AI","tab.trust":"भरोसा","tab.start":"शुरू"},
+
+ru:{ "nav.platform":"Платформа","nav.intelligence":"Интеллект","nav.evidence":"Доказательность","nav.trust":"Доверие","nav.start":"Начать",
+"hero.eyebrow":"Операционная система клинической психологии","hero.title1":"Разум,","hero.title2":"нанесённый на карту.",
+"hero.lede":"Psyvium — операционная система клинической психологии национального масштаба: от приёма до исхода, от психометрики до расчёта зарплат. ИИ помогает на каждом шаге. Лицензированные клиницисты решают на каждом.",
+"hero.cta1":"Запросить доступ","hero.cta2":"Изучить платформу","hero.scroll":"листайте",
+"stats.contexts":"клинических контекстов, все реальные","stats.agents":"управляемых ИИ-агентов","stats.langs":"языков, включая RTL","stats.tests":"автотестов",
+"plat.eyebrow":"Одна платформа · шесть слоёв","plat.title":"Всё, на чём работает клиническая сеть.","plat.lede":"Это не приложение для терапии, а полноценная операционная система: клинические записи, адаптивная психометрика, кризисное реагирование, телемедицина, коммуникации и бизнес-движок — и под всем этим неизменяемый аудиторский след.",
+"plat.l1t":"Клиническое ядро","plat.l1d":"Приём с согласием, скрининг, ИИ-ранжированный подбор с финальным утверждением руководителя, подписываемые заметки с «золотой нитью», SMART-планы лечения.","plat.l1g":"ЭМК / МИС",
+"plat.l2t":"Адаптивная психометрика","plat.l2d":"IRT-оценка латентных черт (EAP) и компьютеризированное адаптивное тестирование — проверенная математика, честное происхождение калибровки, маршрутизация безопасности на уровне пункта.","plat.l2g":"IRT · CAT",
+"plat.l3t":"Кризис и риск","plat.l3d":"Градуированная триаж-оценка в духе C-SSRS, SLA времени реакции с автоматическим дежурным, планы безопасности Стэнли-Браун, копия которых остаётся у пациента.","plat.l3g":"Zero Suicide",
+"plat.l4t":"Телемедицина и связь","plat.l4d":"Собственное видео с настоящей комнатой ожидания, защищённые сообщения пациент–клиницист, реальные SMS и звонки — каждый контакт в единой хронологии.","plat.l4g":"LiveKit · Twilio",
+"plat.l5t":"Бизнес-движок","plat.l5d":"Платежи Stripe в сбалансированный журнал двойной записи, многоуровневое распределение выручки, CRM без дублей, действительно доставляемые напоминания о приёме.","plat.l5g":"ERP / CRM",
+"plat.l6t":"Национальная аналитика","plat.l6d":"Обезличенные популяционные данные с k-анонимностью, гарантированной архитектурой — малые когорты не раскрываются никогда.","plat.l6g":"k-анонимность",
+"ai.eyebrow":"Управляемый интеллект","ai.title":"ИИ помогает. Клиницист решает.","ai.lede":"Восемь клинических ИИ-агентов — сводки приёма, дифференциальные направления, каркасы заметок, предложения планов, нарративы исходов — каждый за воротами согласия, с минимизацией медданных и всегда позади человеческого решения.",
+"ai.c1t":"Согласие по умолчанию","ai.c1d":"Модель никогда не вызывается без действующего, отдельно отзываемого ИИ-согласия пациента. Отказ от ИИ никогда не блокирует помощь — система честно переходит на поддержку по правилам.","ai.c1f":"GDPR ст. 22 · APA 2025",
+"ai.c2t":"Только обезличенные сигналы","ai.c2d":"Свободный текст, имена и идентификаторы никогда не достигают модели — только кодированные клинические сигналы. Каждый вывод логируется, версионируется и ждёт вердикта человека.","ai.c2f":"PHI-минимизация · цепочка аудита",
+"ai.c3t":"Детерминизм там, где это важно","ai.c3d":"Выявление риска, психометрическая оценка и ранжирование кандидатов — чистая детерминированная логика. ИИ объясняет; он никогда не оценивает, не помечает и не решает.","ai.c3f":"ИИ не касается безопасности",
+"ev.eyebrow":"Построено на литературе","ev.title":"Клинически обоснованно, строка за строкой.","ev.lede":"Каждый клинический маршрут прошёл аудит по опубликованным данным и был перестроен согласно им — ссылки прямо в коде.",
+"ev.e1t":"Градуированный кризисный триаж","ev.e1d":"Интенсивность идеаций и поведенческий анамнез ведут в разные маршруты реагирования с жёсткими целями по времени.",
+"ev.e2t":"Полные планы безопасности","ev.e2d":"Все шесть шагов — включая структурированное ограничение средств — создаются совместно, остаются у пациента, подтверждение фиксируется.",
+"ev.e3t":"Стандарты тестирования","ev.e3d":"Отчёты о баллах несут свои ограничения: происхождение калибровки, декларация отсутствия норм и оговорка «требует клинического подтверждения» в самой записи.",
+"ev.e4t":"Надёжное изменение, а не шум","ev.e4d":"Тренды исходов используют индекс надёжного изменения — об улучшении заявляется, только если оно превышает ошибку измерения.",
+"tr.eyebrow":"Архитектура доверия","tr.title":"Комплаенс — это фундамент, а не функция.","tr.lede":"Эшелонированная защита от базы данных и выше — с первого дня построено для проверок уровня HIPAA и AI Act ЕС.",
+"tr.t1b":"ИЗОЛЯЦИЯ НА УРОВНЕ СТРОК","tr.t1s":"Postgres RLS принудительно включён на 55+ таблицах — даже баги приложения не пересекут границы арендаторов.",
+"tr.t2b":"ШИФРОВАНИЕ В ПОКОЕ","tr.t2s":"Пополевое XChaCha20-Poly1305 для клинического контента, аутентифицированное шифрование с привязкой к арендатору, готово к KMS.",
+"tr.t3b":"НЕИЗМЕНЯЕМЫЙ АУДИТ","tr.t3s":"Каждое клиническое действие — в цепочке SHA-256, журнал только на добавление. Критические записи отказывают закрыто.",
+"tr.t4b":"ЧЕЛОВЕЧЕСКИЙ НАДЗОР","tr.t4s":"MFA, экстренный доступ с ограничением по времени, разбор инцидентов и аварийный выключатель на каждой ИИ-функции.",
+"cta.title1":"Готовы управлять психологией","cta.title2":"так, как она того стоит?","cta.lede":"От одной клиники до национальной сети — Psyvium разворачивается за день и говорит на вашем языке. На всех одиннадцати.",
+"cta.btn":"Свяжитесь с нами","foot.tag":"Операционная система клинической психологии","foot.principle":"ИИ помогает · лицензированные клиницисты решают",
+"tab.home":"Главная","tab.platform":"Платформа","tab.ai":"ИИ","tab.trust":"Доверие","tab.start":"Старт"},
+
+ja:{ "nav.platform":"プラットフォーム","nav.intelligence":"インテリジェンス","nav.evidence":"エビデンス","nav.trust":"信頼","nav.start":"はじめる",
+"hero.eyebrow":"臨床心理学オペレーティングシステム","hero.title1":"心を、","hero.title2":"マッピングする。",
+"hero.lede":"Psyvium は国家規模の臨床心理学のためのオペレーティングシステム。受付からアウトカムまで、心理測定から給与まで。AI がすべてのステップを支援し、すべての判断は有資格の臨床家が下します。",
+"hero.cta1":"アクセスを申請","hero.cta2":"プラットフォームを見る","hero.scroll":"スクロール",
+"stats.contexts":"の臨床コンテキスト、すべて実装済み","stats.agents":"のガバナンス下 AI エージェント","stats.langs":"言語対応、RTL を含む","stats.tests":"件の自動テスト",
+"plat.eyebrow":"ひとつのプラットフォーム · 6つのレイヤー","plat.title":"臨床ネットワークの運営に必要なすべて。","plat.lede":"セラピーアプリではありません。臨床記録、適応型心理測定、危機対応、遠隔医療、コミュニケーション、ビジネスエンジンまで備えた完全な OS — その土台には改ざん検知可能な監査証跡があります。",
+"plat.l1t":"臨床コア","plat.l1d":"同意ゲート付き受付、スクリーニング、AI ランキング+管理者最終承認のマッチング、署名可能なゴールデンスレッド記録、SMART 治療計画。","plat.l1g":"EHR / HIS",
+"plat.l2t":"適応型心理測定","plat.l2d":"IRT 潜在特性スコアリング(EAP)とコンピュータ適応型テスト。検証済みの数学、正直な較正来歴、項目レベルの安全ルーティング。","plat.l2g":"IRT · CAT",
+"plat.l3t":"危機とリスク","plat.l3d":"C-SSRS 型の段階的トリアージ、オンコール自動割当付き応答時間 SLA、患者自身が控えを持つ Stanley-Brown 安全計画。","plat.l3g":"Zero Suicide",
+"plat.l4t":"遠隔医療と通信","plat.l4d":"本物の待合室を備えた自社ビデオ、患者と臨床家の安全なメッセージング、実際に届く SMS と音声通話 — すべての接点がひとつのタイムラインに。","plat.l4g":"LiveKit · Twilio",
+"plat.l5t":"ビジネスエンジン","plat.l5d":"Stripe 決済を均衡した複式簿記元帳へ、多層のレベニューシェア報酬、重複排除 CRM、確実に届く予約リマインダー。","plat.l5g":"ERP / CRM",
+"plat.l6t":"国家規模アナリティクス","plat.l6d":"匿名化された集団インサイト。k-匿名性は設計で強制され、小さなコホートは決して露出しません。","plat.l6g":"k-匿名性",
+"ai.eyebrow":"ガバナンス下のインテリジェンス","ai.title":"AI は支援する。臨床家が決める。","ai.lede":"8つの臨床 AI エージェント — 受付サマリー、鑑別の方向性、記録の骨子、計画の提案、アウトカムの叙述。すべて同意ゲート付き、PHI 最小化、そして必ず人間の判断の後ろに。",
+"ai.c1t":"設計段階からの同意","ai.c1d":"患者の有効かつ個別に撤回可能な AI 同意なしにモデルが呼ばれることはありません。AI を断ってもケアは止まらない — システムは正直にルールベースの支援へ切り替わります。","ai.c1f":"GDPR 第22条 · APA 2025",
+"ai.c2t":"匿名化シグナルのみ","ai.c2d":"自由記述も氏名も識別子も、モデルには一切届きません — コード化された臨床シグナルだけ。すべての推論は記録・バージョン管理され、人間の裁定を待ちます。","ai.c2f":"PHI 最小化 · 監査チェーン",
+"ai.c3t":"重要な所は決定論で","ai.c3d":"リスク検知、心理測定スコアリング、候補ランキングは純粋な決定論ロジック。AI は説明するだけ — 採点も、フラグ付けも、決定もしません。","ai.c3f":"AI は安全に触れない",
+"ev.eyebrow":"文献の上に構築","ev.title":"一行ずつ、臨床的に立証可能。","ev.lede":"すべての臨床パスウェイは公刊されたエビデンスに照らして監査され、それに従って再構築されました — 引用はコードの中に。",
+"ev.e1t":"段階的な危機トリアージ","ev.e1d":"希死念慮の強度と行動歴が、厳格な時間目標を持つ別々の対応経路へ振り分けます。",
+"ev.e2t":"完全な安全計画","ev.e2d":"手段制限の構造化を含む全6ステップを協働で作成し、患者が保持し、確認が記録されます。",
+"ev.e3t":"テスティング標準","ev.e3d":"スコアレポートは限界を明記します:較正の来歴、規準なしの開示、そして記録自体に刻まれた「臨床確認必須」の但し書き。",
+"ev.e4t":"ノイズではなく、信頼できる変化","ev.e4d":"アウトカム傾向は信頼できる変化指数を使用 — 測定誤差を超えたときだけ改善を主張します。",
+"tr.eyebrow":"信頼のアーキテクチャ","tr.title":"コンプライアンスは土台であり、機能ではない。","tr.lede":"データベースから積み上げる多層防御 — 初日から HIPAA 級の監査と EU AI 法のために設計。",
+"tr.t1b":"行レベル分離","tr.t1s":"55以上のテーブルで Postgres RLS を強制 — アプリのバグですらテナント境界を越えられません。",
+"tr.t2b":"保存時暗号化","tr.t2s":"臨床コンテンツにフィールドレベルの XChaCha20-Poly1305、テナント紐付きの認証付き暗号化、KMS 対応。",
+"tr.t3b":"改ざん検知監査","tr.t3s":"すべての臨床アクションを SHA-256 チェーンの追記専用ログへ。重要な書き込みはフェイルクローズ。",
+"tr.t4b":"人間による監督","tr.t4s":"MFA、時間制限付き緊急アクセス、インシデント後レビュー、そして全 AI 機能のキルスイッチ。",
+"cta.title1":"心理臨床を、その重みに","cta.title2":"ふさわしく運営する準備は?","cta.lede":"一つのクリニックから国家規模のネットワークまで — Psyvium は1日で展開でき、あなたの言語を話します。11言語すべてで。",
+"cta.btn":"お問い合わせ","foot.tag":"臨床心理学オペレーティングシステム","foot.principle":"AI は支援する · 有資格の臨床家が決める",
+"tab.home":"ホーム","tab.platform":"基盤","tab.ai":"AI","tab.trust":"信頼","tab.start":"開始"}
+};
+
+/* apply language */
+const sel=document.getElementById('langsel');
+Object.entries(LANG_NAMES).forEach(([c,n])=>{const o=document.createElement('option');o.value=c;o.textContent=n;sel.appendChild(o)});
+function setLang(code){
+  const d=I[code]||I.en;
+  document.documentElement.lang=code;
+  document.documentElement.dir=RTL.has(code)?'rtl':'ltr';
+  document.documentElement.style.setProperty('--tx-origin',RTL.has(code)?'right':'left');
+  document.querySelectorAll('[data-i18n]').forEach(el=>{const k=el.getAttribute('data-i18n');if(d[k]!=null)el.textContent=d[k]});
+  localStorage.setItem('vpsy.site.lang',code);sel.value=code;
+}
+const saved=localStorage.getItem('vpsy.site.lang');
+const guess=(navigator.language||'en').slice(0,2);
+setLang(saved||(I[guess]?guess:'en'));
+sel.addEventListener('change',e=>setLang(e.target.value));
+
+/* language ribbon */
+document.getElementById('langribbon').innerHTML=
+  Object.values(LANG_NAMES).map(n=>`<span>${n}</span>`).join('');
+
+/* ═════════ WebGL cosmos — a living neural constellation ═════════ */
+(function(){
+const cv=document.getElementById('cosmos');
+const gl=cv.getContext('webgl',{antialias:true,alpha:false});
+const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+if(!gl){cv.style.background='radial-gradient(80% 60% at 50% 30%,#141838,#05060E)';return}
+let W,H,DPR;
+function size(){DPR=Math.min(devicePixelRatio||1,2);W=cv.width=innerWidth*DPR;H=cv.height=innerHeight*DPR;
+  cv.style.width=innerWidth+'px';cv.style.height=innerHeight+'px';gl.viewport(0,0,W,H)}
+size();addEventListener('resize',size);
+
+/* neuron field: N points on a slowly-rotating 3D shell + interior */
+const N=340, LINKD=0.34;
+const pos=new Float32Array(N*3), hue=new Float32Array(N);
+for(let i=0;i<N;i++){
+  const r=0.55+Math.pow(Math.random(),0.6)*0.75, th=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1);
+  pos[i*3]=r*Math.sin(ph)*Math.cos(th); pos[i*3+1]=r*Math.cos(ph)*0.72; pos[i*3+2]=r*Math.sin(ph)*Math.sin(th);
+  hue[i]=Math.random();
+}
+/* precompute links */
+const links=[];
+for(let i=0;i<N;i++)for(let j=i+1;j<N;j++){
+  const dx=pos[i*3]-pos[j*3],dy=pos[i*3+1]-pos[j*3+1],dz=pos[i*3+2]-pos[j*3+2];
+  if(dx*dx+dy*dy+dz*dz<LINKD*LINKD)links.push(i,j);
+}
+/* traveling signal pulses along random links */
+const PULSES=26;
+const pulse=Array.from({length:PULSES},()=>({e:(Math.random()*links.length/2|0)*2,t:Math.random(),v:0.15+Math.random()*0.5}));
+
+const VS=`attribute vec3 p;attribute float h;uniform mat4 M;uniform float S;varying float vh;varying float vz;
+void main(){vec4 q=M*vec4(p,1.0);vz=q.z;vh=h;gl_Position=vec4(q.xy,0.0,1.0);gl_PointSize=S*(1.6-q.z);}`;
+const FS=`precision mediump float;varying float vh;varying float vz;uniform vec3 A;uniform vec3 B;uniform float O;
+void main(){vec2 c=gl_PointCoord-0.5;float d=dot(c,c);if(d>0.25)discard;
+float glow=smoothstep(0.25,0.0,d);vec3 col=mix(A,B,vh);gl_FragColor=vec4(col,glow*O*(1.2-vz));}`;
+const VSL=`attribute vec3 p;attribute float w;uniform mat4 M;varying float vw;varying float vz;
+void main(){vec4 q=M*vec4(p,1.0);vz=q.z;vw=w;gl_Position=vec4(q.xy,0.0,1.0);}`;
+const FSL=`precision mediump float;varying float vw;varying float vz;uniform vec3 A;uniform vec3 B;uniform float O;
+void main(){vec3 col=mix(A,B,vw);gl_FragColor=vec4(col,O*(1.1-vz)*0.55);}`;
+function prog(vs,fs){const P=gl.createProgram();
+  [[gl.VERTEX_SHADER,vs],[gl.FRAGMENT_SHADER,fs]].forEach(([t,s])=>{const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);gl.attachShader(P,sh)});
+  gl.linkProgram(P);return P}
+const PP=prog(VS,FS), PL=prog(VSL,FSL);
+const bufP=gl.createBuffer(), bufH=gl.createBuffer(), bufL=gl.createBuffer(), bufW=gl.createBuffer(), bufPu=gl.createBuffer(), bufPh=gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,bufH);gl.bufferData(gl.ARRAY_BUFFER,hue,gl.STATIC_DRAW);
+const NEURO=[124/255,108/255,1.0], PULSE=[100/255,240/255,210/255];
+let mx=0,my=0,tx=0,ty=0,scroll=0;
+addEventListener('pointermove',e=>{tx=(e.clientX/innerWidth-0.5)*2;ty=(e.clientY/innerHeight-0.5)*2},{passive:true});
+addEventListener('scroll',()=>{scroll=scrollY/Math.max(1,document.body.scrollHeight-innerHeight)},{passive:true});
+gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE);
+const lineV=new Float32Array(links.length*3), lineW=new Float32Array(links.length);
+for(let k=0;k<links.length;k++)lineW[k]=hue[links[k]];
+const puV=new Float32Array(PULSES*3), puH=new Float32Array(PULSES).fill(0.95);
+let t0=performance.now();
+function frame(now){
+  const t=(now-t0)/1000;
+  mx+=(tx-mx)*0.04; my+=(ty-my)*0.04;
+  const ry=t*(reduced?0.008:0.05)+mx*0.35, rx=my*0.22+scroll*0.9-0.1;
+  const cy=Math.cos(ry),sy=Math.sin(ry),cx=Math.cos(rx),sx=Math.sin(rx);
+  const asp=H/W, Z=0.62+scroll*0.25;
+  /* column-major: rotY then rotX then scale/aspect; z into [0..~1] for depth fade */
+  const M=new Float32Array([cy*Z*asp,sx*sy*Z,cx*sy*0.5,0,  0,cx*Z,-sx*0.5,0,  -sy*Z*asp,sx*cy*Z,cx*cy*0.5,0,  0,0,0.5,1]);
+  gl.clearColor(0.0196,0.0235,0.055,1);gl.clear(gl.COLOR_BUFFER_BIT);
+  /* subtle organic drift */
+  const drift=new Float32Array(pos.length);
+  for(let i=0;i<N;i++){const b=i*3, w=t*0.5+i;
+    drift[b]=pos[b]+Math.sin(w*0.7)*0.012; drift[b+1]=pos[b+1]+Math.cos(w*0.9)*0.012; drift[b+2]=pos[b+2]+Math.sin(w*1.1)*0.012;}
+  for(let k=0;k<links.length;k++){const s=links[k]*3,d3=k*3;lineV[d3]=drift[s];lineV[d3+1]=drift[s+1];lineV[d3+2]=drift[s+2];}
+  /* lines */
+  gl.useProgram(PL);
+  gl.uniformMatrix4fv(gl.getUniformLocation(PL,'M'),false,M);
+  gl.uniform3fv(gl.getUniformLocation(PL,'A'),NEURO);gl.uniform3fv(gl.getUniformLocation(PL,'B'),PULSE);
+  gl.uniform1f(gl.getUniformLocation(PL,'O'),0.22);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufL);gl.bufferData(gl.ARRAY_BUFFER,lineV,gl.DYNAMIC_DRAW);
+  let a=gl.getAttribLocation(PL,'p');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufW);gl.bufferData(gl.ARRAY_BUFFER,lineW,gl.STATIC_DRAW);
+  a=gl.getAttribLocation(PL,'w');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,1,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.LINES,0,links.length);
+  /* neurons */
+  gl.useProgram(PP);
+  gl.uniformMatrix4fv(gl.getUniformLocation(PP,'M'),false,M);
+  gl.uniform3fv(gl.getUniformLocation(PP,'A'),NEURO);gl.uniform3fv(gl.getUniformLocation(PP,'B'),PULSE);
+  gl.uniform1f(gl.getUniformLocation(PP,'O'),0.85);gl.uniform1f(gl.getUniformLocation(PP,'S'),3.2*DPR);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufP);gl.bufferData(gl.ARRAY_BUFFER,drift,gl.DYNAMIC_DRAW);
+  a=gl.getAttribLocation(PP,'p');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufH);
+  a=gl.getAttribLocation(PP,'h');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,1,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.POINTS,0,N);
+  /* signal pulses traveling links */
+  if(!reduced){
+    for(let i=0;i<PULSES;i++){const p=pulse[i];p.t+=p.v/60;if(p.t>1){p.t=0;p.e=(Math.random()*links.length/2|0)*2}
+      const s=links[p.e]*3,e=links[p.e+1]*3,u=p.t,b=i*3;
+      puV[b]=drift[s]+(drift[e]-drift[s])*u;puV[b+1]=drift[s+1]+(drift[e+1]-drift[s+1])*u;puV[b+2]=drift[s+2]+(drift[e+2]-drift[s+2])*u;}
+    gl.uniform1f(gl.getUniformLocation(PP,'O'),1.0);gl.uniform1f(gl.getUniformLocation(PP,'S'),5.5*DPR);
+    gl.bindBuffer(gl.ARRAY_BUFFER,bufPu);gl.bufferData(gl.ARRAY_BUFFER,puV,gl.DYNAMIC_DRAW);
+    a=gl.getAttribLocation(PP,'p');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,3,gl.FLOAT,false,0,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,bufPh);gl.bufferData(gl.ARRAY_BUFFER,puH,gl.STATIC_DRAW);
+    a=gl.getAttribLocation(PP,'h');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,1,gl.FLOAT,false,0,0);
+    gl.drawArrays(gl.POINTS,0,PULSES);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+
+/* ═════════ scroll reveals, count-ups, tab highlighting, magnetic buttons ═════════ */
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}}),{threshold:0.15});
+document.querySelectorAll('.rise,.rise-l,.rise-r').forEach(el=>io.observe(el));
+
+/* count-up stats */
+const cio=new IntersectionObserver(es=>es.forEach(e=>{if(!e.isIntersecting)return;cio.unobserve(e.target);
+  const el=e.target,to=+el.dataset.count,t0=performance.now();
+  (function tick(n){const p=Math.min(1,(n-t0)/1400),v=Math.round(to*(1-Math.pow(1-p,3)));el.textContent=v;
+    if(p<1)requestAnimationFrame(tick)})(t0);}),{threshold:0.6});
+document.querySelectorAll('[data-count]').forEach(el=>cio.observe(el));
+
+/* active tab on mobile */
+const secs=['top','platform','intelligence','trust','start'].map(id=>document.getElementById(id)).filter(Boolean);
+const tabs=[...document.querySelectorAll('.tabbar a')];
+const sio=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){
+  tabs.forEach(t=>t.classList.toggle('on',t.dataset.sec===e.target.id))}})},{rootMargin:'-40% 0px -50% 0px'});
+secs.forEach(s=>sio.observe(s));
+
+/* magnetic buttons (desktop, motion-safe) */
+if(matchMedia('(pointer:fine)').matches && !matchMedia('(prefers-reduced-motion: reduce)').matches){
+  document.querySelectorAll('.magnetic').forEach(b=>{
+    b.addEventListener('pointermove',e=>{const r=b.getBoundingClientRect();
+      b.style.transform=`translate(${(e.clientX-r.left-r.width/2)*0.18}px,${(e.clientY-r.top-r.height/2)*0.3}px)`});
+    b.addEventListener('pointerleave',()=>b.style.transform='');
+  });
+}
+</script>
+</body>
+</html>
