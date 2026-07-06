@@ -34,6 +34,7 @@ import { DocumentsModule } from './modules/documents/documents.module';
 import { MessagingModule } from './modules/messaging/messaging.module';
 import { RegistryModule } from './modules/registry/registry.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { TelehealthModule } from './modules/telehealth/telehealth.module';
 import { HealthModule } from './health/health.module';
 
 /**
@@ -117,6 +118,12 @@ import { HealthModule } from './health/health.module';
     // for people (Registry) and tenant/clinic/feature-flag config (Admin).
     RegistryModule,
     AdminModule,
+    // Bounded contexts (Wave F — Telehealth, ctx 12): the LAST unbuilt
+    // context. LiveKit Cloud video/voice, activate-on-key (`LiveKitAdapter.
+    // fromEnv()`) — with no LIVEKIT_* env vars configured, media-join
+    // endpoints return an honest 503 VIDEO_NOT_CONFIGURED rather than a
+    // fabricated token (docs/technical/08-telehealth-and-realtime.md).
+    TelehealthModule,
     HealthModule,
   ],
 })

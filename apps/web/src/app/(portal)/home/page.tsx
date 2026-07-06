@@ -22,7 +22,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/i18n';
-import { api, getToken, ApiError } from '@/lib/api';
+import { api, getPrincipal, ApiError } from '@/lib/api';
 import type { ClinicalSummary, OutcomePoint, TrendDirection } from '@/lib/clinical-types';
 import type { CrisisResourcesDto, SafetyPlanDto } from '@/lib/risk-types';
 import { Sparkline } from '@/components/Sparkline';
@@ -78,8 +78,12 @@ function buildMoodWeek(outcomes: OutcomePoint[]): (number | null)[] {
 }
 
 async function fetchPatientSummary(): Promise<ClinicalSummary | null> {
-  // No session on file — the effect below is redirecting to /login; skip the call.
-  if (!getToken()) return null;
+  // No session on file — the effect below is redirecting to /login; skip the
+  // call. Gates on the persisted principal hint (localStorage), not the
+  // per-tab sessionStorage legacy token — see session/page.tsx's
+  // fetchCaseload() for why (a real bug: a second tab/window bounced an
+  // authenticated client back to /login despite a valid session cookie).
+  if (!getPrincipal()) return null;
   return api.clientMe();
 }
 
@@ -88,8 +92,10 @@ export default function PatientHomePage() {
   const router = useRouter();
 
   // A real session is required — this page never signs anyone in itself.
+  // See fetchPatientSummary() above for why this reads the persisted
+  // principal hint rather than the per-tab legacy token.
   useEffect(() => {
-    if (!getToken()) router.replace('/login');
+    if (!getPrincipal()) router.replace('/login');
   }, [router]);
 
   // ── Live clinical summary — no fallback-to-fake; three honest states only ──
@@ -457,7 +463,7 @@ function MySafetyPlanCard() {
   const { t, fmtDate } = useI18n();
   const { data: plan, loading, error, reload } = useResource<SafetyPlanDto | null>(
     // No session on file — the page-level effect is redirecting to /login; skip the call.
-    () => (getToken() ? api.riskMySafetyPlan() : Promise.resolve(null)),
+    () => (getPrincipal() ? api.riskMySafetyPlan() : Promise.resolve(null)),
     [],
   );
 
@@ -591,7 +597,7 @@ function EmergencyCard() {
   const { t } = useI18n();
   const { data: crisis } = useResource<CrisisResourcesDto | null>(
     // No session on file — the page-level effect is redirecting to /login; skip the call.
-    () => (getToken() ? api.riskCrisisResources() : Promise.resolve(null)),
+    () => (getPrincipal() ? api.riskCrisisResources() : Promise.resolve(null)),
     [],
   );
 

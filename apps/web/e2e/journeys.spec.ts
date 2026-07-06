@@ -128,7 +128,22 @@ test.describe('Manager journey (manager@vpsy.health)', () => {
     await approveButtons.first().click();
     // A successful approve removes that proposal card from the board —
     // the count settles back down rather than an error panel appearing.
-    await expect(page.getByRole('alert')).toHaveCount(0);
+    //
+    // Scoped to #portal-content (main), not the whole page: Next.js's App
+    // Router injects its own always-present accessibility route announcer
+    // (next/dist/client/components/app-router-announcer.js) as a hidden
+    // `role="alert"` live region in a shadow root appended directly to
+    // `document.body` — outside the app's own tree — purely to announce
+    // client-side title changes to screen readers. Playwright's getByRole
+    // pierces open shadow roots by default, so an unscoped query against the
+    // whole `page` always matches that announcer too (empty text, but still
+    // one `alert`-role node), making `toHaveCount(0)` fail even on a clean
+    // approve with zero app-level errors. The app's own ErrorPanel
+    // (apps/web/src/components/ErrorPanel.tsx) is always rendered inside
+    // `<main id="portal-content">`, so scoping there is the actual assertion
+    // this test wants: no error panel — not "no accessibility live region
+    // exists anywhere on the page," which is never true here.
+    await expect(page.locator('#portal-content').getByRole('alert')).toHaveCount(0);
     await expect(approveButtons).toHaveCount(before, { timeout: 15_000 });
   });
 });

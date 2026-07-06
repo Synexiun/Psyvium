@@ -41,6 +41,7 @@
     "@vpsy/database": "workspace:*",
     "argon2": "^0.41.1",
     "ioredis": "^5.11.1",
+    "livekit-server-sdk": "^2.16.0",
     "otplib": "^13.4.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",

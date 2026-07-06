@@ -25,3 +25,4 @@ export * from './dto/diagnosis';
 export * from './dto/documents';
 export * from './dto/registry';
 export * from './dto/admin';
+export * from './dto/telehealth';

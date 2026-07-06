@@ -419,6 +419,7 @@ model Client {
   safetyPlans         SafetyPlan[]
   outcomeMeasures     OutcomeMeasure[]
   breakGlassGrants    BreakGlassGrant[]
+  teleSessions        TeleSession[]
 
   @@index([tenantId, status])
 }
@@ -472,6 +473,7 @@ model Psychologist {
   appointments      Appointment[]
   payouts           Payout[]
   availabilitySlots AvailabilitySlot[]
+  teleSessions      TeleSession[]
 
   @@index([tenantId, acceptingClients])
 }
@@ -633,7 +635,8 @@ model Appointment {
   updatedAt      DateTime          @updatedAt
   deletedAt      DateTime?
 
-  session Session?
+  session      Session?
+  teleSessions TeleSession[]
 
   @@index([tenantId, status])
   @@index([psychologistId, startsAt])
@@ -659,6 +662,48 @@ model Session {
   interventions Intervention[]
 
   @@index([tenantId])
+}
+
+/// Telehealth (context 12, `08-telehealth-and-realtime.md` — the last
+/// unbuilt bounded context). This is the CONNECTIVITY/MEDIA lifecycle layer
+/// (waiting room -> live LiveKit room -> ended), deliberately parallel to —
+/// never mutating — the clinical `Session` above (the encounter/note
+/// anchor). Linked 1:1-per-attempt to an `Appointment` via `appointmentId`
+/// (not unique: a re-scheduled/re-created attempt after an ENDED/CANCELLED
+/// session gets its own row + fresh `roomName`).
+///
+/// `status` is a plain String (DTO-validated against `TeleSessionStatus`,
+/// `packages/contracts/src/dto/telehealth.ts`) — same "future state never
+/// needs a migration" convention as `IncidentReview.kind`.
+///
+/// `participantEvents` is an append-only `{who, event, at}[]` audit trail of
+/// every lifecycle transition (join, waiting-room entry, admit, end) — the
+/// UI's local timeline; the tamper-evident system of record is still
+/// `AuditService`/`AuditEvent`.
+model TeleSession {
+  id             String       @id @default(cuid())
+  tenantId       String
+  appointmentId  String
+  appointment    Appointment  @relation(fields: [appointmentId], references: [id])
+  clientId       String
+  client         Client       @relation(fields: [clientId], references: [id])
+  psychologistId String
+  psychologist   Psychologist @relation(fields: [psychologistId], references: [id])
+  /// LiveKit room name — unique so two TeleSessions never collide on the
+  /// same media room even across re-created attempts.
+  roomName          String    @unique
+  status            String    @default("SCHEDULED")
+  startedAt         DateTime?
+  endedAt           DateTime?
+  participantEvents Json      @default("[]")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  @@index([tenantId, status])
+  @@index([appointmentId])
+  @@index([clientId])
+  @@index([psychologistId])
 }
 
 model SessionNote {

@@ -382,6 +382,7 @@ function FollowUpCard({ esc, onChanged }: { esc: EscalationDto; onChanged: () =>
         <div className="mt-3">
           <input
             className="field text-sm"
+            aria-label={t('risk.followUpNotesPlaceholder')}
             placeholder={t('risk.followUpNotesPlaceholder')}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
@@ -438,6 +439,13 @@ function StringList({ label, items, onChange, placeholder }: { label: string; it
       </ul>
       <input
         className="field text-sm"
+        // `label` above is a bare visual <label>, never associated via
+        // htmlFor/id (every StringList instance on this page shares the same
+        // generic `placeholder` copy, so an aria-label of the placeholder
+        // alone would give several simultaneously-rendered inputs the exact
+        // same accessible name) — fold in the list's own label so axe's
+        // "label" rule is satisfied with a name that's actually unique.
+        aria-label={`${label}: ${placeholder}`}
         placeholder={placeholder}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -490,6 +498,11 @@ function MeansRestrictionList({
             </div>
             <input
               className="field mt-1.5 text-xs"
+              // Per-row field describing how `it.means` is secured — folding
+              // the means text in keeps the accessible name unique across
+              // however many rows are rendered, not just a repeated generic
+              // placeholder string.
+              aria-label={`${howPlaceholder}: ${it.means}`}
               placeholder={howPlaceholder}
               value={it.how ?? ''}
               onChange={(e) => update(i, { how: e.target.value || undefined })}
@@ -499,6 +512,7 @@ function MeansRestrictionList({
       </ul>
       <input
         className="field text-sm"
+        aria-label={`${label}: ${placeholder}`}
         placeholder={placeholder}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -602,9 +616,9 @@ function SafetyPlanPanel() {
     <div className="card p-5">
       <p className="eyebrow">{t('risk.safetyEyebrow')}</p>
       <p className="mt-2 text-xs text-mist/50">{t('risk.safetyIntro')}</p>
-      <label className="field-label mt-4">{t('risk.clientIdLabel')}</label>
+      <label htmlFor="safety-plan-client-id" className="field-label mt-4">{t('risk.clientIdLabel')}</label>
       <div className="flex gap-2">
-        <input className="field text-sm" dir="ltr" placeholder={t('risk.clientIdPlaceholder')} value={clientId} onChange={(e) => setClientId(e.target.value)} />
+        <input id="safety-plan-client-id" className="field text-sm" dir="ltr" placeholder={t('risk.clientIdPlaceholder')} value={clientId} onChange={(e) => setClientId(e.target.value)} />
         <button onClick={loadPlan} disabled={busy !== null || !clientId.trim()} className="btn-ghost shrink-0 px-3 text-sm disabled:opacity-60">
           {busy === 'load' ? '…' : t('risk.loadPlan')}
         </button>
@@ -620,20 +634,20 @@ function SafetyPlanPanel() {
         <StringList label={t('risk.supportContacts')} items={form.supportContacts} onChange={(v) => setForm((f) => ({ ...f, supportContacts: v }))} placeholder={t('risk.itemPlaceholder')} />
         <StringList label={t('risk.professionalContacts')} items={form.professionalContacts} onChange={(v) => setForm((f) => ({ ...f, professionalContacts: v }))} placeholder={t('risk.itemPlaceholder')} />
         <div>
-          <label className="field-label">{t('risk.crisisLineLabelField')}</label>
-          <input className="field text-sm" placeholder={t('risk.crisisLineLabelPlaceholder')} value={form.crisisLabel} onChange={(e) => setForm((f) => ({ ...f, crisisLabel: e.target.value }))} />
+          <label htmlFor="crisis-line-label" className="field-label">{t('risk.crisisLineLabelField')}</label>
+          <input id="crisis-line-label" className="field text-sm" placeholder={t('risk.crisisLineLabelPlaceholder')} value={form.crisisLabel} onChange={(e) => setForm((f) => ({ ...f, crisisLabel: e.target.value }))} />
           <div className="mt-2 grid grid-cols-2 gap-2">
             <div>
-              <label className="field-label">{t('risk.crisisLinePhoneField')}</label>
-              <input className="field text-sm" dir="ltr" value={form.crisisPhone} onChange={(e) => setForm((f) => ({ ...f, crisisPhone: e.target.value }))} />
+              <label htmlFor="crisis-line-phone" className="field-label">{t('risk.crisisLinePhoneField')}</label>
+              <input id="crisis-line-phone" className="field text-sm" dir="ltr" value={form.crisisPhone} onChange={(e) => setForm((f) => ({ ...f, crisisPhone: e.target.value }))} />
             </div>
             <div>
-              <label className="field-label">{t('risk.crisisLineTextField')}</label>
-              <input className="field text-sm" dir="ltr" value={form.crisisText} onChange={(e) => setForm((f) => ({ ...f, crisisText: e.target.value }))} />
+              <label htmlFor="crisis-line-text" className="field-label">{t('risk.crisisLineTextField')}</label>
+              <input id="crisis-line-text" className="field text-sm" dir="ltr" value={form.crisisText} onChange={(e) => setForm((f) => ({ ...f, crisisText: e.target.value }))} />
             </div>
           </div>
-          <label className="field-label mt-2">{t('risk.crisisLineChatField')}</label>
-          <input className="field text-sm" dir="ltr" value={form.crisisChat} onChange={(e) => setForm((f) => ({ ...f, crisisChat: e.target.value }))} />
+          <label htmlFor="crisis-line-chat" className="field-label mt-2">{t('risk.crisisLineChatField')}</label>
+          <input id="crisis-line-chat" className="field text-sm" dir="ltr" value={form.crisisChat} onChange={(e) => setForm((f) => ({ ...f, crisisChat: e.target.value }))} />
           <p className="mt-1 text-[11px] text-mist/40">{t('risk.crisisLineDefaultNote')}</p>
         </div>
         <MeansRestrictionList
@@ -645,8 +659,8 @@ function SafetyPlanPanel() {
           howPlaceholder={t('risk.meansHowPlaceholder')}
         />
         <div>
-          <label className="field-label">{t('risk.environmentSafety')}</label>
-          <input className="field text-sm" placeholder={t('risk.envPlaceholder')} value={form.environmentSafety} onChange={(e) => setForm((f) => ({ ...f, environmentSafety: e.target.value }))} />
+          <label htmlFor="environment-safety" className="field-label">{t('risk.environmentSafety')}</label>
+          <input id="environment-safety" className="field text-sm" placeholder={t('risk.envPlaceholder')} value={form.environmentSafety} onChange={(e) => setForm((f) => ({ ...f, environmentSafety: e.target.value }))} />
         </div>
         <label className="flex items-start gap-2 text-xs text-mist/60">
           <input
@@ -687,10 +701,10 @@ function BreakGlassPanel() {
     <div className="card border border-signal/20 p-5">
       <p className="eyebrow text-signal-soft/80">{t('risk.breakGlassEyebrow')}</p>
       <p className="mt-2 text-xs text-mist/55">{t('risk.breakGlassIntro')}</p>
-      <label className="field-label mt-4">{t('risk.clientIdLabel')}</label>
-      <input className="field text-sm" dir="ltr" placeholder={t('risk.clientIdPlaceholder')} value={clientId} onChange={(e) => setClientId(e.target.value)} />
-      <label className="field-label mt-3">{t('risk.breakGlassReason')}</label>
-      <textarea className="field min-h-[64px] text-sm" placeholder={t('risk.breakGlassReasonPlaceholder')} value={reason} onChange={(e) => setReason(e.target.value)} />
+      <label htmlFor="break-glass-client-id" className="field-label mt-4">{t('risk.clientIdLabel')}</label>
+      <input id="break-glass-client-id" className="field text-sm" dir="ltr" placeholder={t('risk.clientIdPlaceholder')} value={clientId} onChange={(e) => setClientId(e.target.value)} />
+      <label htmlFor="break-glass-reason" className="field-label mt-3">{t('risk.breakGlassReason')}</label>
+      <textarea id="break-glass-reason" className="field min-h-[64px] text-sm" placeholder={t('risk.breakGlassReasonPlaceholder')} value={reason} onChange={(e) => setReason(e.target.value)} />
       <button onClick={invoke} disabled={busy} className="mt-3 inline-flex w-full items-center justify-center rounded border border-signal/50 bg-signal/10 px-5 py-3 font-medium text-signal transition hover:bg-signal/20 disabled:opacity-60">
         {busy ? t('risk.invoking') : t('risk.invokeBreakGlass')}
       </button>

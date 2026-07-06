@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/i18n';
-import { api, getToken, ApiError } from '@/lib/api';
+import { api, getPrincipal, ApiError } from '@/lib/api';
 import type { CaseloadEntry, ClinicalSummary, OutcomePoint, TrendDirection } from '@/lib/clinical-types';
 import { Sparkline } from '@/components/Sparkline';
 import { useResource } from '@/lib/use-resource';
@@ -75,7 +75,14 @@ interface LiveEvent {
 
 async function fetchCaseload(): Promise<CaseloadEntry[] | null> {
   // No session on file — the effect below is redirecting to /login; skip the call.
-  if (!getToken()) return null;
+  // Gates on the persisted principal hint (localStorage), not the per-tab
+  // sessionStorage legacy token — the latter is intentionally NOT restored by
+  // a new tab/window (or a Playwright storageState-loaded context) even
+  // though the real session (httpOnly cookie, verified server-side by
+  // middleware.ts) is still perfectly valid there. Was a real bug: opening
+  // this page in a second tab after logging in elsewhere bounced an
+  // authenticated clinician straight back to /login.
+  if (!getPrincipal()) return null;
   return api.myCaseload();
 }
 
@@ -84,8 +91,10 @@ export default function SessionWorkspacePage() {
   const router = useRouter();
 
   // A real session is required — this page never signs anyone in itself.
+  // See fetchCaseload() above for why this reads the persisted principal
+  // hint rather than the per-tab legacy token.
   useEffect(() => {
-    if (!getToken()) router.replace('/login');
+    if (!getPrincipal()) router.replace('/login');
   }, [router]);
 
   // ── Live caseload → clinical summary for the first client — no fallback-to-fake ──
