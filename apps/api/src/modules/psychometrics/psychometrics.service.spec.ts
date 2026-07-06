@@ -277,3 +277,93 @@ describe('PsychometricsService.administer — IRT latent-trait scoring', () => {
     expect(tx.psychometricScore.create).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * ItemTranslation read path (docs/technical/07-psychometrics-engine.md §9;
+ * WAVE CR — "UI i18n is NOT validated clinical-item translation"). Serves
+ * item stems to the assessment UI; a translation is only ever presented as
+ * real localization once its provenance status is 'validated' — anything
+ * else (missing row, malformed provenance, or a 'draft' row) must fall back
+ * to the source-language stem with an honest 'unvalidated-source-language'
+ * marker, never silently as if it were localized.
+ */
+describe('PsychometricsService.getVersionItems — locale-aware item read path', () => {
+  const items = [
+    { id: 'item_1', linkId: 'q1', stem: 'Source stem one.', responseOptions: ['a', 'b'], orderIndex: 0 },
+    { id: 'item_2', linkId: 'q2', stem: 'Source stem two.', responseOptions: ['a', 'b'], orderIndex: 1 },
+  ];
+
+  function makeItemsService(translationRows: any[] = []) {
+    const prisma = {
+      questionnaireVersion: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'qv_1', published: true, items }),
+      },
+      itemTranslation: {
+        findMany: jest.fn().mockResolvedValue(translationRows),
+      },
+    };
+    const svc = new PsychometricsService(prisma as any, new ScoringService(), new IrtScoringService(), {} as any, {} as any);
+    return { svc, prisma };
+  }
+
+  it('serves the source stem with translationStatus "source" when no locale is requested', async () => {
+    const { svc, prisma } = makeItemsService();
+
+    const result = await svc.getVersionItems('qv_1');
+
+    expect(prisma.itemTranslation.findMany).not.toHaveBeenCalled();
+    expect(result.locale).toBe('en');
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0]).toMatchObject({ stem: 'Source stem one.', translationStatus: 'source', locale: 'en' });
+  });
+
+  it('serves a validated translation for the requested locale', async () => {
+    const { svc } = makeItemsService([
+      {
+        itemId: 'item_1',
+        stem: 'Tallo fuente uno.',
+        responseOptions: ['x', 'y'],
+        provenance: { method: 'forward-back-translation', status: 'validated' },
+      },
+    ]);
+
+    const result = await svc.getVersionItems('qv_1', 'es');
+
+    expect(result.locale).toBe('es');
+    expect(result.items[0]).toMatchObject({
+      stem: 'Tallo fuente uno.',
+      responseOptions: ['x', 'y'],
+      translationStatus: 'validated',
+      locale: 'es',
+    });
+    // No translation row for item_2 -> honest fallback.
+    expect(result.items[1]).toMatchObject({ stem: 'Source stem two.', translationStatus: 'unvalidated-source-language' });
+  });
+
+  it('never serves a DRAFT translation as validated — falls back to the source stem with the honest marker', async () => {
+    const { svc } = makeItemsService([
+      {
+        itemId: 'item_1',
+        stem: 'Tallo fuente uno (borrador).',
+        responseOptions: ['x', 'y'],
+        provenance: { method: 'forward-back-translation', status: 'draft' },
+      },
+    ]);
+
+    const result = await svc.getVersionItems('qv_1', 'es');
+
+    expect(result.items[0]).toMatchObject({
+      stem: 'Source stem one.', // the SOURCE stem, not the draft translation text
+      translationStatus: 'unvalidated-source-language',
+    });
+  });
+
+  it('treats a requested "en" locale the same as omitted (source, no translation lookup)', async () => {
+    const { svc, prisma } = makeItemsService();
+
+    const result = await svc.getVersionItems('qv_1', 'en');
+
+    expect(prisma.itemTranslation.findMany).not.toHaveBeenCalled();
+    expect(result.items[0].translationStatus).toBe('source');
+  });
+});

@@ -200,6 +200,11 @@ async function main() {
       // plus the safety-item hook (07-psychometrics-engine.md §4) — item 9 is the
       // suicidal-ideation item; any endorsement (answer >= 1) raises a deterministic
       // HIGH RiskFlag + Escalation on a standalone assessment, same as intake's safety screen.
+      // Band boundaries follow the widely-published 9-item-depression-screen raw-sum
+      // convention (Kroenke, Spitzer & Williams 2001, "The PHQ-9: Validity of a Brief
+      // Depression Severity Measure") — LOW/MODERATE/HIGH/SEVERE cut at 5/10/15 on a
+      // 0-27 raw metric — while every item stem below is ORIGINAL VPSY content, not a
+      // reproduction of any licensed instrument's wording.
       cutoffs: {
         bands: [
           { band: 'LOW', min: 0, max: 4 },
@@ -207,10 +212,133 @@ async function main() {
           { band: 'HIGH', min: 10, max: 14 },
           { band: 'SEVERE', min: 15, max: 27 },
         ],
+        // WAVE CR (audit-flagged "PHQ-9 5-tier collapse"): the published
+        // convention further splits the top raw-score band into "moderately
+        // severe" (15-19) and "severe" (20-27). The shared `SeverityBand`
+        // enum is deliberately left 4-valued (widening it is out of scope for
+        // this wave) — the finer tier is documented here as an informational
+        // sub-band and threaded into the persisted interpretation text by
+        // `ScoringService.score` (`cutoffs.subBands`), so the distinction
+        // reaches the clinician/patient record, not just this JSON blob.
+        subBands: [
+          { parentBand: 'SEVERE', label: 'MODERATELY_SEVERE', min: 15, max: 19 },
+          { parentBand: 'SEVERE', label: 'SEVERE', min: 20, max: 27 },
+        ],
         safetyItems: [{ itemId: 'q9', minAnswer: 1, category: 'suicidal_ideation' }],
       },
     },
   });
+
+  // ─────────────────────────────────────────────────────────────
+  // WAVE CR — "zero Item rows exist; content validity is unassessable for
+  // items that don't exist" (AERA/APA/NCME Standards Ch.1). Nine ORIGINAL
+  // item stems (first-person, ~6th-grade reading level, 0-3 frequency
+  // anchors) giving content-valid coverage of: low mood, anhedonia, sleep,
+  // energy/fatigue, appetite, self-worth/guilt, concentration, psychomotor
+  // change, and self-harm/suicidal ideation (item 9 — the configured safety
+  // item above). Deliberately DISTINCT phrasing from any licensed
+  // instrument's item text (e.g. PHQ-9/BDI) — original content scored on a
+  // public-domain-convention raw-sum metric, not a reproduction.
+  // ─────────────────────────────────────────────────────────────
+  const DEP_SCREEN_ANCHORS = [
+    { label: 'Not at all', value: 0 },
+    { label: 'Several days', value: 1 },
+    { label: 'More than half the days', value: 2 },
+    { label: 'Nearly every day', value: 3 },
+  ];
+  const depItems: Array<{ stem: string }> = [
+    { stem: 'I have felt sad or down for a big part of the day.' }, // q1 — low mood
+    { stem: 'I stopped enjoying things that usually matter to me.' }, // q2 — anhedonia
+    { stem: 'My sleep has been unsettled — too little, too much, or just not restful.' }, // q3 — sleep
+    { stem: 'I have felt drained of energy, even after resting.' }, // q4 — energy/fatigue
+    { stem: 'My appetite has changed noticeably, eating a lot more or a lot less than usual.' }, // q5 — appetite
+    { stem: 'I have been harder on myself than usual, feeling like a failure or a burden to others.' }, // q6 — self-worth/guilt
+    { stem: 'My mind has felt foggy, making it hard to focus on tasks or conversations.' }, // q7 — concentration
+    {
+      stem:
+        "I have noticed myself moving or speaking noticeably slower, or so restless I can't sit still — more than what's typical for me.",
+    }, // q8 — psychomotor change
+    { stem: "I have had thoughts that life isn't worth living or thoughts of harming myself." }, // q9 — self-harm/suicidal ideation (safety item)
+  ];
+  for (let i = 0; i < depItems.length; i++) {
+    const def = depItems[i]!;
+    await prisma.item.upsert({
+      where: { id: `item_dep_screen_${i + 1}` },
+      update: {},
+      create: {
+        id: `item_dep_screen_${i + 1}`,
+        questionnaireVersionId: qv.id,
+        linkId: `q${i + 1}`,
+        stem: def.stem,
+        responseOptions: DEP_SCREEN_ANCHORS,
+        orderIndex: i,
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // WAVE CR — ItemTranslation infrastructure (docs/technical/
+  // 07-psychometrics-engine.md §9): "UI i18n is NOT validated clinical-item
+  // translation". One demo Spanish (es) translation, provenance status
+  // 'draft' — i.e. NOT yet validated. `PsychometricsService.getVersionItems`
+  // must serve the SOURCE-language stem + an honest
+  // `unvalidated-source-language` marker for these until a real
+  // translation-validation study promotes provenance.status to 'validated'.
+  // ─────────────────────────────────────────────────────────────
+  const depItemIds = depItems.map((_, i) => `item_dep_screen_${i + 1}`);
+  const esTranslations: Array<{ itemId: string; stem: string; responseOptions: typeof DEP_SCREEN_ANCHORS }> = [
+    {
+      itemId: depItemIds[0]!,
+      stem: 'Me he sentido triste o decaído/a durante gran parte del día.',
+      responseOptions: [
+        { label: 'Para nada', value: 0 },
+        { label: 'Varios días', value: 1 },
+        { label: 'Más de la mitad de los días', value: 2 },
+        { label: 'Casi todos los días', value: 3 },
+      ],
+    },
+    {
+      itemId: depItemIds[1]!,
+      stem: 'Dejé de disfrutar cosas que normalmente me importan.',
+      responseOptions: [
+        { label: 'Para nada', value: 0 },
+        { label: 'Varios días', value: 1 },
+        { label: 'Más de la mitad de los días', value: 2 },
+        { label: 'Casi todos los días', value: 3 },
+      ],
+    },
+    {
+      itemId: depItemIds[2]!,
+      stem: 'Mi sueño ha sido irregular: demasiado poco, demasiado, o simplemente poco reparador.',
+      responseOptions: [
+        { label: 'Para nada', value: 0 },
+        { label: 'Varios días', value: 1 },
+        { label: 'Más de la mitad de los días', value: 2 },
+        { label: 'Casi todos los días', value: 3 },
+      ],
+    },
+  ];
+  for (let i = 0; i < esTranslations.length; i++) {
+    const t = esTranslations[i]!;
+    await prisma.itemTranslation.upsert({
+      where: { itemId_locale: { itemId: t.itemId, locale: 'es' } },
+      update: {},
+      create: {
+        id: `itemtranslation_dep_screen_${i + 1}_es`,
+        itemId: t.itemId,
+        locale: 'es',
+        stem: t.stem,
+        responseOptions: t.responseOptions,
+        provenance: {
+          method: 'forward-back-translation',
+          translator: 'demo-translator-1',
+          backTranslator: 'demo-back-translator-1',
+          cognitiveInterviewN: 0,
+          status: 'draft', // NOT validated — must be served as source + honest marker.
+        },
+      },
+    });
+  }
 
   // ─────────────────────────────────────────────────────────────
   // IRT-calibrated demo instrument (07-psychometrics-engine.md §3/§5) — a
@@ -241,12 +369,18 @@ async function main() {
       questionnaireId: qIrt.id,
       version: '1.0.0',
       published: true,
+      // WAVE CR (audit-flagged "GAD-7-pattern band drift"): the classical
+      // raw-sum bands on the 0-21 metric now follow the source convention
+      // exactly (Spitzer, Kroenke, Williams & Löwe 2006, "A Brief Measure for
+      // Assessing Generalized Anxiety Disorder: The GAD-7") —
+      // LOW 0-4 / MODERATE 5-9 / HIGH 10-14 / SEVERE 15-21 — replacing the
+      // previous off-by-one bands (0-5/6-10/11-15/16-21).
       cutoffs: {
         bands: [
-          { band: 'LOW', min: 0, max: 5 },
-          { band: 'MODERATE', min: 6, max: 10 },
-          { band: 'HIGH', min: 11, max: 15 },
-          { band: 'SEVERE', min: 16, max: 21 },
+          { band: 'LOW', min: 0, max: 4 },
+          { band: 'MODERATE', min: 5, max: 9 },
+          { band: 'HIGH', min: 10, max: 14 },
+          { band: 'SEVERE', min: 15, max: 21 },
         ],
       },
     },
@@ -555,7 +689,10 @@ async function main() {
       tenantId: tenant.id,
       versionId: qv.id,
       clientId: client.id,
-      answers: { q1: 2, q2: 2, q3: 1, q4: 1, q5: 1 },
+      // WAVE CR — answers all 9 real items now that Item rows exist (q6-q9
+      // unendorsed, no safety-item hit); raw sum is unchanged at 7 so the
+      // demo PsychometricScore below (MODERATE) stays consistent.
+      answers: { q1: 2, q2: 2, q3: 1, q4: 1, q5: 1, q6: 0, q7: 0, q8: 0, q9: 0 },
       administrationMode: 'STATIC',
       responseTimeMs: 46000,
       completedAt: daysAgo(10),
@@ -982,7 +1119,7 @@ async function main() {
   console.log('✅ Seed complete. Demo login password for all accounts: Vpsy!2026');
   console.log('   Manager:', manager.email, '| Psychologists: dr.rivera@, dr.okafor@ | Client: alex.client@');
   console.log('   Demo dashboard client id (alex.client, assigned to dr.rivera):', client.id);
-  console.log('   Psychometrics: classical VPSY-DEP-SCREEN-9 (version', qv.id, ') + IRT VPSY-ANX-IRT-7 (version', qvIrt.id, ', 7 GRM-calibrated items).');
+  console.log('   Psychometrics: classical VPSY-DEP-SCREEN-9 (version', qv.id, ', 9 original items + 3 draft es ItemTranslations) + IRT VPSY-ANX-IRT-7 (version', qvIrt.id, ', 7 GRM-calibrated items).');
   console.log('   CRM: 5 pipeline stages, 3 referrers, 3 demo leads.');
   console.log('   Communications Hub: 1 provisioned phone number, 1 demo call + 1 SMS + 1 voice media message.');
   console.log('   Scheduling: 3 open AvailabilitySlots on dr.rivera (next 3 days).');

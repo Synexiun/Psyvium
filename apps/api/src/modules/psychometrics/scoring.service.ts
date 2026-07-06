@@ -58,10 +58,21 @@ export class ScoringService {
       };
     }
 
+    // Optional sub-band (WAVE CR — "PHQ-9 5-tier collapse"): when the
+    // published instrument convention distinguishes a finer tier within this
+    // SeverityBand (e.g. "moderately severe" vs "severe" inside SEVERE), the
+    // matching label is threaded into the *persisted* interpretation — never
+    // left as metadata-only JSON nobody reads.
+    const subBand = cutoffs.subBands?.find(
+      (sb) => sb.parentBand === band.band && rawScore >= sb.min && rawScore <= sb.max,
+    );
+
     return {
       rawScore,
       severityBand: band.band,
-      interpretation: `Raw score ${rawScore} falls in the ${band.band} band (${band.min}-${band.max}).`,
+      interpretation:
+        `Raw score ${rawScore} falls in the ${band.band} band (${band.min}-${band.max})` +
+        (subBand ? `, sub-band ${subBand.label} (${subBand.min}-${subBand.max}).` : '.'),
     };
   }
 

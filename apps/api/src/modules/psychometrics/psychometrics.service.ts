@@ -1,13 +1,16 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   computeEscalationSlaDueAt,
+  itemTranslationProvenanceSchema,
   questionnaireCutoffsSchema,
   RiskSource,
   RiskStatus,
   SeverityBand,
   type AdministerResponseInput,
+  type AssessmentItemDto,
   type AuthPrincipal,
   type QuestionnaireResponseDto,
+  type VersionItemsResponseDto,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
@@ -250,6 +253,91 @@ export class PsychometricsService {
     if (scorable.length === 0) return null;
 
     return this.irt.scoreEap(scorable, answers);
+  }
+
+  /**
+   * Serves the item stems + response options for a published QuestionnaireVersion
+   * to the web assessment UI (docs/technical/07-psychometrics-engine.md §9;
+   * WAVE CR — "UI i18n ≠ validated clinical-item translation").
+   *
+   * Locale resolution is honest by construction: a validated `ItemTranslation`
+   * row is served ONLY when its `provenance.status === 'validated'`. Anything
+   * short of that — no row for the locale, a malformed provenance blob, or a
+   * `'draft'` row awaiting its translation-validation study — falls back to
+   * the source-language stem WITH an explicit `unvalidated-source-language`
+   * marker, so a caller can never mistake an un-validated fallback for a real
+   * localization. No tenant scoping here: Item/ItemTranslation are
+   * instrument-catalog data (not PHI), same documented exclusion as
+   * Item/QuestionnaireVersion/ItemParameter from the RLS backstop.
+   */
+  async getVersionItems(versionId: string, locale?: string): Promise<VersionItemsResponseDto> {
+    const version = await this.prisma.questionnaireVersion.findUnique({
+      where: { id: versionId },
+      include: { items: { where: { active: true }, orderBy: { orderIndex: 'asc' } } },
+    });
+    if (!version || !version.published) {
+      throw new NotFoundException('Published questionnaire version not found');
+    }
+
+    const requestedLocale = locale?.trim().toLowerCase();
+    const isSourceLocale = !requestedLocale || requestedLocale === 'en';
+
+    const translationsByItemId = new Map<string, { stem: string; responseOptions: unknown; provenance: unknown }>();
+    if (!isSourceLocale && version.items.length > 0) {
+      const rows = await this.prisma.itemTranslation.findMany({
+        where: { itemId: { in: version.items.map((i) => i.id) }, locale: requestedLocale },
+      });
+      for (const row of rows) {
+        translationsByItemId.set(row.itemId, {
+          stem: row.stem,
+          responseOptions: row.responseOptions,
+          provenance: row.provenance,
+        });
+      }
+    }
+
+    const items: AssessmentItemDto[] = version.items.map((item) => {
+      if (isSourceLocale) {
+        return {
+          id: item.id,
+          linkId: item.linkId ?? null,
+          stem: item.stem,
+          responseOptions: item.responseOptions,
+          orderIndex: item.orderIndex,
+          locale: 'en',
+          translationStatus: 'source',
+        };
+      }
+
+      const translation = translationsByItemId.get(item.id);
+      const provenance = itemTranslationProvenanceSchema.safeParse(translation?.provenance);
+      if (translation && provenance.success && provenance.data.status === 'validated') {
+        return {
+          id: item.id,
+          linkId: item.linkId ?? null,
+          stem: translation.stem,
+          responseOptions: translation.responseOptions,
+          orderIndex: item.orderIndex,
+          locale: requestedLocale!,
+          translationStatus: 'validated',
+        };
+      }
+
+      // No validated translation exists for this locale (missing row, or a
+      // 'draft' one still awaiting its validation study) — honest fallback,
+      // never silently served as if it were localized.
+      return {
+        id: item.id,
+        linkId: item.linkId ?? null,
+        stem: item.stem,
+        responseOptions: item.responseOptions,
+        orderIndex: item.orderIndex,
+        locale: requestedLocale!,
+        translationStatus: 'unvalidated-source-language',
+      };
+    });
+
+    return { versionId: version.id, locale: requestedLocale ?? 'en', items };
   }
 
   async getResponse(principal: AuthPrincipal, id: string): Promise<QuestionnaireResponseDto> {

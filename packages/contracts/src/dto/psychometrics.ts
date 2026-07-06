@@ -16,8 +16,28 @@ export const severityCutoffSchema = z.object({
 });
 export type SeverityCutoff = z.infer<typeof severityCutoffSchema>;
 
+/**
+ * Optional finer-grained tier *within* one of the four `SeverityBand` values
+ * (WAVE CR — "PHQ-9 5-tier collapse"). The shared `SeverityBand` enum stays
+ * 4-valued (LOW/MODERATE/HIGH/SEVERE, out of scope to widen); instruments whose
+ * source convention distinguishes a tier inside SEVERE (e.g. the published
+ * 9-item-depression-screen convention's "moderately severe" 15-19 vs "severe"
+ * 20-27, Kroenke et al. 2001) document it here as informational sub-bands.
+ * `ScoringService` surfaces the matching sub-band `label` in the persisted
+ * interpretation text so the distinction reaches the clinician, not just the
+ * JSON — never a silent metadata-only annotation.
+ */
+export const subBandSchema = z.object({
+  parentBand: z.nativeEnum(SeverityBand),
+  label: z.string(),
+  min: z.number(),
+  max: z.number(),
+});
+export type SubBand = z.infer<typeof subBandSchema>;
+
 export const questionnaireCutoffsSchema = z.object({
   bands: z.array(severityCutoffSchema).min(1),
+  subBands: z.array(subBandSchema).optional(),
 });
 export type QuestionnaireCutoffs = z.infer<typeof questionnaireCutoffsSchema>;
 
@@ -108,3 +128,50 @@ export const questionnaireResponseSchema = z.object({
   score: psychometricScoreSchema.nullable(),
 });
 export type QuestionnaireResponseDto = z.infer<typeof questionnaireResponseSchema>;
+
+/**
+ * Item-translation provenance (docs/technical/07-psychometrics-engine.md §9;
+ * WAVE CR). A translation only reaches `status: "validated"` after a real
+ * translation-validation study (forward-back-translation + cognitive
+ * interviewing, COSMIN / Standards Ch.3) — never on creation.
+ */
+export const itemTranslationProvenanceSchema = z.object({
+  method: z.string(),
+  translator: z.string().optional(),
+  backTranslator: z.string().optional(),
+  cognitiveInterviewN: z.number().int().nonnegative().optional(),
+  status: z.enum(['draft', 'validated']),
+});
+export type ItemTranslationProvenance = z.infer<typeof itemTranslationProvenanceSchema>;
+
+/**
+ * `translationStatus` on the read path served to the assessment UI
+ * (`GET /assessments/versions/:id/items`):
+ *  - `"source"` — no locale requested (or the source/English locale itself).
+ *  - `"validated"` — a translation row exists for the requested locale AND
+ *    its provenance status is `"validated"`.
+ *  - `"unvalidated-source-language"` — the requested locale has no
+ *    translation row, or only a `"draft"` one; the source-language stem is
+ *    served instead, honestly marked as not yet a validated translation
+ *    (never silently presented as localized).
+ */
+export const translationStatusSchema = z.enum(['source', 'validated', 'unvalidated-source-language']);
+export type TranslationStatus = z.infer<typeof translationStatusSchema>;
+
+export const assessmentItemSchema = z.object({
+  id: z.string(),
+  linkId: z.string().nullable(),
+  stem: z.string(),
+  responseOptions: z.unknown(),
+  orderIndex: z.number(),
+  locale: z.string(),
+  translationStatus: translationStatusSchema,
+});
+export type AssessmentItemDto = z.infer<typeof assessmentItemSchema>;
+
+export const versionItemsResponseSchema = z.object({
+  versionId: z.string(),
+  locale: z.string(),
+  items: z.array(assessmentItemSchema),
+});
+export type VersionItemsResponseDto = z.infer<typeof versionItemsResponseSchema>;

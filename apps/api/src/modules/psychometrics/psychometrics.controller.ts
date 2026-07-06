@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   administerResponseSchema,
@@ -46,5 +46,20 @@ export class PsychometricsController {
   @RequirePermissions(Permission.ASSESSMENT_INTERPRET)
   getResponse(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
     return this.psychometrics.getResponse(user, id);
+  }
+
+  /**
+   * Serves item stems/response options for the web assessment UI
+   * (docs/technical/07-psychometrics-engine.md §9). Same permission as
+   * self-administer: a CLIENT reading the questions they're about to answer
+   * needs no clinician-credential gate. `?locale=` requests a translation;
+   * omitted (or `en`) serves the source-language item. See
+   * `PsychometricsService.getVersionItems` for the honest-fallback contract —
+   * an unvalidated/missing translation is never silently served as localized.
+   */
+  @Get('versions/:id/items')
+  @RequirePermissions(Permission.ASSESSMENT_ADMINISTER)
+  getVersionItems(@Param('id') id: string, @Query('locale') locale?: string) {
+    return this.psychometrics.getVersionItems(id, locale);
   }
 }

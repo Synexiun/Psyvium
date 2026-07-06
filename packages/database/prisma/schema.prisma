@@ -996,10 +996,38 @@ model Item {
   active                 Boolean               @default(true)
   orderIndex             Int                   @default(0)
 
-  parameters ItemParameter[]
+  parameters   ItemParameter[]
+  translations ItemTranslation[]
 
   @@index([itemBankId])
   @@index([questionnaireVersionId])
+}
+
+/// Item-level translation with back-translation provenance (docs/technical/
+/// 07-psychometrics-engine.md §9; WAVE CR — "UI i18n ≠ validated clinical-item
+/// translation"). Purely additive, keyed off `Item`. A translation is never
+/// served to a client as equivalent to the validated source item until its
+/// `provenance.status` is `"validated"` — see PsychometricsService.getVersionItems,
+/// which serves the source-language stem + an honest `unvalidated-source-language`
+/// marker for any `"draft"` row (or any locale with no row at all) instead of
+/// silently presenting an unvalidated translation as clinically equivalent.
+model ItemTranslation {
+  id     String @id @default(cuid())
+  itemId String
+  item   Item   @relation(fields: [itemId], references: [id])
+  /// BCP-47-style locale tag, e.g. "es", "es-MX".
+  locale          String
+  stem            String
+  responseOptions Json     @default("[]")
+  /// `{ method: "forward-back-translation", translator, backTranslator,
+  ///   cognitiveInterviewN?, status: "draft" | "validated" }` (COSMIN /
+  /// AERA-APA-NCME Standards Ch.3 — translation is its own validation study,
+  /// not a copy-edit).
+  provenance Json     @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@unique([itemId, locale])
+  @@index([itemId])
 }
 
 /// Per-item IRT parameters, per calibration (07-psychometrics-engine.md §3/§5).
