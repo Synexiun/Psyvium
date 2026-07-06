@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@vpsy/database';
 import type { AuthPrincipal, ComputePayoutInput, PayoutDto } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -8,14 +8,64 @@ import { AccountingService } from './accounting.service';
 
 /**
  * Revenue Share / Payouts (`docs/technical/13-roadmap-and-phases.md`, context
- * 26, Phase 6 — "Clinician/clinic payouts, atomic + reconciled"). Attribution
- * is simplified per the Phase 6 contract: all PAID invoices for clients under
- * an APPROVED/ACTIVE Assignment to the psychologist, captured within the
- * period, share-multiplied by the psychologist's active Contract's
- * RevenueShareRule.pct (falling back to a sensible default when none exists).
+ * 26, Phase 6 — "Clinician/clinic payouts, atomic + reconciled"; and
+ * `docs/business/05-monetization-and-contracts.md` §2 "Composite contracts" /
+ * §8 "Contract-Engine Design Requirements"). Attribution is simplified per
+ * the Phase 6 contract: all PAID invoices for clients under an
+ * APPROVED/ACTIVE Assignment to the psychologist, captured within the
+ * period, form the revenue base.
+ *
+ * That revenue base is then **composed** across every stacked share on the
+ * psychologist's active Contract's RevenueShareRule — base `pct`,
+ * `seniorOverridePct`, `supervisorSharePct`, `clinicSharePct` and
+ * `referralSharePct` — honoring per-country overrides in `countryRules`
+ * (keyed by the tenant's ISO country code). This is a deliberate move away
+ * from a flat single-percentage read: the engine must express the composite,
+ * not just the base share, or the "12+ models, composable" claim in the
+ * business docs is a facade.
+ *
+ * Bookkeeping model for a single `computePayout` call:
+ *  - The **clinician's own Payout** (`computedAmount`, the DTO field) is the
+ *    clinician's base share *plus* their senior-override share — both are
+ *    entitlements of the psychologist this Contract belongs to.
+ *  - The **supervisor's share** and **referral share** are amounts owed to a
+ *    *different* party (the contract's `supervisorId`, or an external
+ *    referral source); they are posted to the ledger as their own balanced
+ *    Clinician-Payable entries (tagged to this Payout for traceability) but
+ *    are *not* added into this psychologist's own `computedAmount` — no new
+ *    Payout row is created for them since we don't have a reliable
+ *    counterpart identity/Payout-per-payee model in scope here.
+ *  - The **clinic's share** is revenue the clinic simply retains — it was
+ *    already recognized as revenue when the invoice was paid, so no further
+ *    ledger movement is needed; it is recorded in `rulesApplied` only, for
+ *    transparency.
+ *  - Every dollar of the stack — clinician, senior override, supervisor,
+ *    clinic, referral — is broken out and preserved verbatim in the
+ *    `rulesApplied` Json column so the clinician's itemized statement
+ *    (design requirement in `05-monetization-and-contracts.md` §8) can be
+ *    rendered from that single record without a contract/schema change.
  */
 
 const DEFAULT_REVENUE_SHARE_PCT = 50;
+
+/** The five stackable share percentages a RevenueShareRule composes. */
+type ShareBreakdown = {
+  pct: number;
+  seniorOverridePct: number;
+  supervisorSharePct: number;
+  clinicSharePct: number;
+  referralSharePct: number;
+};
+
+type RevenueShareRuleLike = {
+  basis?: string;
+  pct: number;
+  seniorOverridePct?: number | null;
+  supervisorSharePct?: number | null;
+  clinicSharePct?: number | null;
+  referralSharePct?: number | null;
+  countryRules?: Prisma.JsonValue | null;
+};
 
 type PsychologistRow = { id: string; user: { fullName: string } };
 type PayoutRow = {
@@ -62,11 +112,38 @@ export class PayoutsService {
       orderBy: { effectiveFrom: 'desc' },
     });
     const rule = contract?.revenueShareRules[0];
-    const pct = rule?.pct ?? DEFAULT_REVENUE_SHARE_PCT;
-    // MONEY RULE: the rate (`pct`) is a Float by schema design (a percentage,
-    // not a monetary amount) — it is lifted into Decimal *before* touching
-    // the money value so the multiplication itself never uses JS floats.
-    const computedAmount = paidTotal.times(new Prisma.Decimal(pct)).dividedBy(100);
+
+    const countryCode = await this.resolveTenantCountryCode(principal.tenantId, rule);
+    const breakdown = this.resolveShareBreakdown(rule, countryCode);
+
+    // MONEY RULE: every rate above is a Float by schema design (a percentage,
+    // not a monetary amount) — each is lifted into Decimal *before* touching
+    // the money value so every multiplication happens in Decimal space, never
+    // JS floats.
+    const clinicianOwnShare = this.applyPct(paidTotal, breakdown.pct);
+    const seniorOverrideShare = this.applyPct(paidTotal, breakdown.seniorOverridePct);
+    const supervisorShare = this.applyPct(paidTotal, breakdown.supervisorSharePct);
+    const clinicShare = this.applyPct(paidTotal, breakdown.clinicSharePct);
+    const referralShare = this.applyPct(paidTotal, breakdown.referralSharePct);
+
+    // The clinician's own Payout is their base share plus any senior-override
+    // share — both are entitlements of *this* contract's psychologist.
+    const computedAmount = clinicianOwnShare.plus(seniorOverrideShare);
+
+    const rulesApplied = {
+      basis: rule?.basis ?? 'REVENUE',
+      contractId: contract?.id ?? null,
+      countryCode,
+      paidTotal: paidTotal.toFixed(4),
+      breakdown,
+      shares: {
+        clinician: clinicianOwnShare.toFixed(4),
+        seniorOverride: seniorOverrideShare.toFixed(4),
+        supervisor: supervisorShare.toFixed(4),
+        clinic: clinicShare.toFixed(4),
+        referral: referralShare.toFixed(4),
+      },
+    };
 
     const payout = await this.prisma.$transaction(async (tx) => {
       const created = await tx.payout.create({
@@ -77,7 +154,7 @@ export class PayoutsService {
           periodEnd,
           computedAmount,
           currency: 'USD',
-          rulesApplied: { pct, basis: rule?.basis ?? 'REVENUE', contractId: contract?.id ?? null },
+          rulesApplied,
           status: 'COMPUTED',
         },
       });
@@ -87,10 +164,33 @@ export class PayoutsService {
           debitAccountCode: '5000', // Clinician Costs
           creditAccountCode: '2000', // Clinician Payable
           amount: computedAmount,
-          memo: `Payout ${created.id} — ${psychologist.id}`,
+          memo: `Payout ${created.id} — clinician share (base ${breakdown.pct}% + senior override ${breakdown.seniorOverridePct}%) — ${psychologist.id}`,
           payoutId: created.id,
         });
       }
+      if (supervisorShare.greaterThan(0)) {
+        await this.accounting.postBalancedEntry(tx, {
+          tenantId: principal.tenantId,
+          debitAccountCode: '5000', // Clinician Costs
+          creditAccountCode: '2000', // Clinician Payable (owed to the supervisor, not the supervisee)
+          amount: supervisorShare,
+          memo: `Payout ${created.id} — supervisor share (${breakdown.supervisorSharePct}%) — supervisor ${contract?.supervisorId ?? 'unassigned'}`,
+          payoutId: created.id,
+        });
+      }
+      if (referralShare.greaterThan(0)) {
+        await this.accounting.postBalancedEntry(tx, {
+          tenantId: principal.tenantId,
+          debitAccountCode: '5000', // Clinician Costs
+          creditAccountCode: '2000', // Clinician Payable (owed to the referral source)
+          amount: referralShare,
+          memo: `Payout ${created.id} — referral share (${breakdown.referralSharePct}%)`,
+          payoutId: created.id,
+        });
+      }
+      // clinicShare is retained margin: it was already recognized as revenue
+      // when the invoice was paid, so it needs no further ledger movement —
+      // it is preserved in `rulesApplied` above for itemized transparency.
       return created;
     });
 
@@ -105,7 +205,7 @@ export class PayoutsService {
         periodStart: periodStart.toISOString(),
         periodEnd: periodEnd.toISOString(),
         computedAmount: computedAmount.toFixed(4),
-        pct,
+        rulesApplied,
       },
     });
     await this.bus.publish(Events.PayoutComputed, principal.tenantId, {
@@ -124,6 +224,102 @@ export class PayoutsService {
       orderBy: { createdAt: 'desc' },
     });
     return payouts.map((p) => this.toPayoutDto(p as unknown as PayoutRow));
+  }
+
+  /**
+   * Lifts a percentage rate into Decimal space before it ever touches a
+   * money value, so the multiplication itself never runs through JS floats.
+   */
+  private applyPct(amount: Prisma.Decimal, pct: number): Prisma.Decimal {
+    return amount.times(new Prisma.Decimal(pct)).dividedBy(100);
+  }
+
+  /**
+   * Composes the full stacked breakdown from a RevenueShareRule (or the
+   * flat default when no rule/contract exists), applying a country override
+   * from `countryRules` where the tenant's country matches. Fails safe:
+   * throws a clear `BadRequestException` rather than posting a mis-computed
+   * payout when the rule is malformed or the stack exceeds 100%.
+   */
+  private resolveShareBreakdown(
+    rule: RevenueShareRuleLike | undefined,
+    countryCode: string | null,
+  ): ShareBreakdown {
+    const base: ShareBreakdown = {
+      pct: rule?.pct ?? DEFAULT_REVENUE_SHARE_PCT,
+      seniorOverridePct: rule?.seniorOverridePct ?? 0,
+      supervisorSharePct: rule?.supervisorSharePct ?? 0,
+      clinicSharePct: rule?.clinicSharePct ?? 0,
+      referralSharePct: rule?.referralSharePct ?? 0,
+    };
+
+    const override = this.extractCountryOverride(rule?.countryRules, countryCode);
+    const merged: ShareBreakdown = {
+      pct: override?.pct ?? base.pct,
+      seniorOverridePct: override?.seniorOverridePct ?? base.seniorOverridePct,
+      supervisorSharePct: override?.supervisorSharePct ?? base.supervisorSharePct,
+      clinicSharePct: override?.clinicSharePct ?? base.clinicSharePct,
+      referralSharePct: override?.referralSharePct ?? base.referralSharePct,
+    };
+
+    for (const [key, value] of Object.entries(merged) as [keyof ShareBreakdown, unknown][]) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        throw new BadRequestException(
+          `Malformed RevenueShareRule: "${key}" must be a non-negative number (got ${JSON.stringify(value)})`,
+        );
+      }
+    }
+
+    const total =
+      merged.pct + merged.seniorOverridePct + merged.supervisorSharePct + merged.clinicSharePct + merged.referralSharePct;
+    if (total > 100) {
+      throw new BadRequestException(
+        `Malformed RevenueShareRule: stacked shares total ${total}% exceeds 100% ` +
+          `(clinician ${merged.pct}% + senior override ${merged.seniorOverridePct}% + ` +
+          `supervisor ${merged.supervisorSharePct}% + clinic ${merged.clinicSharePct}% + ` +
+          `referral ${merged.referralSharePct}%)`,
+      );
+    }
+
+    return merged;
+  }
+
+  /** Reads a per-country override from `RevenueShareRule.countryRules`, if present and well-formed. */
+  private extractCountryOverride(
+    countryRules: Prisma.JsonValue | null | undefined,
+    countryCode: string | null,
+  ): Partial<ShareBreakdown> | null {
+    if (!countryCode || countryRules == null) return null;
+    if (typeof countryRules !== 'object' || Array.isArray(countryRules)) return null;
+    const entry = (countryRules as Record<string, unknown>)[countryCode];
+    if (entry == null) return null;
+    if (typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new BadRequestException(
+        `Malformed RevenueShareRule.countryRules["${countryCode}"]: expected an object of share overrides`,
+      );
+    }
+    return entry as Partial<ShareBreakdown>;
+  }
+
+  /**
+   * Only resolves the tenant's country when the rule actually carries a
+   * `countryRules` override — avoids an unnecessary lookup for the (common)
+   * flat/no-country-rule case.
+   */
+  private async resolveTenantCountryCode(
+    tenantId: string,
+    rule: RevenueShareRuleLike | undefined,
+  ): Promise<string | null> {
+    const countryRules = rule?.countryRules;
+    const hasCountryRules =
+      countryRules != null &&
+      typeof countryRules === 'object' &&
+      !Array.isArray(countryRules) &&
+      Object.keys(countryRules as object).length > 0;
+    if (!hasCountryRules) return null;
+
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { countryCode: true } });
+    return tenant?.countryCode ?? null;
   }
 
   /**
