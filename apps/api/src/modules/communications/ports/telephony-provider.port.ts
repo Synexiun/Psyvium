@@ -12,7 +12,17 @@
  */
 export interface PlaceCallResult {
   providerRef: string;
-  status: 'COMPLETED' | 'NO_ANSWER' | 'FAILED';
+  /**
+   * `INITIATED` (Wave E) is a distinct outcome from the offline stub's
+   * synchronous set: a real async adapter (`adapters/twilio-voice.adapter.ts`)
+   * only ORIGINATES the call here — it has no answer/disposition yet, so it
+   * cannot honestly report `COMPLETED`/`NO_ANSWER`/`FAILED`. The terminal
+   * status and `durationSec` arrive later out-of-band via the adapter's
+   * status-callback webhook, which drives the rest of the `CallSession`
+   * lifecycle. The offline stub never returns `INITIATED` — it always
+   * "completes" synchronously (see its own doc comment).
+   */
+  status: 'INITIATED' | 'COMPLETED' | 'NO_ANSWER' | 'FAILED';
   durationSec: number;
 }
 

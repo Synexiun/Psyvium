@@ -1,0 +1,100 @@
+# VPSY OS — Render blueprint (docs/technical/10-observability-and-devops.md §6).
+# Deploys the full stack: API (Docker), Web (Docker), managed Postgres, managed Redis.
+#
+# Activate-on-key envs (all optional — each rail degrades honestly when unset):
+#   ANTHROPIC_API_KEY (AI) · TWILIO_ACCOUNT_SID/AUTH_TOKEN (SMS/voice) ·
+#   STRIPE_SECRET_KEY/WEBHOOK_SECRET (payments) · LIVEKIT_API_KEY/SECRET/URL (video) ·
+#   OTEL_EXPORTER_OTLP_ENDPOINT (observability) · VPSY_FIELD_KEY (PHI field encryption).
+#
+# Postgres note: the RLS tenant-isolation backstop + IncidentReview/CatSession policies
+# ship as raw-SQL migrations — run `pnpm --filter @vpsy/database exec prisma migrate deploy`
+# (NOT db push) on first deploy so the policies actually apply.
+
+services:
+  - type: web
+    name: vpsy-api
+    runtime: docker
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /api/v1/healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "4000"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vpsy-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: vpsy-redis
+          property: connectionString
+      # Fail-fast secrets — the API refuses to boot without them (min 16 chars).
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL
+        value: "900"
+      - key: WEB_ORIGIN
+        fromService:
+          type: web
+          name: vpsy-web
+          property: host
+      # Activate-on-key rails — set in the dashboard when ready; each degrades
+      # honestly (rule-based AI note, offline comms stub, manual capture) when unset.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: LIVEKIT_URL
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      - key: VPSY_FIELD_KEY
+        sync: false
+
+  - type: web
+    name: vpsy-web
+    runtime: docker
+    dockerfilePath: ./apps/web/Dockerfile
+    dockerContext: .
+    plan: starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_URL
+        fromService:
+          type: web
+          name: vpsy-api
+          property: host
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: vpsy-api
+          property: host
+
+  # Render KeyValue (Redis-compatible). Ecosystem gotcha (NEXUS memory): the
+  # internal endpoint is plain redis:// (no TLS/auth) with a 30-client cap.
+  - type: keyvalue
+    name: vpsy-redis
+    plan: starter
+    ipAllowList: []
+
+databases:
+  - name: vpsy-postgres
+    plan: basic-256mb
+    postgresMajorVersion: "16"

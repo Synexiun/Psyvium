@@ -3,6 +3,7 @@ import { Role } from '@vpsy/contracts';
 import type {
   AuthPrincipal,
   CallSessionDto,
+  CallStatus,
   ClickToCallInput,
   CommsLogEntryDto,
   CreateMediaMessageInput,
@@ -17,6 +18,7 @@ import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
 import { OfflineStubAdapter } from './adapters/offline-stub.adapter';
 import { TwilioSmsAdapter } from './adapters/twilio-sms.adapter';
+import { TwilioVoiceAdapter } from './adapters/twilio-voice.adapter';
 import type { TelephonyProvider } from './ports/telephony-provider.port';
 import type { SmsProvider } from './ports/sms-provider.port';
 
@@ -66,11 +68,35 @@ type MediaMessageRow = {
  * here calls a vendor SDK directly — both provider ports resolve to the
  * offline stub until a real SIP/cloud adapter is wired (`15` §2).
  */
+/** Twilio's own `CallStatus` values on the status-callback webhook payload,
+ * mapped onto our `CallStatus` enum (`docs/technical/15-communications-and-
+ * telephony.md` §3.4). `queued`/`initiated`/`ringing` all collapse to
+ * `RINGING` — from the client's perspective (and ours) nothing has happened
+ * yet; `busy`/`canceled` collapse to `FAILED` alongside Twilio's own
+ * `failed`, since none of them produced a completed conversation. */
+const TWILIO_CALL_STATUS_MAP: Record<string, CallStatus> = {
+  queued: 'RINGING',
+  initiated: 'RINGING',
+  ringing: 'RINGING',
+  'in-progress': 'IN_PROGRESS',
+  completed: 'COMPLETED',
+  'no-answer': 'NO_ANSWER',
+  busy: 'FAILED',
+  failed: 'FAILED',
+  canceled: 'FAILED',
+};
+
+const TERMINAL_CALL_STATUSES = new Set(['COMPLETED', 'NO_ANSWER', 'FAILED']);
+
 @Injectable()
 export class CommunicationsService {
   private readonly logger = new Logger(CommunicationsService.name);
   private readonly telephony: TelephonyProvider;
   private readonly sms: SmsProvider;
+  /** True when `telephony` is the real, async `TwilioVoiceAdapter` — i.e. click-to-call
+   * must persist an in-flight `CallSession` and await the status-callback webhook rather
+   * than synchronously fabricating a completed outcome the way the offline stub does. */
+  private readonly voiceIsAsync: boolean;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -96,15 +122,26 @@ export class CommunicationsService {
       this.sms = offlineStub;
     }
 
-    // Voice: real click-to-call is async (status via webhook) and needs a public
-    // status-callback endpoint + tenant Twilio number — a separate ticket. Until
-    // then telephony stays on the honest offline stub.
-    if (process.env.TELEPHONY_PROVIDER) {
-      this.logger.warn(
-        `TELEPHONY_PROVIDER=${process.env.TELEPHONY_PROVIDER} set but real voice needs a status-callback webhook — falling back to the offline stub (see docs/technical/15-communications-and-telephony.md §2.3).`,
-      );
+    // Voice (Wave E): real click-to-call is async — Twilio reports the
+    // outcome later via the status-callback webhook, which needs a publicly
+    // reachable URL. Active only when TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN +
+    // PUBLIC_API_URL are ALL set (see TwilioVoiceAdapter's doc comment for why
+    // voice needs the third var that SMS doesn't); otherwise stays on the
+    // honest offline stub.
+    const twilioVoice = TwilioVoiceAdapter.fromEnv();
+    if (twilioVoice) {
+      this.telephony = twilioVoice;
+      this.voiceIsAsync = true;
+      this.logger.log('Voice provider: Twilio (live, async via status-callback webhook).');
+    } else {
+      if (process.env.TELEPHONY_PROVIDER || (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)) {
+        this.logger.warn(
+          `Voice stays on the offline stub — real Twilio voice additionally needs PUBLIC_API_URL set so its status-callback webhook is reachable (see docs/technical/15-communications-and-telephony.md §2.3).`,
+        );
+      }
+      this.telephony = offlineStub;
+      this.voiceIsAsync = false;
     }
-    this.telephony = offlineStub;
   }
 
   // ── Calls ──
@@ -125,10 +162,26 @@ export class CommunicationsService {
     if (!fromNumber) throw new ConflictException('No VOICE-capable phone number provisioned for this tenant');
 
     const startedAt = new Date();
+
+    if (this.voiceIsAsync) {
+      return this.clickToCallAsync(principal, input, tenantId, fromNumber.e164, startedAt);
+    }
+
+    // Offline-stub path (unchanged, Phase 3 DoD): the stub's `placeCall`
+    // resolves synchronously with a fabricated-but-deterministic outcome, so
+    // the whole CallSession lifecycle — create, EngagementActivity, audit,
+    // CallCompleted — happens in one shot, exactly as it always has.
     const result = await this.telephony.placeCall(fromNumber.e164, input.toE164, {
       clientId: input.clientId,
       purpose: input.purpose,
     });
+    if (result.status === 'INITIATED') {
+      // Only the real async TwilioVoiceAdapter ever returns INITIATED, and
+      // this branch only runs when voiceIsAsync is false (offline stub
+      // selected) — defensive/unreachable, but narrows the type below rather
+      // than casting past a real invariant.
+      throw new Error('Unexpected INITIATED result from a synchronous telephony provider');
+    }
     const endedAt = new Date(startedAt.getTime() + result.durationSec * 1000);
 
     const call = await this.prisma.callSession.create({
@@ -177,6 +230,200 @@ export class CommunicationsService {
     });
 
     return this.toCallSessionDto(call as CallSessionRow);
+  }
+
+  /**
+   * Real-Twilio async path (Wave E). `TelephonyProvider.placeCall` only
+   * ORIGINATES the call here — Twilio reports ringing/answered/completed
+   * later via the signed status-callback webhook
+   * (`webhooks/twilio-voice-webhook.controller.ts`), which calls
+   * `applyVoiceStatusWebhook` below to drive the rest of this
+   * `CallSession`'s lifecycle, its terminal `EngagementActivity` row, and its
+   * `CallCompleted` event — mirroring the doc's statement that `CallCompleted`
+   * is the terminal event that also writes the log row (`15` §3.4).
+   *
+   * The `CallSession` row is created FIRST, in `RINGING` (its schema default)
+   * with no `providerRef` yet, so its id can be embedded as a query param on
+   * the status-callback URL the adapter registers with Twilio
+   * (`TwilioVoiceAdapter.placeCall`) — `providerRef` (the Twilio Call SID) is
+   * filled in immediately after `placeCall` returns.
+   */
+  private async clickToCallAsync(
+    principal: AuthPrincipal,
+    input: ClickToCallInput,
+    tenantId: string,
+    fromE164: string,
+    startedAt: Date,
+  ): Promise<CallSessionDto> {
+    let call = await this.prisma.callSession.create({
+      data: {
+        tenantId,
+        direction: 'OUTBOUND',
+        fromE164,
+        toE164: input.toE164,
+        clientId: input.clientId,
+        purpose: input.purpose,
+        startedAt,
+        status: 'RINGING',
+      },
+    });
+
+    const result = await this.telephony.placeCall(fromE164, input.toE164, {
+      clientId: input.clientId,
+      purpose: input.purpose,
+      tenantId,
+      callSessionId: call.id,
+    });
+
+    call = await this.prisma.callSession.update({
+      where: { id: call.id },
+      data: {
+        providerRef: result.providerRef,
+        status: result.status === 'FAILED' ? 'FAILED' : 'RINGING',
+      },
+    });
+
+    await this.audit.record({
+      tenantId,
+      actorId: principal.userId,
+      action: 'comms.call.initiated',
+      entityType: 'CallSession',
+      entityId: call.id,
+      after: { status: call.status, providerRef: call.providerRef, clientId: call.clientId },
+    });
+
+    if (result.status === 'FAILED') {
+      // The Twilio API call itself failed synchronously (bad number, auth
+      // error, etc.) — no webhook will ever arrive for an attempt that was
+      // never placed, so close out the terminal state and events right here
+      // rather than leaving the CallSession stuck RINGING forever.
+      call = await this.prisma.callSession.update({
+        where: { id: call.id },
+        data: { endedAt: new Date(), durationSec: 0 },
+      });
+
+      await this.prisma.engagementActivity.create({
+        data: {
+          tenantId,
+          subjectType: input.clientId ? 'Client' : 'PhoneNumber',
+          subjectId: input.clientId ?? input.toE164,
+          kind: 'CALL',
+          direction: 'OUTBOUND',
+          summary: `Click-to-call to ${input.toE164} — failed to originate`,
+          actorId: principal.userId,
+          occurredAt: call.endedAt ?? new Date(),
+        },
+      });
+
+      await this.bus.publish(Events.CallCompleted, tenantId, {
+        callId: call.id,
+        clientId: call.clientId,
+        durationSec: 0,
+        status: call.status,
+      });
+    }
+
+    return this.toCallSessionDto(call as CallSessionRow);
+  }
+
+  /**
+   * Twilio call-status webhook handler (called from
+   * `webhooks/twilio-voice-webhook.controller.ts` only AFTER its signature
+   * check passes — this method trusts its caller completely and does not
+   * re-verify anything). `callSessionId` and `callSid` both come from
+   * sources the signature check has already vouched for: `callSessionId` was
+   * a query param on the Twilio-signed callback URL, and `callSid` is a field
+   * inside Twilio's signed POST body.
+   *
+   * Looks the `CallSession` up by `{ id, tenantId }` (both already
+   * authenticated via the signature) rather than by `providerRef` alone,
+   * because the very first "initiated" callback can race the synchronous
+   * `providerRef` update in `clickToCallAsync` above; once found, `callSid`
+   * is cross-checked against any `providerRef` already on the row as a
+   * defense against a stale/foreign `callSessionId` ever updating the wrong
+   * call. Only a *new* transition into a terminal status writes the
+   * `EngagementActivity` row and publishes `CallCompleted` — duplicate
+   * webhook deliveries (Twilio retries on non-2xx) are idempotent no-ops.
+   */
+  async applyVoiceStatusWebhook(
+    tenantId: string,
+    callSessionId: string,
+    callSid: string,
+    twilioCallStatus: string,
+    durationSec?: number,
+  ): Promise<void> {
+    const mappedStatus = TWILIO_CALL_STATUS_MAP[twilioCallStatus];
+    if (!mappedStatus) {
+      this.logger.warn(
+        `Twilio voice-status webhook: unrecognized CallStatus "${twilioCallStatus}" for call ${callSessionId} — ignoring.`,
+      );
+      return;
+    }
+
+    const existing = await this.prisma.callSession.findFirst({ where: { id: callSessionId, tenantId } });
+    if (!existing) {
+      this.logger.warn(
+        `Twilio voice-status webhook: no CallSession ${callSessionId} for tenant ${tenantId} — ignoring (stale/foreign reference).`,
+      );
+      return;
+    }
+    if (existing.providerRef && existing.providerRef !== callSid) {
+      this.logger.error(
+        `Twilio voice-status webhook: CallSid mismatch for CallSession ${callSessionId} (expected ${existing.providerRef}, got ${callSid}) — refusing to update.`,
+      );
+      return;
+    }
+    if (TERMINAL_CALL_STATUSES.has(existing.status)) {
+      this.logger.debug(
+        `Twilio voice-status webhook: CallSession ${callSessionId} already terminal (${existing.status}) — ignoring duplicate delivery.`,
+      );
+      return;
+    }
+    if (existing.status === mappedStatus) {
+      // No-op transition — e.g. Twilio's "initiated" event confirming the
+      // RINGING state we already set synchronously at click-to-call time.
+      return;
+    }
+
+    const isTerminal = TERMINAL_CALL_STATUSES.has(mappedStatus);
+    const call = await this.prisma.callSession.update({
+      where: { id: callSessionId },
+      data: {
+        status: mappedStatus,
+        providerRef: callSid,
+        durationSec: durationSec ?? existing.durationSec,
+        endedAt: isTerminal ? new Date() : null,
+      },
+    });
+
+    await this.audit.record({
+      tenantId,
+      action: `comms.call.${mappedStatus.toLowerCase()}`,
+      entityType: 'CallSession',
+      entityId: call.id,
+      after: { status: call.status, durationSec: call.durationSec, clientId: call.clientId },
+    });
+
+    if (isTerminal) {
+      await this.prisma.engagementActivity.create({
+        data: {
+          tenantId,
+          subjectType: call.clientId ? 'Client' : 'PhoneNumber',
+          subjectId: call.clientId ?? call.toE164,
+          kind: 'CALL',
+          direction: 'OUTBOUND',
+          summary: `Outbound call ${mappedStatus.toLowerCase()}${call.durationSec ? ` (${call.durationSec}s)` : ''}`,
+          occurredAt: call.endedAt ?? new Date(),
+        },
+      });
+
+      await this.bus.publish(Events.CallCompleted, tenantId, {
+        callId: call.id,
+        clientId: call.clientId,
+        durationSec: call.durationSec,
+        status: call.status,
+      });
+    }
   }
 
   // ── SMS ──
