@@ -58,8 +58,8 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
     setPrincipal(getPrincipal());
   }, [pathname]);
 
-  function signOut() {
-    logout();
+  async function signOut() {
+    await logout();
     setPrincipal(null);
     router.push('/login');
   }

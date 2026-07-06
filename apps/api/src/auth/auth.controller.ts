@@ -1,8 +1,21 @@
-import { Body, Controller, Post, UsePipes } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Post, Res, UseGuards, UsePipes } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { loginSchema, registerSchema, type LoginInput, type RegisterInput } from '@vpsy/contracts';
+import type { Response } from 'express';
+import {
+  ACCESS_TOKEN_COOKIE,
+  loginSchema,
+  mfaVerifyInputSchema,
+  registerSchema,
+  type AuthPrincipal,
+  type AuthTokens,
+  type LoginInput,
+  type MfaVerifyInput,
+  type RegisterInput,
+} from '@vpsy/contracts';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
+import { JwtAuthGuard } from '../common/auth/jwt-auth.guard';
+import { CurrentUser } from '../common/auth/current-user.decorator';
 import { AuthService } from './auth.service';
 
 @ApiTags('auth')
@@ -16,14 +29,64 @@ export class AuthController {
   @Post('register')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @UsePipes(new ZodValidationPipe(registerSchema))
-  register(@Body() body: RegisterInput) {
-    return this.auth.register(body);
+  async register(@Body() body: RegisterInput, @Res({ passthrough: true }) res: Response) {
+    const tokens = await this.auth.register(body);
+    this.setSessionCookie(res, tokens);
+    return tokens;
   }
 
+  // The body still carries accessToken/refreshToken (doc 06 §3 backward
+  // compatibility — scripts/smoke.sh and any API/script client authenticate
+  // with `Authorization: Bearer` and MUST keep working). The browser client
+  // (apps/web/src/lib/api.ts) ignores those fields and relies solely on the
+  // httpOnly cookie set below + the non-sensitive `principal` summary.
   @Post('login')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @UsePipes(new ZodValidationPipe(loginSchema))
-  login(@Body() body: LoginInput) {
-    return this.auth.login(body);
+  async login(@Body() body: LoginInput, @Res({ passthrough: true }) res: Response) {
+    const tokens = await this.auth.login(body);
+    this.setSessionCookie(res, tokens);
+    return tokens;
+  }
+
+  // Unauthenticated on purpose: sign-out must succeed even if the access
+  // token is already expired or the cookie is missing.
+  @Post('logout')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  logout(@Res({ passthrough: true }) res: Response) {
+    res.clearCookie(ACCESS_TOKEN_COOKIE, { path: '/' });
+    return { ok: true };
+  }
+
+  // ── MFA / TOTP (doc 06-security-and-rbac.md §3) ──
+
+  // Enrollment only generates + stores the secret; it does NOT enable MFA —
+  // see AuthService#mfaEnroll for why (avoids a half-scanned QR locking a
+  // user out or silently starting to be enforced).
+  @Post('mfa/enroll')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  mfaEnroll(@CurrentUser() user: AuthPrincipal) {
+    return this.auth.mfaEnroll(user.userId);
+  }
+
+  @Post('mfa/verify')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  mfaVerify(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(mfaVerifyInputSchema)) body: MfaVerifyInput,
+  ) {
+    return this.auth.mfaVerify(user.userId, body.code);
+  }
+
+  private setSessionCookie(res: Response, tokens: AuthTokens) {
+    res.cookie(ACCESS_TOKEN_COOKIE, tokens.accessToken, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+      maxAge: tokens.expiresIn * 1000,
+    });
   }
 }

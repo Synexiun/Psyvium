@@ -3,9 +3,21 @@
 /**
  * Thin browser API client. Talks to the NestJS API through the Next rewrite
  * proxy (/api/backend/* → API /api/v1/*), so the browser never needs the API
- * origin and CORS stays simple. The access token is kept in localStorage for
- * the demo; a production build moves it to an httpOnly cookie.
+ * origin and CORS stays simple.
+ *
+ * Secure token storage (doc 06-security-and-rbac.md §3): the access token
+ * itself is NEVER held in JS-reachable storage. The API sets it in an
+ * httpOnly, SameSite=Lax cookie on login/register, and every request here
+ * goes out with `credentials: 'include'` so the browser attaches it
+ * automatically — a same-origin request via the rewrite above, so no CORS
+ * dance is needed. What we DO keep client-side is a small, non-sensitive
+ * "principal hint" (userId/roles/permissions, no token) purely so the UI can
+ * route/label itself without waiting on a round trip; it carries no
+ * authority — the API re-derives the real principal from the cookie/bearer
+ * token on every request, so a tampered or stale hint can misroute the UI at
+ * worst, never grant access.
  */
+import type { AuthTokens } from '@vpsy/contracts';
 import type { CaseloadEntry, ClinicalSummary, WearableRollup } from './clinical-types';
 import type {
   CreateEngagementInput,
@@ -52,22 +64,7 @@ import type {
 } from './finance-types';
 import type { ExecutiveReportDto, ManagerReportDto, NationalAnalyticsDto } from './analytics-types';
 
-const TOKEN_KEY = 'vpsy.accessToken';
-
-export function setToken(token: string) {
-  if (typeof window !== 'undefined') localStorage.setItem(TOKEN_KEY, token);
-}
-export function getToken(): string | null {
-  return typeof window !== 'undefined' ? localStorage.getItem(TOKEN_KEY) : null;
-}
-export function clearToken() {
-  if (typeof window !== 'undefined') localStorage.removeItem(TOKEN_KEY);
-}
-
-/** Clears the stored session. Real sign-out — the server session (if any) is stateless JWT. */
-export function logout() {
-  clearToken();
-}
+const PRINCIPAL_HINT_KEY = 'vpsy.principalHint';
 
 export interface Principal {
   sub: string;
@@ -76,29 +73,86 @@ export interface Principal {
 }
 
 /**
- * Decodes the access token's payload for UI role-routing only — the signature is
- * NOT verified client-side (the server is the sole authority on every request).
- * Returns null when there is no token or it cannot be decoded as a JWT.
+ * COMPAT SHIM — not part of the hardened auth path, kept only because a
+ * handful of files outside this pass's scope still read/write a raw client
+ * token directly and cannot be edited here:
+ *   - `lib/live-events.tsx` puts it in the Socket.IO handshake `auth.token`,
+ *     because `common/realtime/realtime.gateway.ts` (also out of scope this
+ *     pass) authenticates sockets from a bearer-style token, not the httpOnly
+ *     cookie — cookies aren't in the handshake payload it reads.
+ *   - The per-page "quick sign-in" widgets (comms/crm/finance/home/intake/
+ *     manager/reports/risk/schedule/session) call `setToken`/`getToken`
+ *     directly around their own `api.login()` calls and client-side gates.
+ *
+ * `request()` below NEVER reads this — every real API call is authorized
+ * solely by the httpOnly session cookie (or an `Authorization: Bearer`
+ * header from a non-browser client). This value grants nothing there.
+ *
+ * It lives in `sessionStorage`, not `localStorage`: it does not persist past
+ * the tab/browser closing and isn't shared across tabs, which removes the
+ * "steal once, replay indefinitely across restarts" exposure of the old
+ * localStorage copy. It is still readable by an active same-page XSS like any
+ * JS-reachable store — fully closing that gap means migrating the files
+ * above off a client-held token (e.g. cookie-aware socket auth), which is
+ * outside this pass's file scope and tracked as a follow-up.
+ */
+const LEGACY_TOKEN_KEY = 'vpsy.legacyToken';
+
+export function setToken(token: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(LEGACY_TOKEN_KEY, token);
+  } catch {
+    /* storage unavailable (private mode, quota) — the cookie session still works */
+  }
+}
+
+export function getToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return sessionStorage.getItem(LEGACY_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function clearLegacyToken() {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.removeItem(LEGACY_TOKEN_KEY);
+  } catch {
+    /* noop */
+  }
+}
+
+/**
+ * Persists the non-sensitive principal summary the API returns on
+ * login/register — never the token. Pass `null` to clear it (sign-out).
+ */
+export function rememberPrincipal(principal: Principal | null) {
+  if (typeof window === 'undefined') return;
+  if (principal) localStorage.setItem(PRINCIPAL_HINT_KEY, JSON.stringify(principal));
+  else localStorage.removeItem(PRINCIPAL_HINT_KEY);
+}
+
+/**
+ * Reads the locally-remembered principal hint for UI role-routing only. This
+ * is NOT an authorization decision — it carries no token and grants nothing;
+ * the server independently re-derives the real principal from the session
+ * cookie (or bearer token) on every request. Returns null when signed out or
+ * the hint cannot be parsed.
  */
 export function getPrincipal(): Principal | null {
-  const token = getToken();
-  if (!token) return null;
-  const parts = token.split('.');
-  if (parts.length !== 3) return null;
+  if (typeof window === 'undefined') return null;
+  const raw = localStorage.getItem(PRINCIPAL_HINT_KEY);
+  if (!raw) return null;
   try {
-    const base64url = parts[1]!;
-    const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
-    const json = typeof window !== 'undefined' ? window.atob(padded) : Buffer.from(padded, 'base64').toString('utf-8');
-    const decoded = decodeURIComponent(
-      Array.prototype.map.call(json, (c: string) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''),
-    );
-    const payload = JSON.parse(decoded);
-    if (!payload || typeof payload.sub !== 'string') return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.sub !== 'string') return null;
     return {
-      sub: payload.sub,
-      roles: Array.isArray(payload.roles) ? payload.roles : [],
-      permissions: Array.isArray(payload.permissions) ? payload.permissions : [],
+      sub: parsed.sub,
+      roles: Array.isArray(parsed.roles) ? parsed.roles : [],
+      permissions: Array.isArray(parsed.permissions) ? parsed.permissions : [],
     };
   } catch {
     return null;
@@ -112,12 +166,13 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
   const res = await fetch(`/api/backend${path}`, {
     ...options,
+    // Same-origin (the Next rewrite proxies server-side), so this is enough
+    // to carry the httpOnly session cookie — no token ever touches JS.
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers ?? {}),
     },
   });
@@ -127,11 +182,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+/** Clears the local principal hint, the legacy compat token, and the server session cookie. Real sign-out. */
+export async function logout() {
+  rememberPrincipal(null);
+  clearLegacyToken();
+  try {
+    await request('/auth/logout', { method: 'POST' });
+  } catch {
+    // Best-effort — the cookie may already be gone; local state is cleared regardless.
+  }
+}
+
 export const api = {
-  login: (email: string, password: string) =>
-    request<{ accessToken: string; refreshToken: string; expiresIn: number }>('/auth/login', {
+  login: (email: string, password: string, totp?: string) =>
+    request<AuthTokens>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, ...(totp ? { totp } : {}) }),
     }),
   submitIntake: (payload: unknown) =>
     request('/intake', { method: 'POST', body: JSON.stringify(payload) }),

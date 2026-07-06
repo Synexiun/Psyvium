@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { api, setToken, getPrincipal, ApiError } from '@/lib/api';
+import { MfaErrorCode } from '@vpsy/contracts';
+import { api, rememberPrincipal, getPrincipal, setToken, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -43,19 +44,50 @@ export default function LoginPage() {
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // MFA (doc 06-security-and-rbac.md §3): shown only once the API tells us
+  // this account has TOTP enrolled — most accounts (incl. every demo login)
+  // never see this, since MFA is opt-in per user, not globally required.
+  const [mfaPrompt, setMfaPrompt] = useState(false);
+  const [totp, setTotp] = useState('');
+
   /** Real login for any email/password pair — used by the form submit AND
    * by each one-click demo button (those are real logins, not fake sessions). */
-  async function doLogin(loginEmail: string, loginPassword: string) {
+  async function doLogin(loginEmail: string, loginPassword: string, loginTotp?: string) {
     setBusy(true);
     setMsg(null);
     setEmail(loginEmail);
     setPassword(loginPassword);
+    // A fresh attempt (no code carried over) starts clean — only the
+    // MFA_REQUIRED/MFA_INVALID branch below re-opens the code prompt.
+    if (!loginTotp) {
+      setMfaPrompt(false);
+      setTotp('');
+    }
     try {
-      const tok = await api.login(loginEmail, loginPassword);
+      const tok = await api.login(loginEmail, loginPassword, loginTotp);
+      rememberPrincipal(
+        tok.principal
+          ? { sub: tok.principal.userId, roles: tok.principal.roles, permissions: tok.principal.permissions }
+          : null,
+      );
+      // Compat only: the real session is the httpOnly cookie the API just set.
+      // This also populates the legacy client-token shim a few out-of-scope
+      // pages/the realtime socket handshake still read (see lib/api.ts).
       setToken(tok.accessToken);
       setMsg({ text: t('login.success'), ok: true });
       router.push(destinationForPrincipal());
     } catch (err) {
+      const mfaCode = err instanceof ApiError && (err.body as { code?: string } | undefined)?.code;
+      if (mfaCode === MfaErrorCode.MFA_REQUIRED || mfaCode === MfaErrorCode.MFA_INVALID) {
+        setMfaPrompt(true);
+        setTotp('');
+        setMsg({
+          text: mfaCode === MfaErrorCode.MFA_INVALID ? t('login.errMfaInvalid') : t('login.mfaPrompt'),
+          ok: false,
+        });
+        setBusy(false);
+        return;
+      }
       setMsg({
         text:
           err instanceof ApiError && err.status === 401
@@ -71,7 +103,7 @@ export default function LoginPage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    await doLogin(email, password);
+    await doLogin(email, password, mfaPrompt ? totp : undefined);
   }
 
   return (
@@ -134,6 +166,25 @@ export default function LoginPage() {
               )}
             </button>
           </div>
+
+          {mfaPrompt && (
+            <>
+              <label htmlFor="login-totp" className="field-label mt-4">{t('login.mfaCodeLabel')}</label>
+              <input
+                id="login-totp"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]{6}"
+                maxLength={6}
+                className="field font-mono tracking-widest"
+                value={totp}
+                onChange={(e) => setTotp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                required
+                autoFocus
+              />
+            </>
+          )}
 
           <button type="submit" disabled={busy} className="btn-primary mt-6 w-full disabled:opacity-60">
             {busy ? t('login.submitting') : t('login.submit')}

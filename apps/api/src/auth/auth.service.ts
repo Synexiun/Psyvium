@@ -1,11 +1,15 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import type { AuthTokens, LoginInput, RegisterInput } from '@vpsy/contracts';
-import { ROLE_PERMISSIONS, Role } from '@vpsy/contracts';
+import type { AuthTokens, LoginInput, MfaEnrollResponse, RegisterInput } from '@vpsy/contracts';
+import { MfaErrorCode, ROLE_PERMISSIONS, Role } from '@vpsy/contracts';
 import * as argon2 from 'argon2';
+import { generateSecret as generateTotpSecret, generateURI as generateTotpURI, verify as verifyTotp } from 'otplib';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { jwtAccessSecret, jwtRefreshSecret } from '../common/config/jwt-secrets';
+
+/** Issuer label shown in the authenticator app next to the account name. */
+const TOTP_ISSUER = 'VPSY OS';
 
 const DEMO_TENANT = 'tenant_demo';
 
@@ -61,6 +65,29 @@ export class AuthService {
     const ok = await argon2.verify(user.hashedPassword, input.password);
     if (!ok) throw new UnauthorizedException('Invalid credentials');
 
+    // MFA (doc 06-security-and-rbac.md §3): only enforced once a user has
+    // enrolled (User.mfaEnabled). Demo/seeded users stay mfaEnabled=false so
+    // one-click demo logins and scripts/smoke.sh keep working unchanged.
+    if (user.mfaEnabled) {
+      if (!input.totp) {
+        throw new UnauthorizedException({
+          code: MfaErrorCode.MFA_REQUIRED,
+          message: 'MFA code required',
+        });
+      }
+      const result = await verifyTotp({
+        secret: user.mfaSecret ?? '',
+        token: input.totp,
+        epochTolerance: 30, // ±1 time-step for clock drift
+      });
+      if (!result.valid) {
+        throw new UnauthorizedException({
+          code: MfaErrorCode.MFA_INVALID,
+          message: 'Invalid MFA code',
+        });
+      }
+    }
+
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     await this.audit.record({
       tenantId: user.tenantId,
@@ -70,6 +97,40 @@ export class AuthService {
       entityId: user.id,
     });
     return this.issueTokens(user.id);
+  }
+
+  /**
+   * Begins TOTP enrollment: generates and stores a new secret but does NOT
+   * enable MFA yet — a user must prove possession via `mfaVerify` first, so a
+   * half-scanned QR code can never lock someone out or be silently enforced.
+   */
+  async mfaEnroll(userId: string): Promise<MfaEnrollResponse> {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const secret = generateTotpSecret();
+    await this.prisma.user.update({ where: { id: user.id }, data: { mfaSecret: secret } });
+    const otpauthUrl = generateTotpURI({ issuer: TOTP_ISSUER, label: user.email, secret });
+    return { secret, otpauthUrl };
+  }
+
+  /** Confirms a TOTP code against the enrolled-but-not-yet-active secret, then enables MFA. */
+  async mfaVerify(userId: string, code: string): Promise<{ enabled: boolean }> {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (!user.mfaSecret) {
+      throw new BadRequestException('No MFA enrollment in progress — call /auth/mfa/enroll first');
+    }
+    const result = await verifyTotp({ secret: user.mfaSecret, token: code, epochTolerance: 30 });
+    if (!result.valid) {
+      throw new UnauthorizedException({ code: MfaErrorCode.MFA_INVALID, message: 'Invalid MFA code' });
+    }
+    await this.prisma.user.update({ where: { id: user.id }, data: { mfaEnabled: true } });
+    await this.audit.record({
+      tenantId: user.tenantId,
+      actorId: user.id,
+      action: 'user.mfa_enabled',
+      entityType: 'User',
+      entityId: user.id,
+    });
+    return { enabled: true };
   }
 
   /** Resolves roles + permissions for a user and mints access/refresh tokens. */
@@ -115,6 +176,11 @@ export class AuthService {
       { sub: user.id, tenantId: user.tenantId, typ: 'refresh' },
       { secret: jwtRefreshSecret(), expiresIn: '30d' },
     );
-    return { accessToken, refreshToken, expiresIn: ttl };
+    return {
+      accessToken,
+      refreshToken,
+      expiresIn: ttl,
+      principal: { userId: user.id, roles, permissions },
+    };
   }
 }

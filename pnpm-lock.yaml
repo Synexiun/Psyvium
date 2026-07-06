@@ -62,6 +62,9 @@ importers:
       ioredis:
         specifier: ^5.11.1
         version: 5.11.1
+      otplib:
+        specifier: ^13.4.1
+        version: 13.4.1
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -1002,6 +1005,10 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@noble/hashes@2.2.0':
+    resolution: {integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==}
+    engines: {node: '>= 20.19.0'}
+
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
     engines: {node: '>= 8'}
@@ -1018,6 +1025,24 @@ packages:
     resolution: {integrity: sha512-um0xL3fO7Mf4fDxcqx9KryrB7zgRM5JSlvGN5AGkP6JLM5XEKyjeAiPbNxdXVXQ16isuAhYpvP88NgL2BGd6aA==}
     engines: {node: '>=8.0.0', npm: '>=5.0.0'}
     hasBin: true
+
+  '@otplib/core@13.4.1':
+    resolution: {integrity: sha512-KIXgK1hNtWJEBMTastbe1bpmuais+3f+ATeO8TkMs2rNkfGO1FbQy8+/UWVEu3TR/iTJerU0idkPudaPmLP2BA==}
+
+  '@otplib/hotp@13.4.1':
+    resolution: {integrity: sha512-g9q04SwpG5ZtMnVkUcgcoAlwCH4YLROZN1qhyBwgkBzqYYVSYhpP6gSGaxGHwePLt1c+e6NqDlgIZN+e1/XPuA==}
+
+  '@otplib/plugin-base32-scure@13.4.1':
+    resolution: {integrity: sha512-Fs/r5qisC05SRhT6xWXaypB6PVC0vgWf6zztmi0J5RnQ09OJiPDWCJFH6cDm6ANsrdvB9di7X+Jb7L13BoEbUA==}
+
+  '@otplib/plugin-crypto-noble@13.4.1':
+    resolution: {integrity: sha512-PJfVW8/1hdS6CfxLheKPZSLTwDq4TijZbN4yRjxlv0ODdzmxpM+wGwWr1JXMdy0xJPxLziydQD5gdVqrR4/gAg==}
+
+  '@otplib/totp@13.4.1':
+    resolution: {integrity: sha512-QOkBVPrf6AM4qZaReZPSk9/I8ATVdZpIISJz115MqeVtcrbcr5llPZ0J7804tpnjnp1vCRkI5Qjd47HhgVteBQ==}
+
+  '@otplib/uri@13.4.1':
+    resolution: {integrity: sha512-xaIm7bvICMhoB2rZIR5luiaMdssWR5nY5nXnR1fdezUgZuEO58D6zrGzLp7pQuBmlpmL0HagnscDQFoskp9yiA==}
 
   '@phc/format@1.0.0':
     resolution: {integrity: sha512-m7X9U6BG2+J+R1lSOdCiITLLrxm+cWlNI3HUFA92oLO77ObGNzaKdh8pMLqdZcshtkKuV84olNNXDfMc4FezBQ==}
@@ -1059,6 +1084,9 @@ packages:
 
   '@scarf/scarf@1.4.0':
     resolution: {integrity: sha512-xxeapPiUXdZAE3che6f3xogoJPeZgig6omHEy1rIY5WVsB3H2BHNnZH+gHG6x91SCWyQCzWGsuL2Hh3ClO5/qQ==}
+
+  '@scure/base@2.2.0':
+    resolution: {integrity: sha512-b8XEupJibegiXV+tDUseI8oLQc8ei3d/4Jkb2RpbHh3MfE054ov3uIz2dhFkB3FI8iwYkEh0gGCApkrYggkPNg==}
 
   '@sinclair/typebox@0.27.10':
     resolution: {integrity: sha512-MTBk/3jGLNB2tVxv6uLlFh1iu64iYOQ2PbdOSK3NW8JZsmlaOh2q6sdtKowBhfw8QFLmYNzTW4/oK4uATIi6ZA==}
@@ -2747,6 +2775,9 @@ packages:
   os-tmpdir@1.0.2:
     resolution: {integrity: sha512-D2FR03Vir7FIu45XBY20mTb+/ZSWB00sjU9jdQXt83gDrI4Ztz5Fs7/yy74g2N5SVQY4xY1qDr4rNddwYRVX0g==}
     engines: {node: '>=0.10.0'}
+
+  otplib@13.4.1:
+    resolution: {integrity: sha512-o5CxfDw6bh7hoDv0NUUIcc0RqzJ9ipfUrzeKheKJ+vs4rXZnDlA9n4a/7R1cDjpmLjKLix4BgNVRmoDkm5rLSQ==}
 
   p-limit@2.3.0:
     resolution: {integrity: sha512-//88mFWSJx8lxCzwdAABTJL2MyWB12+eIY7MDL2SqLmAkeKU9qxRvWuSyTjm3FUmpBEMuFfckAIqEaVGUDxb6w==}
@@ -4448,6 +4479,8 @@ snapshots:
   '@next/swc-win32-x64-msvc@15.5.20':
     optional: true
 
+  '@noble/hashes@2.2.0': {}
+
   '@nodelib/fs.scandir@2.1.5':
     dependencies:
       '@nodelib/fs.stat': 2.0.5
@@ -4467,6 +4500,33 @@ snapshots:
       node-fetch: 2.7.0
     transitivePeerDependencies:
       - encoding
+
+  '@otplib/core@13.4.1': {}
+
+  '@otplib/hotp@13.4.1':
+    dependencies:
+      '@otplib/core': 13.4.1
+      '@otplib/uri': 13.4.1
+
+  '@otplib/plugin-base32-scure@13.4.1':
+    dependencies:
+      '@otplib/core': 13.4.1
+      '@scure/base': 2.2.0
+
+  '@otplib/plugin-crypto-noble@13.4.1':
+    dependencies:
+      '@noble/hashes': 2.2.0
+      '@otplib/core': 13.4.1
+
+  '@otplib/totp@13.4.1':
+    dependencies:
+      '@otplib/core': 13.4.1
+      '@otplib/hotp': 13.4.1
+      '@otplib/uri': 13.4.1
+
+  '@otplib/uri@13.4.1':
+    dependencies:
+      '@otplib/core': 13.4.1
 
   '@phc/format@1.0.0': {}
 
@@ -4509,6 +4569,8 @@ snapshots:
       '@prisma/debug': 6.19.3
 
   '@scarf/scarf@1.4.0': {}
+
+  '@scure/base@2.2.0': {}
 
   '@sinclair/typebox@0.27.10': {}
 
@@ -6508,6 +6570,15 @@ snapshots:
       wcwidth: 1.0.1
 
   os-tmpdir@1.0.2: {}
+
+  otplib@13.4.1:
+    dependencies:
+      '@otplib/core': 13.4.1
+      '@otplib/hotp': 13.4.1
+      '@otplib/plugin-base32-scure': 13.4.1
+      '@otplib/plugin-crypto-noble': 13.4.1
+      '@otplib/totp': 13.4.1
+      '@otplib/uri': 13.4.1
 
   p-limit@2.3.0:
     dependencies:
