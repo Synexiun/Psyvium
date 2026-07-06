@@ -14,24 +14,6 @@ import type {
 const SOURCES: LeadSource[] = ['WEB', 'REFERRAL', 'CAMPAIGN', 'INSTITUTION'];
 const REF_TYPES: ReferrerType[] = ['DOCTOR', 'SCHOOL', 'EMPLOYER', 'COURT', 'INSTITUTION', 'SELF'];
 
-/** Offline fallback so the board renders even when the API is unreachable. */
-const MOCK_BOARD: CrmBoardDto = {
-  stages: [
-    { id: 's1', name: 'New', order: 0, isWon: false, isLost: false },
-    { id: 's2', name: 'Screening', order: 1, isWon: false, isLost: false },
-    { id: 's3', name: 'Matched', order: 2, isWon: false, isLost: false },
-    { id: 's4', name: 'Won', order: 3, isWon: true, isLost: false },
-    { id: 's5', name: 'Lost', order: 4, isWon: false, isLost: true },
-  ],
-  leadsByStage: {
-    s1: [{ id: 'l1', source: 'WEB', contact: { name: 'Jordan Blake' }, presentingInterest: 'Anxiety and panic', pipelineStageId: 's1', pipelineStageName: 'New', status: 'active', createdAt: new Date().toISOString() }],
-    s2: [{ id: 'l2', source: 'REFERRAL', contact: { name: 'Sam Rivera' }, presentingInterest: 'Low mood, referred by GP', pipelineStageId: 's2', pipelineStageName: 'Screening', status: 'active', referrerId: 'r1', createdAt: new Date().toISOString() }],
-  },
-  referrers: [
-    { id: 'r1', type: 'DOCTOR', organizationName: 'Dr. Alan Pierce — Family Practice', contact: {}, referralSharePct: 10, active: true },
-  ],
-};
-
 export default function CrmPage() {
   const { t, dict, fmtDate, fmtPercent } = useI18n();
   const [board, setBoard] = useState<CrmBoardDto | null>(null);
@@ -44,6 +26,7 @@ export default function CrmPage() {
 
   async function load() {
     setLive('loading');
+    setError(null);
     try {
       // Demo convenience: sign in as the manager if there's no session yet.
       try {
@@ -56,8 +39,9 @@ export default function CrmPage() {
       setBoard(data);
       setLive('live');
     } catch (e) {
+      // No fallback-to-fake: keep whatever real board was already loaded (if
+      // any) and surface the failure honestly instead of overwriting it.
       setError(e instanceof ApiError ? t('crm.errStatus', { status: e.status }) : t('crm.errNetwork'));
-      setBoard(MOCK_BOARD);
       setLive('offline');
     }
   }
@@ -93,8 +77,21 @@ export default function CrmPage() {
     }
   }
 
-  if (!board) {
+  if (!board && live === 'loading') {
     return <p className="mt-10 font-mono text-sm text-mist/40">{t('crm.loading')}</p>;
+  }
+
+  if (!board) {
+    return (
+      <div className="mt-10 max-w-md">
+        <div role="alert" className="rounded-xl border border-signal/30 bg-signal/10 px-4 py-3 text-sm text-signal-soft">
+          {error}
+        </div>
+        <button onClick={load} className="btn-primary mt-4 px-5 py-2.5 text-sm">
+          {t('common.refresh')}
+        </button>
+      </div>
+    );
   }
 
   const stages = [...board.stages].sort((a, b) => a.order - b.order);

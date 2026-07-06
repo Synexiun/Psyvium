@@ -18,6 +18,7 @@ const en = {
     liveData: 'Live data',
     offlineDemo: 'Live data unavailable — showing example data.',
     loadingLive: 'Connecting to the live record…',
+    connectionIssue: 'Connection issue',
     trendIncreased: 'Rising',
     trendDecreased: 'Falling',
     trendUnchanged: 'Steady',
@@ -586,6 +587,11 @@ const en = {
     helpCall: 'Call the 24/7 crisis line',
     helpChat: 'Open text support',
     helpEmergency: 'In immediate danger? Call your local emergency number.',
+    errStatus: 'Could not load your record ({status}). Try again.',
+    errNetwork: 'Could not reach the server. Check your connection and try again.',
+    wearableEmpty: 'Connect a wearable to see trends.',
+    exercisesEmpty: 'Homework assigned by your clinician will appear here.',
+    moodFailed: 'Could not save your check-in. Try again.',
   },
   workspace: {
     eyebrow: 'Clinician cockpit',
@@ -645,6 +651,12 @@ const en = {
     aiConfirmed: 'Confirmed by you · {time}',
     aiDismissed: 'Dismissed. Logged to the recommendation ledger.',
     aiModelLine: 'Model {model} · prompt {prompt}',
+    errStatus: 'Could not load your caseload ({status}). Try again.',
+    errNetwork: 'Could not reach the server. Check your connection and try again.',
+    emptyCaseload: 'No clients are assigned to you yet.',
+    aiPending: 'AI formulation is pending clinician review.',
+    aiPendingBody:
+      'This assistive context has not shipped yet — no formulation is generated, drafted, or stored until it does.',
   },
 };
 
