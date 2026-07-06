@@ -96,6 +96,22 @@ test.describe('Manager journey (manager@vpsy.health)', () => {
     await page.goto('/manager');
     await expect(page.getByRole('heading', { name: 'Triage & assignment' })).toBeVisible();
 
+    // ROOT CAUSE (found by this suite, not a server bug): the heading above
+    // renders synchronously, but the triage list itself is fetched
+    // asynchronously (manager/page.tsx's `load()`) and a loading skeleton +
+    // the context panel's "Connecting to the live record…" status text show
+    // until that resolves. Reading `approveButtons.count()` immediately after
+    // the heading check races that fetch and can capture `before` as 0
+    // regardless of the board's true state — and since prisma/seed.ts is
+    // purely additive and never clears E2E-created PROPOSED assignments
+    // between local runs, any pre-existing backlog from earlier invocations
+    // of this exact test then makes a later *absolute* `toHaveCount(before)`
+    // assertion compare against the wrong baseline. Waiting for the loading
+    // status to clear first, and asserting a *delta* (see below) instead of
+    // an absolute count, makes this test correct regardless of the shared
+    // dev database's accumulated state.
+    await expect(page.getByText('Connecting to the live record…')).toHaveCount(0, { timeout: 15_000 });
+
     const approveButtons = page.getByRole('button', { name: 'Approve' });
     const before = await approveButtons.count();
 
@@ -122,10 +138,27 @@ test.describe('Manager journey (manager@vpsy.health)', () => {
     }
 
     await page.reload();
+    await expect(page.getByText('Connecting to the live record…')).toHaveCount(0, { timeout: 15_000 });
     await expect(approveButtons.first()).toBeVisible({ timeout: 20_000 });
-    expect(await approveButtons.count()).toBeGreaterThan(before);
+    const afterSubmit = await approveButtons.count();
+    expect(afterSubmit).toBeGreaterThan(before);
 
-    await approveButtons.first().click();
+    // Each triage card renders one "Approve" button PER CANDIDATE (here: Dr.
+    // Rivera + Dr. Okafor, so 2), but approving any one candidate removes the
+    // WHOLE card from the board (manager/page.tsx's approve() does
+    // `setProposals((prev) => prev.filter((x) => x.id !== p.id))` — it filters
+    // out the entire proposal, not just the clicked candidate row). So one
+    // click removes as many buttons as that card had candidates, not just 1.
+    // The API orders proposals `createdAt: 'desc'` (matching.service.ts's
+    // listProposals), so the first card in DOM order is always the one this
+    // test just created — scope to it explicitly rather than assuming a
+    // fixed candidate count.
+    const newestCard = page.locator('#portal-content article').first();
+    const newestCardApproveButtons = newestCard.getByRole('button', { name: 'Approve' });
+    const candidatesInNewestCard = await newestCardApproveButtons.count();
+    expect(candidatesInNewestCard).toBeGreaterThan(0);
+
+    await newestCardApproveButtons.first().click();
     // A successful approve removes that proposal card from the board —
     // the count settles back down rather than an error panel appearing.
     //
@@ -144,7 +177,13 @@ test.describe('Manager journey (manager@vpsy.health)', () => {
     // this test wants: no error panel — not "no accessibility live region
     // exists anywhere on the page," which is never true here.
     await expect(page.locator('#portal-content').getByRole('alert')).toHaveCount(0);
-    await expect(approveButtons).toHaveCount(before, { timeout: 15_000 });
+    // Delta, not a return to the original `before`: approving exactly one
+    // card must remove exactly that card's candidate buttons. Asserting an
+    // absolute return to `before` would silently assume the dev database
+    // starts (or returns to) empty, which prisma/seed.ts's purely-additive
+    // design does not guarantee across repeated local runs — see the comment
+    // above `before`.
+    await expect(approveButtons).toHaveCount(afterSubmit - candidatesInNewestCard, { timeout: 15_000 });
   });
 });
 

@@ -18,7 +18,11 @@
 set -u
 BASE="${BASE:-http://localhost:4000/api/v1}"
 PW='Vpsy!2026'
-ALEX_CLIENT_ID="${ALEX_CLIENT_ID:-cmr8h028g001tdaycdllexcic}"  # seeded demo client
+# Seeded demo client id — cuids change on every reseed, so when the caller
+# doesn't provide ALEX_CLIENT_ID we derive it LIVE from the API (login as the
+# demo client → /clients/me) instead of trusting a stale hardcoded fallback.
+# (This staleness has independently bitten three verification runs.)
+ALEX_CLIENT_ID="${ALEX_CLIENT_ID:-}"
 PASS=0; FAIL=0
 
 py() { python -c "$1" 2>/dev/null; }
@@ -35,6 +39,15 @@ check "health db up" "up" "$(curl -s "$BASE/health" | py "import sys,json;print(
 MGR=$(login manager@vpsy.health); PSY=$(login dr.rivera@vpsy.health); CLI=$(login alex.client@example.com)
 [ -n "$MGR" ] && [ -n "$PSY" ] && [ -n "$CLI" ] && { echo "  PASS  auth: manager/psychologist/client tokens"; PASS=$((PASS+1)); } || { echo "  FAIL  auth"; FAIL=$((FAIL+1)); }
 AH="Authorization: Bearer"
+
+# Derive the demo client id live when not supplied (cuids rotate on reseed).
+# VERSION_ID has no list endpoint to derive from yet — callers still pass it
+# (or the stale fallback below fails loudly), which is honest rather than
+# pretending a derivation exists.
+if [ -z "$ALEX_CLIENT_ID" ]; then
+  ALEX_CLIENT_ID=$(curl -s "$BASE/clients/me" -H "$AH $CLI" | py "import sys,json;print(json.load(sys.stdin)['client']['id'])")
+  echo "  info  derived ALEX_CLIENT_ID=$ALEX_CLIENT_ID"
+fi
 
 # ── Auth hardening — public self-registration cannot self-assign an elevated role ──
 RE="reg+$RANDOM$$@example.com"
