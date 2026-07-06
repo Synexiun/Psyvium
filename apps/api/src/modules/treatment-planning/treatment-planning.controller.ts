@@ -53,6 +53,17 @@ export class TreatmentPlanningController {
   }
 
   /**
+   * Overdue-review tracking (Joint Commission care-plan standard, audit
+   * finding #4): active plans whose reviewDate has passed. Manager/clinician
+   * gated — PLAN_READ is held by PSYCHOLOGIST, MANAGER, and SUPERVISOR.
+   */
+  @Get('overdue-reviews')
+  @RequirePermissions(Permission.PLAN_READ)
+  listOverdueReviews(@CurrentUser() user: AuthPrincipal) {
+    return this.plans.listOverdueReviews(user);
+  }
+
+  /**
    * Treatment-Plan Support (doc 05 §3.3). Returns assistive goal/intervention
    * SUGGESTIONS only — never prescriptive, never persisted. The clinician
    * composes the actual plan via `create()`/`updateGoalProgress()` above.

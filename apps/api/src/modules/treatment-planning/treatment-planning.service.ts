@@ -37,6 +37,9 @@ type PlanRow = {
   goals: GoalRow[];
 };
 
+/** Joint Commission's typical care-plan review cadence (audit finding #4). */
+const DEFAULT_REVIEW_CYCLE_DAYS = 90;
+
 /**
  * Treatment Planning. A client has at most one ACTIVE plan; creating a new
  * one supersedes (never deletes) any prior active plan — clinical records
@@ -57,6 +60,13 @@ export class TreatmentPlanningService {
     });
     if (!client) throw new NotFoundException('Client not found');
 
+    // Joint Commission care-plan standard (audit finding #4): every plan
+    // gets an enforced review cadence. `Goal` has no per-goal targetDate
+    // column (schema.prisma), so the SMART "time-bound" requirement is
+    // enforced here at the plan level instead — reviewDate is defaulted
+    // server-side when the caller omits it, never left unset.
+    const reviewDate = input.reviewDate ? new Date(input.reviewDate) : this.defaultReviewDate();
+
     const plan = await this.prisma.$transaction(async (tx) => {
       await tx.treatmentPlan.updateMany({
         where: { clientId: input.clientId, tenantId: principal.tenantId, status: 'active' },
@@ -71,7 +81,7 @@ export class TreatmentPlanningService {
           sessionFrequency: input.sessionFrequency,
           measurementSchedule: input.measurementSchedule as any,
           riskPlan: input.riskPlan,
-          reviewDate: input.reviewDate ? new Date(input.reviewDate) : undefined,
+          reviewDate,
           status: 'active',
           goals: {
             create: input.goals.map((g) => ({
@@ -136,6 +146,25 @@ export class TreatmentPlanningService {
   }
 
   /**
+   * Overdue-review tracking (audit finding #4). Active plans whose
+   * `reviewDate` has already passed — the Joint Commission care-plan-cycle
+   * gap the audit flagged. Manager/clinician-gated (PLAN_READ) at the
+   * controller.
+   */
+  async listOverdueReviews(principal: AuthPrincipal): Promise<TreatmentPlanDto[]> {
+    const plans = await this.prisma.treatmentPlan.findMany({
+      where: {
+        tenantId: principal.tenantId,
+        status: 'active',
+        reviewDate: { lt: new Date() },
+      },
+      include: { goals: true },
+      orderBy: { reviewDate: 'asc' },
+    });
+    return plans.map((plan) => this.toDto(plan as PlanRow));
+  }
+
+  /**
    * Treatment-Plan Support (doc 05 §3.3). Sends the AI Gateway ONLY the
    * coded, de-identified signals in `input` (severity band, specialty,
    * outcome-trend direction) — never history, hypotheses, or client
@@ -155,6 +184,12 @@ export class TreatmentPlanningService {
       specialty: input.specialty,
       outcomeTrend: input.outcomeTrend,
     });
+  }
+
+  private defaultReviewDate(): Date {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + DEFAULT_REVIEW_CYCLE_DAYS);
+    return d;
   }
 
   private toGoalDto(g: GoalRow): GoalDto {

@@ -1,5 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import type { AuthPrincipal } from '@vpsy/contracts';
+import { createTreatmentPlanSchema } from '@vpsy/contracts';
 import { TreatmentPlanningService } from './treatment-planning.service';
 
 /**
@@ -7,6 +8,9 @@ import { TreatmentPlanningService } from './treatment-planning.service';
  * §3.3). `aiAssist` must forward ONLY severity band / specialty / outcome-trend
  * signals to the AI Gateway (never history, hypotheses, or client identifiers)
  * and must never create, activate, or supersede a TreatmentPlan.
+ *
+ * Clinical-Rigor wave (audit finding #4) — SMART-goal enforcement and the
+ * Joint-Commission review-cadence default / overdue-review tracking.
  */
 
 const principal: AuthPrincipal = {
@@ -17,10 +21,14 @@ const principal: AuthPrincipal = {
 };
 
 function makeService() {
-  const prisma = {
+  const prisma: any = {
     client: { findFirst: jest.fn().mockResolvedValue({ id: 'client_1', tenantId: 'tenant_demo' }) },
-    treatmentPlan: { create: jest.fn(), updateMany: jest.fn() },
+    treatmentPlan: { create: jest.fn(), updateMany: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
   };
+  // create() runs inside `this.prisma.$transaction(async (tx) => ...)` — hand
+  // the callback the same mock object so `tx.treatmentPlan.*` calls land on
+  // the spies above.
+  prisma.$transaction = jest.fn((cb: (tx: unknown) => unknown) => cb(prisma));
   const audit = { record: jest.fn() };
   const bus = { publish: jest.fn() };
   const ai = {
@@ -86,5 +94,110 @@ describe('TreatmentPlanningService.aiAssist', () => {
         outcomeTrend: 'stable',
       }),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('createTreatmentPlanSchema — SMART-goal enforcement (audit finding #4)', () => {
+  const validGoal = { description: 'Reduce panic attack frequency', targetMetric: 'panic attacks/week', baseline: 5, target: 0 };
+
+  it('rejects a goal that only has a description (not measurable)', () => {
+    const result = createTreatmentPlanSchema.safeParse({
+      clientId: 'client_1',
+      goals: [{ description: 'Feel better' }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a goal missing any one of targetMetric/baseline/target', () => {
+    for (const omit of ['targetMetric', 'baseline', 'target'] as const) {
+      const goal = { ...validGoal } as Record<string, unknown>;
+      delete goal[omit];
+      const result = createTreatmentPlanSchema.safeParse({ clientId: 'client_1', goals: [goal] });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  it('accepts a fully-specified SMART goal', () => {
+    const result = createTreatmentPlanSchema.safeParse({ clientId: 'client_1', goals: [validGoal] });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('TreatmentPlanningService.create — review-cadence default', () => {
+  const goal = { description: 'Reduce panic attack frequency', targetMetric: 'panic attacks/week', baseline: 5, target: 0 };
+
+  it('defaults reviewDate to +90 days (Joint Commission cycle) when the caller omits it', async () => {
+    const { svc, prisma } = makeService();
+    prisma.treatmentPlan.create.mockImplementation((args: any) =>
+      Promise.resolve({ id: 'plan_1', version: 1, createdAt: new Date(), ...args.data, goals: [] }),
+    );
+
+    const before = Date.now();
+    const plan = await svc.create(principal, {
+      clientId: 'client_1',
+      problemList: [],
+      sessionFrequency: 'weekly',
+      measurementSchedule: {},
+      goals: [goal],
+    } as any);
+    const after = Date.now();
+
+    expect(plan.reviewDate).not.toBeNull();
+    const reviewMs = new Date(plan.reviewDate as string).getTime();
+    const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+    expect(reviewMs).toBeGreaterThanOrEqual(before + ninetyDaysMs - 5_000);
+    expect(reviewMs).toBeLessThanOrEqual(after + ninetyDaysMs + 5_000);
+  });
+
+  it('honors an explicit reviewDate when the caller supplies one', async () => {
+    const { svc, prisma } = makeService();
+    prisma.treatmentPlan.create.mockImplementation((args: any) =>
+      Promise.resolve({ id: 'plan_1', version: 1, createdAt: new Date(), ...args.data, goals: [] }),
+    );
+
+    const explicit = '2027-01-01T00:00:00.000Z';
+    const plan = await svc.create(principal, {
+      clientId: 'client_1',
+      problemList: [],
+      sessionFrequency: 'weekly',
+      measurementSchedule: {},
+      reviewDate: explicit,
+      goals: [goal],
+    } as any);
+
+    expect(plan.reviewDate).toBe(explicit);
+  });
+});
+
+describe('TreatmentPlanningService.listOverdueReviews (audit finding #4)', () => {
+  it('queries active, tenant-scoped plans whose reviewDate has passed', async () => {
+    const { svc, prisma } = makeService();
+    const overdue = {
+      id: 'plan_overdue',
+      clientId: 'client_1',
+      problemList: [],
+      sessionFrequency: 'weekly',
+      riskPlan: null,
+      reviewDate: new Date('2020-01-01T00:00:00.000Z'),
+      status: 'active',
+      version: 1,
+      createdAt: new Date('2019-01-01T00:00:00.000Z'),
+      goals: [],
+    };
+    prisma.treatmentPlan.findMany.mockResolvedValue([overdue]);
+
+    const result = await svc.listOverdueReviews(principal);
+
+    expect(prisma.treatmentPlan.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 'tenant_demo',
+          status: 'active',
+          reviewDate: { lt: expect.any(Date) },
+        }),
+      }),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('plan_overdue');
   });
 });
