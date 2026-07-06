@@ -2,9 +2,11 @@ import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   createSessionNoteSchema,
+  sessionNoteAiAssistRequestSchema,
   Permission,
   type AuthPrincipal,
   type CreateSessionNoteInput,
+  type SessionNoteAiAssistInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
@@ -48,5 +50,21 @@ export class ClinicalDocumentationController {
   @RequirePermissions(Permission.NOTE_WRITE)
   sign(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
     return this.notes.sign(user, id);
+  }
+
+  /**
+   * Session-Note Assistant (doc 05 §3.4). Returns an assistive DRAFT
+   * scaffold only — it never creates or signs a note itself; the clinician
+   * reviews, edits, and files their own note via `create()`/`sign()` above.
+   * Not gated by ClinicalWriteGuard: this is a suggestion, not a clinical
+   * record mutation.
+   */
+  @Post('ai-assist')
+  @RequirePermissions(Permission.NOTE_WRITE)
+  aiAssist(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(sessionNoteAiAssistRequestSchema)) body: SessionNoteAiAssistInput,
+  ) {
+    return this.notes.aiAssist(user, body);
   }
 }

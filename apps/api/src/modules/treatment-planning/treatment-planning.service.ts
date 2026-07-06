@@ -3,12 +3,15 @@ import type {
   AuthPrincipal,
   CreateTreatmentPlanInput,
   GoalDto,
+  TreatmentPlanAiAssistInput,
+  TreatmentPlanAiAssistResult,
   TreatmentPlanDto,
   UpdateGoalProgressInput,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
+import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 
 type GoalRow = {
   id: string;
@@ -45,6 +48,7 @@ export class TreatmentPlanningService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly bus: EventBus,
+    private readonly ai: AiGatewayService,
   ) {}
 
   async create(principal: AuthPrincipal, input: CreateTreatmentPlanInput): Promise<TreatmentPlanDto> {
@@ -129,6 +133,28 @@ export class TreatmentPlanningService {
       orderBy: { createdAt: 'desc' },
     });
     return plan ? this.toDto(plan as PlanRow) : null;
+  }
+
+  /**
+   * Treatment-Plan Support (doc 05 §3.3). Sends the AI Gateway ONLY the
+   * coded, de-identified signals in `input` (severity band, specialty,
+   * outcome-trend direction) — never history, hypotheses, or client
+   * identifiers. Returns assistive suggestions; does not create or mutate
+   * any TreatmentPlan/Goal row.
+   */
+  async aiAssist(principal: AuthPrincipal, input: TreatmentPlanAiAssistInput): Promise<TreatmentPlanAiAssistResult> {
+    const client = await this.prisma.client.findFirst({
+      where: { id: input.clientId, tenantId: principal.tenantId },
+    });
+    if (!client) throw new NotFoundException('Client not found');
+
+    return this.ai.suggestTreatmentPlan({
+      tenantId: principal.tenantId,
+      clientId: input.clientId,
+      severityBand: input.severityBand,
+      specialty: input.specialty,
+      outcomeTrend: input.outcomeTrend,
+    });
   }
 
   private toGoalDto(g: GoalRow): GoalDto {

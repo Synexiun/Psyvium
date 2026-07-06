@@ -1,8 +1,15 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import type { AuthPrincipal, CreateSessionNoteInput, SessionNoteDto } from '@vpsy/contracts';
+import type {
+  AuthPrincipal,
+  CreateSessionNoteInput,
+  SessionNoteAiAssistInput,
+  SessionNoteAiAssistResult,
+  SessionNoteDto,
+} from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
+import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 
 type NoteRow = {
   id: string;
@@ -26,6 +33,7 @@ export class ClinicalDocumentationService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly bus: EventBus,
+    private readonly ai: AiGatewayService,
   ) {}
 
   async create(principal: AuthPrincipal, input: CreateSessionNoteInput): Promise<SessionNoteDto> {
@@ -96,6 +104,29 @@ export class ClinicalDocumentationService {
     });
 
     return this.toDto(signed);
+  }
+
+  /**
+   * Session-Note Assistant (doc 05 §3.4). Sends the AI Gateway ONLY the
+   * coded, de-identified signals in `input` (session type, theme codes,
+   * risk-present flag, plan-goal ids) — never the session/note content or
+   * any client identifier. Returns an assistive draft SCAFFOLD; it does not
+   * create or mutate any SessionNote row.
+   */
+  async aiAssist(principal: AuthPrincipal, input: SessionNoteAiAssistInput): Promise<SessionNoteAiAssistResult> {
+    const session = await this.prisma.session.findFirst({
+      where: { id: input.sessionId, tenantId: principal.tenantId },
+    });
+    if (!session) throw new NotFoundException('Session not found');
+
+    return this.ai.summarizeSessionNote({
+      tenantId: principal.tenantId,
+      sessionId: input.sessionId,
+      sessionType: input.sessionType,
+      presentingThemeCodes: input.presentingThemeCodes,
+      riskPresent: input.riskPresent,
+      planGoalIds: input.planGoalIds,
+    });
   }
 
   private toDto(note: NoteRow): SessionNoteDto {

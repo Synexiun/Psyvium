@@ -2,10 +2,12 @@ import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/co
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   createTreatmentPlanSchema,
+  treatmentPlanAiAssistRequestSchema,
   updateGoalProgressSchema,
   Permission,
   type AuthPrincipal,
   type CreateTreatmentPlanInput,
+  type TreatmentPlanAiAssistInput,
   type UpdateGoalProgressInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
@@ -48,5 +50,21 @@ export class TreatmentPlanningController {
   @RequirePermissions(Permission.PLAN_READ)
   getActivePlan(@CurrentUser() user: AuthPrincipal, @Param('clientId') clientId: string) {
     return this.plans.getActivePlan(user, clientId);
+  }
+
+  /**
+   * Treatment-Plan Support (doc 05 §3.3). Returns assistive goal/intervention
+   * SUGGESTIONS only — never prescriptive, never persisted. The clinician
+   * composes the actual plan via `create()`/`updateGoalProgress()` above.
+   * Not gated by ClinicalWriteGuard: this is a suggestion, not a clinical
+   * record mutation.
+   */
+  @Post('ai-assist')
+  @RequirePermissions(Permission.PLAN_WRITE)
+  aiAssist(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(treatmentPlanAiAssistRequestSchema)) body: TreatmentPlanAiAssistInput,
+  ) {
+    return this.plans.aiAssist(user, body);
   }
 }

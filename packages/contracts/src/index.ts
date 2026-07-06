@@ -18,3 +18,4 @@ export * from './dto/scheduling';
 export * from './dto/finance';
 export * from './dto/analytics';
 export * from './dto/realtime';
+export * from './dto/ai-assist';
