@@ -16,6 +16,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
 import { OfflineStubAdapter } from './adapters/offline-stub.adapter';
+import { TwilioSmsAdapter } from './adapters/twilio-sms.adapter';
 import type { TelephonyProvider } from './ports/telephony-provider.port';
 import type { SmsProvider } from './ports/sms-provider.port';
 
@@ -77,23 +78,33 @@ export class CommunicationsService {
     private readonly bus: EventBus,
     private readonly offlineStub: OfflineStubAdapter,
   ) {
-    // Provider selection seam (`15` §2, §8): a real SIP/Twilio/Vonage adapter
-    // would be selected here per tenant/jurisdiction config when its env is
-    // configured. No such adapter is implemented in this codebase, so we
-    // always resolve to the offline stub — and warn rather than silently
-    // pretending an unconfigured integration is live.
+    // Provider selection seam (`15` §2, §8), activate-on-key: a real adapter is
+    // selected when its credentials are present; otherwise we keep the offline
+    // stub — never silently pretending an unconfigured integration is live.
+
+    // SMS: real Twilio when TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN are set.
+    const twilioSms = TwilioSmsAdapter.fromEnv();
+    if (twilioSms) {
+      this.sms = twilioSms;
+      this.logger.log('SMS provider: Twilio (live).');
+    } else {
+      if (process.env.SMS_PROVIDER) {
+        this.logger.warn(
+          `SMS_PROVIDER=${process.env.SMS_PROVIDER} set but no Twilio credentials — falling back to the offline stub (see docs/technical/15-communications-and-telephony.md §2.3).`,
+        );
+      }
+      this.sms = offlineStub;
+    }
+
+    // Voice: real click-to-call is async (status via webhook) and needs a public
+    // status-callback endpoint + tenant Twilio number — a separate ticket. Until
+    // then telephony stays on the honest offline stub.
     if (process.env.TELEPHONY_PROVIDER) {
       this.logger.warn(
-        `TELEPHONY_PROVIDER=${process.env.TELEPHONY_PROVIDER} set but no real adapter is wired — falling back to the offline stub (see docs/technical/15-communications-and-telephony.md §2.3).`,
-      );
-    }
-    if (process.env.SMS_PROVIDER) {
-      this.logger.warn(
-        `SMS_PROVIDER=${process.env.SMS_PROVIDER} set but no real adapter is wired — falling back to the offline stub (see docs/technical/15-communications-and-telephony.md §2.3).`,
+        `TELEPHONY_PROVIDER=${process.env.TELEPHONY_PROVIDER} set but real voice needs a status-callback webhook — falling back to the offline stub (see docs/technical/15-communications-and-telephony.md §2.3).`,
       );
     }
     this.telephony = offlineStub;
-    this.sms = offlineStub;
   }
 
   // ── Calls ──
