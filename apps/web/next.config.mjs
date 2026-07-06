@@ -22,7 +22,11 @@ const nextConfig = {
     return [
       {
         source: '/api/backend/:path*',
-        destination: `${process.env.API_URL ?? 'http://localhost:4000'}/api/v1/:path*`,
+        // API_URL wins when set; production builds otherwise default to the
+        // live API (a localhost fallback in prod becomes Vercel's
+        // DNS_HOSTNAME_RESOLVED_PRIVATE 404 — observed on the first deploy);
+        // dev keeps localhost.
+        destination: `${process.env.API_URL ?? (process.env.NODE_ENV === 'production' ? 'https://psyvium-api.onrender.com' : 'http://localhost:4000')}/api/v1/:path*`,
       },
     ];
   },
