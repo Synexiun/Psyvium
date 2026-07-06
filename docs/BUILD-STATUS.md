@@ -4,11 +4,13 @@ Living traceability of every bounded context against the roadmap (`technical/13-
 
 **Legend:** ✅ Built & verified (live-tested) · 🟡 Partial / in progress · 📝 Documented + data-modeled, module not yet built.
 
+> **Status honesty note (2026-07-06):** a three-audit review vs. the docs found this file previously **overclaimed** in places. Corrected below. The authoritative, doc-verified gap backlog and its execution waves now live in [`10-10-PROGRAM.md`](10-10-PROGRAM.md). Phase-level ✅ marks the *core slice* of a phase, not every context in it — contexts marked 🟡/📝 below are the honest per-context truth.
+
 ## Context status (30 contexts)
 
 | # | Bounded context | Phase | Status | Evidence / notes |
 |---|-----------------|:-----:|:------:|------------------|
-| 1 | Identity & Access | 1 | ✅ | JWT+argon2, RBAC+ABAC guards; login + permission gates verified |
+| 1 | Identity & Access | 1 | 🟡 | JWT+argon2, RBAC+ABAC guards, login + permission gates verified; hardened (no self-assign role, no hardcoded secret, DB-authoritative perms). **MFA/TOTP not yet enforced; token in localStorage not httpOnly cookie** (both in Wave A) |
 | 2 | Tenant / Clinic Network | 1 | 🟡 | Tenant/Clinic in schema + seed; no management module yet |
 | 3 | Client Registry | 1 | 🟡 | Client model + `clients` read module (`/clients/me`, clinical-summary); no admin CRUD |
 | 4 | Psychologist Registry | 1 | 🟡 | Psychologist model used by matching/clinicians; no dedicated registry CRUD |
