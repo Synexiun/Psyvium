@@ -1,0 +1,52 @@
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  createSessionNoteSchema,
+  Permission,
+  type AuthPrincipal,
+  type CreateSessionNoteInput,
+} from '@vpsy/contracts';
+import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
+import { PermissionsGuard } from '../../common/auth/permissions.guard';
+import { ClinicalWriteGuard } from '../../common/auth/clinical-write.guard';
+import { RequirePermissions } from '../../common/auth/permissions.decorator';
+import { CurrentUser } from '../../common/auth/current-user.decorator';
+import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
+import { ClinicalDocumentationService } from './clinical-documentation.service';
+
+@ApiTags('clinical-documentation')
+@ApiBearerAuth()
+@Controller('session-notes')
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+export class ClinicalDocumentationController {
+  constructor(private readonly notes: ClinicalDocumentationService) {}
+
+  /**
+   * Always appends the next version for the session — never mutates a prior
+   * row. Gated by ClinicalWriteGuard: license must be verified/active and
+   * jurisdiction-matched (Phase 2 DoD).
+   */
+  @Post()
+  @UseGuards(ClinicalWriteGuard)
+  @RequirePermissions(Permission.NOTE_WRITE)
+  create(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(createSessionNoteSchema)) body: CreateSessionNoteInput,
+  ) {
+    return this.notes.create(user, body);
+  }
+
+  @Get('session/:sessionId')
+  @RequirePermissions(Permission.NOTE_READ)
+  listBySession(@CurrentUser() user: AuthPrincipal, @Param('sessionId') sessionId: string) {
+    return this.notes.listBySession(user, sessionId);
+  }
+
+  /** One-way transition; a signed note can never be re-signed or edited in place. */
+  @Post(':id/sign')
+  @UseGuards(ClinicalWriteGuard)
+  @RequirePermissions(Permission.NOTE_WRITE)
+  sign(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
+    return this.notes.sign(user, id);
+  }
+}

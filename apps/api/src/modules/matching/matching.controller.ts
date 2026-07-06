@@ -1,0 +1,39 @@
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  approveAssignmentSchema,
+  Permission,
+  type ApproveAssignmentInput,
+  type AuthPrincipal,
+} from '@vpsy/contracts';
+import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
+import { PermissionsGuard } from '../../common/auth/permissions.guard';
+import { RequirePermissions } from '../../common/auth/permissions.decorator';
+import { CurrentUser } from '../../common/auth/current-user.decorator';
+import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
+import { MatchingService } from './matching.service';
+
+@ApiTags('matching')
+@ApiBearerAuth()
+@Controller('assignments')
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+export class MatchingController {
+  constructor(private readonly matching: MatchingService) {}
+
+  /** Manager triage board. */
+  @Get('proposals')
+  @RequirePermissions(Permission.ASSIGNMENT_READ)
+  listProposals(@CurrentUser() user: AuthPrincipal) {
+    return this.matching.listProposals(user);
+  }
+
+  /** Manager approves an assignment — final authority. */
+  @Post('approve')
+  @RequirePermissions(Permission.ASSIGNMENT_APPROVE)
+  approve(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(approveAssignmentSchema)) body: ApproveAssignmentInput,
+  ) {
+    return this.matching.approve(user, body);
+  }
+}

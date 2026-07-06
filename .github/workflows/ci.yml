@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build, test & schema check
+    runs-on: ubuntu-latest
+
+    # Real Postgres so the Prisma schema is proven to apply, not just parse.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vpsy
+          POSTGRES_PASSWORD: vpsy
+          POSTGRES_DB: vpsy
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vpsy -d vpsy"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+
+    env:
+      DATABASE_URL: postgresql://vpsy:vpsy@localhost:5432/vpsy?schema=public
+      JWT_ACCESS_SECRET: ci-access-secret
+      JWT_REFRESH_SECRET: ci-refresh-secret
+      NODE_OPTIONS: --max-old-space-size=4096
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate
+        run: pnpm --filter @vpsy/database exec prisma generate
+
+      - name: Validate schema
+        run: pnpm --filter @vpsy/database run validate
+
+      - name: Apply schema to Postgres (proves migrations apply)
+        run: pnpm --filter @vpsy/database exec prisma db push --skip-generate
+
+      - name: Seed
+        run: pnpm --filter @vpsy/database run seed
+
+      - name: Build (turbo — contracts → database → api + web)
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test

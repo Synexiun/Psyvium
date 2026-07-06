@@ -1,0 +1,1410 @@
+// VPSY OS — Clinical Psychology Operating System
+// Canonical data model. See docs/technical/02-data-model.md for the narrative.
+//
+// Conventions:
+//  - Opaque cuid PKs. Money is Decimal(18,4). Timestamps are UTC.
+//  - `tenantId` is a scalar (not a Prisma relation) on tenant-scoped tables so
+//    Postgres RLS is the enforcement backstop and Tenant isn't bloated with
+//    back-relations. Real domain relations ARE modeled explicitly.
+//  - Clinical records are soft-deleted (deletedAt), never hard-deleted.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Enums (mirror packages/contracts/src/enums.ts)
+// ─────────────────────────────────────────────────────────────
+enum RoleName {
+  CLIENT
+  PSYCHOLOGIST
+  MANAGER
+  SUPERVISOR
+  ADMIN
+  FINANCE
+  EXECUTIVE
+  GOVERNMENT
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum ClinicType {
+  VIRTUAL
+  PHYSICAL
+  HYBRID
+}
+
+enum SeverityBand {
+  LOW
+  MODERATE
+  HIGH
+  SEVERE
+}
+
+enum TherapyFormat {
+  INDIVIDUAL
+  COUPLE
+  FAMILY
+  GROUP
+}
+
+enum IntakeStatus {
+  DRAFT
+  SUBMITTED
+  SCREENED
+  TRIAGED
+}
+
+enum AssignmentStatus {
+  PROPOSED
+  APPROVED
+  ACTIVE
+  TRANSFERRED
+  CLOSED
+}
+
+enum AppointmentStatus {
+  BOOKED
+  CONFIRMED
+  COMPLETED
+  NO_SHOW
+  CANCELLED
+}
+
+enum SessionModality {
+  VIDEO
+  AUDIO
+  IN_PERSON
+}
+
+enum ConsentType {
+  TELEPSYCHOLOGY
+  DATA_PROCESSING
+  RECORDING
+  RESEARCH
+  CRISIS_POLICY
+}
+
+enum RiskType {
+  SUICIDAL_IDEATION
+  SELF_HARM
+  HOMICIDAL
+  DOMESTIC_VIOLENCE
+  ABUSE_NEGLECT
+  PSYCHOSIS
+  MANIA
+  SEVERE_SUBSTANCE
+  MEDICAL_EMERGENCY
+}
+
+enum RiskSource {
+  SCREENING
+  AI
+  CLINICIAN
+  WEARABLE
+}
+
+enum RiskStatus {
+  OPEN
+  ACKNOWLEDGED
+  ESCALATED
+  RESOLVED
+}
+
+enum InterventionType {
+  CBT
+  DBT
+  ACT
+  SCHEMA
+  EMDR_REFERRAL
+  EXPOSURE
+  BEHAVIORAL_ACTIVATION
+  MINDFULNESS
+  PSYCHOEDUCATION
+  SLEEP_HYGIENE
+  COUPLES
+  FAMILY
+  CRISIS_SAFETY
+  RELAPSE_PREVENTION
+}
+
+enum ScoringMethod {
+  CLASSICAL
+  IRT
+  CAT
+}
+
+enum IrtModel {
+  RASCH
+  TWO_PL
+  THREE_PL
+  GRM
+}
+
+enum LicensingKind {
+  PUBLIC_DOMAIN
+  LICENSED
+  PROPRIETARY
+}
+
+enum AdministrationMode {
+  STATIC
+  CAT
+}
+
+enum ContractType {
+  SALARY
+  PER_SESSION
+  REVENUE_SHARE
+  TIERED_COMMISSION
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  REFUNDED
+  VOID
+}
+
+enum PayoutStatus {
+  PENDING
+  COMPUTED
+  RELEASED
+  FAILED
+}
+
+enum AiAgent {
+  INTAKE
+  DIFFERENTIAL
+  TREATMENT_PLAN
+  SESSION_NOTE
+  OUTCOME
+  CRISIS_RISK
+  PSYCHOMETRIC
+  ALLOCATION
+}
+
+enum HumanDecision {
+  ACCEPTED
+  MODIFIED
+  REJECTED
+  PENDING
+}
+
+enum LeadSource {
+  WEB
+  REFERRAL
+  CAMPAIGN
+  INSTITUTION
+}
+
+enum ReferrerType {
+  DOCTOR
+  SCHOOL
+  EMPLOYER
+  COURT
+  INSTITUTION
+  SELF
+}
+
+enum EngagementKind {
+  CALL
+  SMS
+  EMAIL
+  MEDIA_MESSAGE
+  NOTE
+  MEETING
+}
+
+enum EngagementDirection {
+  INBOUND
+  OUTBOUND
+}
+
+// ── Group I — Communications Hub (context 30) ──
+enum PhoneCapability {
+  VOICE
+  SMS
+}
+
+enum CallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum CallStatus {
+  RINGING
+  IN_PROGRESS
+  COMPLETED
+  NO_ANSWER
+  FAILED
+  VOICEMAIL
+}
+
+enum SmsDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum SmsStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+}
+
+enum MediaKind {
+  VOICE
+  VIDEO
+}
+
+// ─────────────────────────────────────────────────────────────
+// Group A — Identity, Tenancy, Access
+// ─────────────────────────────────────────────────────────────
+model Tenant {
+  id              String   @id @default(cuid())
+  name            String
+  countryCode     String   @db.VarChar(2)
+  residencyRegion String   @default("global")
+  config          Json     @default("{}")
+  status          String   @default("active")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  clinics Clinic[]
+  users   User[]
+
+  @@index([countryCode])
+}
+
+model Clinic {
+  id        String     @id @default(cuid())
+  tenantId  String
+  tenant    Tenant     @relation(fields: [tenantId], references: [id])
+  name      String
+  type      ClinicType @default(VIRTUAL)
+  timezone  String     @default("UTC")
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([tenantId])
+}
+
+model User {
+  id             String     @id @default(cuid())
+  tenantId       String
+  tenant         Tenant     @relation(fields: [tenantId], references: [id])
+  email          String
+  phone          String?
+  hashedPassword String
+  fullName       String
+  mfaEnabled     Boolean    @default(false)
+  mfaSecret      String?
+  locale         String     @default("en")
+  timezone       String     @default("UTC")
+  status         UserStatus @default(ACTIVE)
+  lastLoginAt    DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  deletedAt      DateTime?
+
+  roleAssignments RoleAssignment[]
+  client          Client?          @relation("UserClient")
+  psychologist    Psychologist?    @relation("UserPsychologist")
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  name        RoleName         @unique
+  description String
+  permissions RolePermission[]
+  assignments RoleAssignment[]
+}
+
+model Permission {
+  id    String           @id @default(cuid())
+  key   String           @unique // e.g. "assignment:approve"
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  role         Role       @relation(fields: [roleId], references: [id])
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([roleId, permissionId])
+}
+
+model RoleAssignment {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  roleId       String
+  role         Role     @relation(fields: [roleId], references: [id])
+  clinicId     String?
+  jurisdiction String?
+  createdAt    DateTime @default(now())
+
+  @@unique([userId, roleId, clinicId])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Group B — People
+// ─────────────────────────────────────────────────────────────
+model Client {
+  id                String    @id @default(cuid())
+  tenantId          String
+  userId            String    @unique
+  user              User      @relation("UserClient", fields: [userId], references: [id])
+  demographics      Json      @default("{}") // dob, sex, gender, address
+  preferredLanguage String    @default("en")
+  culturalContext   String?
+  riskLevel         SeverityBand @default(LOW)
+  status            String    @default("active")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  emergencyContacts   EmergencyContact[]
+  consents            Consent[]
+  intakes             Intake[]
+  clinicalProfile     ClinicalProfile?
+  assignments         Assignment[]
+  appointments        Appointment[]
+  treatmentPlans      TreatmentPlan[]
+  riskFlags           RiskFlag[]
+  wearableDevices     WearableDevice[]
+  invoices            Invoice[]
+  diagnosisHypotheses DiagnosisHypothesis[]
+  responses           QuestionnaireResponse[]
+  safetyPlans         SafetyPlan[]
+  outcomeMeasures     OutcomeMeasure[]
+  breakGlassGrants    BreakGlassGrant[]
+
+  @@index([tenantId, status])
+}
+
+model EmergencyContact {
+  id        String  @id @default(cuid())
+  clientId  String
+  client    Client  @relation(fields: [clientId], references: [id])
+  name      String
+  relation  String
+  phone     String
+  isPrimary Boolean @default(false)
+
+  @@index([clientId])
+}
+
+model Consent {
+  id          String      @id @default(cuid())
+  clientId    String
+  client      Client      @relation(fields: [clientId], references: [id])
+  type        ConsentType
+  version     String
+  grantedAt   DateTime    @default(now())
+  revokedAt   DateTime?
+  documentUrl String?
+
+  @@index([clientId, type])
+}
+
+model Psychologist {
+  id               String   @id @default(cuid())
+  tenantId         String
+  userId           String   @unique
+  user             User     @relation("UserPsychologist", fields: [userId], references: [id])
+  specialties      String[]
+  languages        String[]
+  bio              String?
+  yearsExperience  Int      @default(0)
+  acceptingClients Boolean  @default(true)
+  caseloadCap      Int      @default(30)
+  currentCaseload  Int      @default(0)
+  outcomeIndex     Float    @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
+
+  credentials      Credential[]
+  contracts        Contract[]
+  assignments      Assignment[]
+  appointments     Appointment[]
+  payouts          Payout[]
+  availabilitySlots AvailabilitySlot[]
+
+  @@index([tenantId, acceptingClients])
+}
+
+model Credential {
+  id                 String    @id @default(cuid())
+  psychologistId     String
+  psychologist       Psychologist @relation(fields: [psychologistId], references: [id])
+  licenseNumber      String
+  jurisdiction       String
+  issuingBody        String
+  expiresAt          DateTime?
+  verificationStatus String    @default("pending")
+  malpracticeStatus  String    @default("unknown")
+  createdAt          DateTime  @default(now())
+
+  @@index([psychologistId])
+}
+
+model Contract {
+  id             String       @id @default(cuid())
+  tenantId       String
+  psychologistId String
+  psychologist   Psychologist @relation(fields: [psychologistId], references: [id])
+  type           ContractType
+  baseRate       Decimal      @default(0) @db.Decimal(18, 4)
+  currency       String       @default("USD")
+  commissionPct  Float        @default(0)
+  equityGrant    Float        @default(0)
+  supervisorId   String?
+  effectiveFrom  DateTime     @default(now())
+  effectiveTo    DateTime?
+  status         String       @default("active")
+  createdAt      DateTime     @default(now())
+
+  revenueShareRules RevenueShareRule[]
+
+  @@index([psychologistId, status])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Group C — Care pipeline
+// ─────────────────────────────────────────────────────────────
+model Intake {
+  id                   String       @id @default(cuid())
+  tenantId             String
+  clientId             String
+  client               Client       @relation(fields: [clientId], references: [id])
+  presentingProblem    String
+  symptomHistory       String?
+  symptomDurationWeeks Int?
+  medicationHistory    String?
+  substanceUseScreen   Json         @default("{}")
+  traumaExposure       Boolean      @default(false)
+  previousTherapy      Boolean      @default(false)
+  functionalImpairment Json         @default("{}")
+  safetyScreen         Json         @default("{}")
+  status               IntakeStatus @default(SUBMITTED)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  screeningResult ScreeningResult?
+  riskFlags       RiskFlag[]
+
+  @@index([tenantId, status])
+  @@index([clientId])
+}
+
+model ScreeningResult {
+  id                  String       @id @default(cuid())
+  tenantId            String
+  intakeId            String       @unique
+  intake              Intake       @relation(fields: [intakeId], references: [id])
+  riskScore           Float
+  severityBand        SeverityBand
+  urgencyScore        Float
+  suggestedSpecialty  String
+  virtualCareSuitable Boolean      @default(true)
+  contraindications   String[]
+  aiSummary           String?
+  aiRecommendationId  String?
+  createdAt           DateTime     @default(now())
+
+  @@index([tenantId, severityBand])
+}
+
+model ClinicalProfile {
+  id                       String        @id @default(cuid())
+  tenantId                 String
+  clientId                 String        @unique
+  client                   Client        @relation(fields: [clientId], references: [id])
+  goals                    String[]
+  preferredTherapistGender String        @default("any")
+  preferredLanguage        String        @default("en")
+  preferredStyle           String?
+  therapyFormat            TherapyFormat @default(INDIVIDUAL)
+  severityEstimate         SeverityBand  @default(MODERATE)
+  culturalReligiousNotes   String?
+  createdAt                DateTime      @default(now())
+  updatedAt                DateTime      @updatedAt
+}
+
+model Assignment {
+  id             String           @id @default(cuid())
+  tenantId       String
+  clientId       String
+  client         Client           @relation(fields: [clientId], references: [id])
+  psychologistId String?
+  psychologist   Psychologist?    @relation(fields: [psychologistId], references: [id])
+  status         AssignmentStatus @default(PROPOSED)
+  proposedBy     String           @default("AI")
+  approvedBy     String? // manager User id — plain scalar (final authority)
+  managerNote    String?
+  candidates     Json             @default("[]") // ranked MatchCandidate[] + rationale
+  rank           Int?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  appointments Appointment[]
+
+  @@index([tenantId, status])
+  @@index([clientId])
+}
+
+model AvailabilitySlot {
+  id             String       @id @default(cuid())
+  tenantId       String
+  psychologistId String
+  psychologist   Psychologist @relation(fields: [psychologistId], references: [id])
+  startsAt       DateTime
+  endsAt         DateTime
+  isBooked       Boolean      @default(false)
+
+  @@index([psychologistId, startsAt])
+}
+
+model Appointment {
+  id             String            @id @default(cuid())
+  tenantId       String
+  assignmentId   String
+  assignment     Assignment        @relation(fields: [assignmentId], references: [id])
+  clientId       String
+  client         Client            @relation(fields: [clientId], references: [id])
+  psychologistId String
+  psychologist   Psychologist      @relation(fields: [psychologistId], references: [id])
+  startsAt       DateTime
+  endsAt         DateTime
+  timezone       String            @default("UTC")
+  format         SessionModality   @default(VIDEO)
+  status         AppointmentStatus @default(BOOKED)
+  recurrenceRule String?
+  isUrgent       Boolean           @default(false)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  session Session?
+
+  @@index([tenantId, status])
+  @@index([psychologistId, startsAt])
+  @@index([clientId, startsAt])
+}
+
+model Session {
+  id                        String          @id @default(cuid())
+  tenantId                  String
+  appointmentId             String          @unique
+  appointment               Appointment     @relation(fields: [appointmentId], references: [id])
+  startedAt                 DateTime?
+  endedAt                   DateTime?
+  modality                  SessionModality @default(VIDEO)
+  waitingRoomJoinedAt       DateTime?
+  emergencyLocationConfirmed Boolean        @default(false)
+  recordingConsentId        String?
+  recordingUrl              String?
+  createdAt                 DateTime        @default(now())
+
+  notes         SessionNote[]
+  interventions Intervention[]
+
+  @@index([tenantId])
+}
+
+model SessionNote {
+  id                String   @id @default(cuid())
+  tenantId          String
+  sessionId         String
+  session           Session  @relation(fields: [sessionId], references: [id])
+  content           Json     @default("{}") // structured SOAP/DAP
+  continuitySummary String?
+  signedAt          DateTime?
+  signedBy          String?
+  version           Int      @default(1)
+  createdAt         DateTime @default(now())
+
+  @@index([sessionId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Group D — Clinical intelligence
+// ─────────────────────────────────────────────────────────────
+model DiagnosisHypothesis {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  clientId           String
+  client             Client   @relation(fields: [clientId], references: [id])
+  hypothesis         String // non-diagnostic language
+  confidence         Float    @default(0)
+  evidence           String[]
+  referralFlags      String[]
+  clinicianConfirmed Boolean  @default(false)
+  aiRecommendationId String?
+  createdAt          DateTime @default(now())
+
+  @@index([clientId])
+}
+
+model TreatmentPlan {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  clientId            String
+  client              Client    @relation(fields: [clientId], references: [id])
+  problemList         Json      @default("[]")
+  sessionFrequency    String    @default("weekly")
+  measurementSchedule Json      @default("{}")
+  riskPlan            String?
+  reviewDate          DateTime?
+  status              String    @default("active")
+  version             Int       @default(1)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  goals         Goal[]
+  interventions Intervention[]
+
+  @@index([clientId, status])
+}
+
+model Goal {
+  id           String        @id @default(cuid())
+  tenantId     String
+  planId       String
+  plan         TreatmentPlan @relation(fields: [planId], references: [id])
+  description  String
+  targetMetric String?
+  baseline     Float?
+  target       Float?
+  progressPct  Float         @default(0)
+  status       String        @default("active")
+
+  interventions Intervention[]
+
+  @@index([planId])
+}
+
+model Intervention {
+  id                 String           @id @default(cuid())
+  tenantId           String
+  planId             String?
+  plan               TreatmentPlan?   @relation(fields: [planId], references: [id])
+  goalId             String?
+  goal               Goal?            @relation(fields: [goalId], references: [id])
+  sessionId          String?
+  session            Session?         @relation(fields: [sessionId], references: [id])
+  clinicalTarget     String
+  type               InterventionType
+  modality           String           @default("individual")
+  durationMin        Int?
+  rationale          String?
+  clientResponse     String?
+  followUpDate       DateTime?
+  effectivenessRating Int?
+  adverseEffects     String?
+  aiRecommendationId String?
+  clinicianApproved  Boolean          @default(false)
+  createdAt          DateTime         @default(now())
+
+  homework Homework[]
+
+  @@index([tenantId])
+  @@index([sessionId])
+}
+
+model Homework {
+  id             String       @id @default(cuid())
+  tenantId       String
+  interventionId String
+  intervention   Intervention @relation(fields: [interventionId], references: [id])
+  description    String
+  dueDate        DateTime?
+  completionPct  Float        @default(0)
+  clientReport   String?
+  createdAt      DateTime     @default(now())
+
+  @@index([interventionId])
+}
+
+model OutcomeMeasure {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  clientId            String
+  client              Client   @relation(fields: [clientId], references: [id])
+  construct           String
+  value               Float
+  dropoutRisk         Float    @default(0)
+  deteriorationRisk   Float    @default(0)
+  relapseRisk         Float    @default(0)
+  therapeuticResponse String   @default("unknown")
+  occurredAt          DateTime @default(now())
+
+  @@index([clientId, occurredAt])
+}
+
+model RiskFlag {
+  id        String     @id @default(cuid())
+  tenantId  String
+  clientId  String
+  client    Client     @relation(fields: [clientId], references: [id])
+  intakeId  String?
+  intake    Intake?    @relation(fields: [intakeId], references: [id])
+  type      RiskType
+  severity  SeverityBand
+  source    RiskSource
+  evidence  String?
+  status    RiskStatus @default(OPEN)
+  createdAt DateTime   @default(now())
+
+  escalations Escalation[]
+
+  @@index([tenantId, status])
+  @@index([clientId])
+}
+
+model Escalation {
+  id          String    @id @default(cuid())
+  tenantId    String
+  riskFlagId  String
+  riskFlag    RiskFlag  @relation(fields: [riskFlagId], references: [id])
+  openedAt    DateTime  @default(now())
+  assignedTo  String?
+  resolvedAt  DateTime?
+  resolution  String?
+  slaBreached Boolean   @default(false)
+
+  @@index([tenantId, resolvedAt])
+}
+
+model SafetyPlan {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  clientId            String
+  client              Client   @relation(fields: [clientId], references: [id])
+  warningSigns        String[]
+  copingStrategies    String[]
+  supportContacts     Json     @default("[]")
+  professionalContacts Json    @default("[]")
+  environmentSafety   String?
+  version             Int      @default(1)
+  createdAt           DateTime @default(now())
+
+  @@index([clientId])
+}
+
+/// Break-glass emergency access audit trail (Risk & Crisis, ctx 21). Every
+/// invocation is time-boxed (1h) and paired with a HIGH-priority AuditEvent +
+/// a BreakGlassInvoked domain event so the tenant DPO can be alerted. Never
+/// updated — a fresh grant is a fresh row.
+model BreakGlassGrant {
+  id         String   @id @default(cuid())
+  tenantId   String
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id])
+  invokedBy  String
+  reason     String
+  grantedAt  DateTime @default(now())
+  expiresAt  DateTime
+
+  @@index([tenantId, clientId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Group E — Psychometrics
+// ─────────────────────────────────────────────────────────────
+model ItemBank {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  construct String
+  irtModel  IrtModel @default(TWO_PL)
+  language  String   @default("en")
+  createdAt DateTime @default(now())
+
+  items Item[]
+
+  @@index([construct])
+}
+
+model Item {
+  id                     String                @id @default(cuid())
+  itemBankId             String?
+  itemBank               ItemBank?             @relation(fields: [itemBankId], references: [id])
+  questionnaireVersionId String?
+  questionnaireVersion   QuestionnaireVersion? @relation(fields: [questionnaireVersionId], references: [id])
+  stem                   String
+  responseOptions        Json                  @default("[]")
+  discrimination         Float?                // a
+  difficulty             Float?                // b
+  guessing               Float?                // c
+  dif                    Json?                 // differential item functioning
+  active                 Boolean               @default(true)
+  orderIndex             Int                   @default(0)
+
+  @@index([itemBankId])
+  @@index([questionnaireVersionId])
+}
+
+model Questionnaire {
+  id            String        @id @default(cuid())
+  tenantId      String?
+  code          String        @unique
+  name          String
+  construct     String
+  licensing     LicensingKind @default(PUBLIC_DOMAIN)
+  scoringMethod ScoringMethod @default(CLASSICAL)
+  createdAt     DateTime      @default(now())
+
+  versions QuestionnaireVersion[]
+}
+
+model QuestionnaireVersion {
+  id              String   @id @default(cuid())
+  questionnaireId String
+  questionnaire   Questionnaire @relation(fields: [questionnaireId], references: [id])
+  version         String
+  norms           Json     @default("{}")
+  cutoffs         Json     @default("{}")
+  validityScales  Json     @default("{}")
+  published       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  items     Item[]
+  responses QuestionnaireResponse[]
+
+  @@unique([questionnaireId, version])
+}
+
+model QuestionnaireResponse {
+  id                 String             @id @default(cuid())
+  tenantId           String
+  versionId          String
+  version            QuestionnaireVersion @relation(fields: [versionId], references: [id])
+  clientId           String
+  client             Client             @relation(fields: [clientId], references: [id])
+  answers            Json               @default("{}")
+  administrationMode AdministrationMode @default(STATIC)
+  validityFlags      Json               @default("{}")
+  responseTimeMs     Int?
+  completedAt        DateTime           @default(now())
+
+  score PsychometricScore?
+
+  @@index([clientId, completedAt])
+  @@index([tenantId])
+}
+
+model PsychometricScore {
+  id                String                @id @default(cuid())
+  tenantId          String
+  responseId        String                @unique
+  response          QuestionnaireResponse @relation(fields: [responseId], references: [id])
+  rawScore          Float?
+  thetaEstimate     Float?
+  standardError     Float?
+  percentile        Float?
+  severityBand      SeverityBand?
+  interpretation    String?
+  reliabilityAtTheta Float?
+  createdAt         DateTime              @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// Group E2 — Wearables (registry in Postgres; raw metrics belong in TimescaleDB)
+// ─────────────────────────────────────────────────────────────
+model WearableDevice {
+  id         String   @id @default(cuid())
+  tenantId   String
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id])
+  provider   String // apple_health | google_fit | fitbit | oura | garmin
+  externalId String?
+  consentId  String? // gated by an explicit Consent
+  connectedAt DateTime @default(now())
+  lastSyncAt DateTime?
+
+  metrics WearableMetric[]
+
+  @@index([clientId])
+}
+
+model WearableMetric {
+  id         String   @id @default(cuid())
+  tenantId   String
+  deviceId   String
+  device     WearableDevice @relation(fields: [deviceId], references: [id])
+  kind       String // hr | hrv | sleep_minutes | rhr | steps | respiratory_rate | skin_temp | stress
+  value      Float
+  unit       String?
+  recordedAt DateTime
+
+  @@index([deviceId, recordedAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Group F — Engagement & documents
+// ─────────────────────────────────────────────────────────────
+model Thread {
+  id        String   @id @default(cuid())
+  tenantId  String
+  clientId  String
+  subject   String?
+  createdAt DateTime @default(now())
+
+  messages Message[]
+
+  @@index([tenantId, clientId])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  threadId  String
+  thread    Thread   @relation(fields: [threadId], references: [id])
+  senderId  String
+  body      String
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([threadId])
+}
+
+model Document {
+  id              String   @id @default(cuid())
+  tenantId        String
+  ownerType       String
+  ownerId         String
+  category        String
+  storageKey      String
+  mimeType        String
+  sizeBytes       Int
+  virusScanStatus String   @default("pending")
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId, ownerType, ownerId])
+}
+
+model Report {
+  id          String   @id @default(cuid())
+  tenantId    String
+  type        String
+  scope       String // client|psychologist|manager|executive|national
+  parameters  Json     @default("{}")
+  storageKey  String?
+  generatedAt DateTime @default(now())
+
+  @@index([tenantId, scope])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Group G — Business & finance
+// ─────────────────────────────────────────────────────────────
+model Invoice {
+  id             String        @id @default(cuid())
+  tenantId       String
+  clientId       String
+  client         Client        @relation(fields: [clientId], references: [id])
+  lineItems      Json          @default("[]")
+  amount         Decimal       @db.Decimal(18, 4)
+  currency       String        @default("USD")
+  status         InvoiceStatus @default(DRAFT)
+  dueDate        DateTime?
+  packageId      String?
+  subscriptionId String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  payments Payment[]
+
+  @@index([tenantId, status])
+  @@index([clientId])
+}
+
+model Payment {
+  id         String   @id @default(cuid())
+  tenantId   String
+  invoiceId  String
+  invoice    Invoice  @relation(fields: [invoiceId], references: [id])
+  amount     Decimal  @db.Decimal(18, 4)
+  currency   String   @default("USD")
+  method     String   @default("card")
+  pspRef     String?
+  status     String   @default("pending")
+  capturedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([invoiceId])
+}
+
+model LedgerAccount {
+  id       String  @id @default(cuid())
+  tenantId String
+  code     String
+  name     String
+  type     String // asset|liability|equity|revenue|expense
+
+  entries AccountingEntry[]
+
+  @@unique([tenantId, code])
+}
+
+model AccountingEntry {
+  id              String        @id @default(cuid())
+  tenantId        String
+  ledgerAccountId String
+  ledgerAccount   LedgerAccount @relation(fields: [ledgerAccountId], references: [id])
+  debit           Decimal       @default(0) @db.Decimal(18, 4)
+  credit          Decimal       @default(0) @db.Decimal(18, 4)
+  invoiceId       String?
+  payoutId        String?
+  memo            String?
+  postedAt        DateTime      @default(now())
+
+  @@index([tenantId, ledgerAccountId])
+}
+
+model RevenueShareRule {
+  id                String   @id @default(cuid())
+  tenantId          String
+  contractId        String
+  contract          Contract @relation(fields: [contractId], references: [id])
+  basis             String   @default("REVENUE") // SESSION|REVENUE|GROUP_SPLIT
+  pct               Float    @default(0)
+  seniorOverridePct Float    @default(0)
+  supervisorSharePct Float   @default(0)
+  clinicSharePct    Float    @default(0)
+  referralSharePct  Float    @default(0)
+  countryRules      Json     @default("{}")
+
+  @@index([contractId])
+}
+
+model Payout {
+  id             String       @id @default(cuid())
+  tenantId       String
+  psychologistId String
+  psychologist   Psychologist @relation(fields: [psychologistId], references: [id])
+  periodStart    DateTime
+  periodEnd      DateTime
+  computedAmount Decimal      @default(0) @db.Decimal(18, 4)
+  currency       String       @default("USD")
+  rulesApplied   Json         @default("{}")
+  status         PayoutStatus @default(PENDING)
+  releasedAt     DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([tenantId, status])
+  @@index([psychologistId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Group H — AI, audit, compliance, analytics
+// ─────────────────────────────────────────────────────────────
+model AIModelVersion {
+  id          String   @id @default(cuid())
+  provider    String
+  model       String
+  version     String
+  capability  String
+  evalMetrics Json     @default("{}")
+  activatedAt DateTime @default(now())
+
+  recommendations AIRecommendation[]
+
+  @@unique([provider, model, version])
+}
+
+model PromptVersion {
+  id          String   @id @default(cuid())
+  agent       AiAgent
+  version     String
+  template    String
+  guardrails  Json     @default("{}")
+  activatedAt DateTime @default(now())
+
+  recommendations AIRecommendation[]
+
+  @@unique([agent, version])
+}
+
+model AIRecommendation {
+  id               String         @id @default(cuid())
+  tenantId         String
+  agent            AiAgent
+  inputHash        String
+  output           Json           @default("{}")
+  confidence       Float          @default(0)
+  modelVersionId   String
+  modelVersion     AIModelVersion @relation(fields: [modelVersionId], references: [id])
+  promptVersionId  String
+  promptVersion    PromptVersion  @relation(fields: [promptVersionId], references: [id])
+  humanDecision    HumanDecision  @default(PENDING)
+  decidedBy        String?
+  linkedEntityType String?
+  linkedEntityId   String?
+  createdAt        DateTime       @default(now())
+
+  @@index([tenantId, agent])
+  @@index([linkedEntityType, linkedEntityId])
+}
+
+/// Append-only, hash-chained audit log. Never updated or deleted.
+model AuditEvent {
+  id         String   @id @default(cuid())
+  tenantId   String
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  before     Json?
+  after      Json?
+  ip         String?
+  userAgent  String?
+  prevHash   String?
+  hash       String
+  occurredAt DateTime @default(now())
+
+  @@index([tenantId, entityType, entityId])
+  @@index([occurredAt])
+}
+
+model PopulationMetric {
+  id         String   @id @default(cuid())
+  region     String
+  metric     String
+  value      Float
+  window     String
+  cohortSize Int // k-anonymity floor enforced at write time
+  computedAt DateTime @default(now())
+
+  @@index([region, metric])
+}
+
+model FeatureFlag {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  key       String
+  enabled   Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, key])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Group I — CRM, Communications & Async Media (context 29 subset;
+// telephony/media models land with 15-communications-and-telephony.md)
+// See docs/technical/16-crm-and-referrals.md.
+// ─────────────────────────────────────────────────────────────
+
+/// Tenant-configurable funnel stage. `isWon`/`isLost` let reporting compute
+/// conversion without hardcoding stage names across networks/countries.
+model PipelineStage {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  order     Int
+  isWon     Boolean  @default(false)
+  isLost    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  leads Lead[]
+
+  @@index([tenantId, order])
+}
+
+/// External referring entity (doctor, school, employer, court, institution,
+/// or self-referral). `referralSharePct` mirrors the commercial term also
+/// encoded on a `Contract`/`RevenueShareRule` once an agreement is attached.
+model Referrer {
+  id               String       @id @default(cuid())
+  tenantId         String
+  type             ReferrerType
+  organizationName String
+  contact          Json         @default("{}")
+  agreementId      String?
+  referralSharePct Float        @default(0)
+  active           Boolean      @default(true)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  leads Lead[]
+
+  @@index([tenantId, active])
+}
+
+/// Acquisition/engagement campaign. Channel-agnostic at the domain level —
+/// SEO/organic, paid/social, email, SMS all roll up the same `metrics` JSON.
+model Campaign {
+  id        String    @id @default(cuid())
+  tenantId  String
+  channel   String
+  audience  String?
+  startsAt  DateTime?
+  endsAt    DateTime?
+  metrics   Json      @default("{}")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  leads Lead[]
+
+  @@index([tenantId])
+}
+
+/// A prospective client before registration. Converts into a `Client`
+/// (Group B) — CRM data never leaks into the clinical record beyond the
+/// attribution link and non-clinical `presentingInterest` text.
+/// `convertedClientId` is an intentionally plain scalar (like
+/// `Assignment.approvedBy`) rather than a relation, keeping Group I from
+/// bloating the clinical Client model.
+model Lead {
+  id                 String        @id @default(cuid())
+  tenantId           String
+  source             LeadSource
+  contact            Json          @default("{}")
+  presentingInterest String?
+  pipelineStageId    String
+  pipelineStage      PipelineStage @relation(fields: [pipelineStageId], references: [id])
+  referrerId         String?
+  referrer           Referrer?     @relation(fields: [referrerId], references: [id])
+  campaignId         String?
+  campaign           Campaign?     @relation(fields: [campaignId], references: [id])
+  ownerId            String?
+  status             String        @default("active")
+  convertedClientId  String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@index([tenantId, status])
+  @@index([pipelineStageId])
+  @@index([referrerId])
+  @@index([campaignId])
+}
+
+/// Unified timeline item shared by CRM & Referrals and the Communications
+/// Hub (`15-communications-and-telephony.md` §7.1). Polymorphic subject
+/// (`Lead`, `Referrer`, or post-conversion `Client`). Write-once — a
+/// correction is a new activity, never a rewritten summary.
+model EngagementActivity {
+  id          String              @id @default(cuid())
+  tenantId    String
+  subjectType String
+  subjectId   String
+  kind        EngagementKind
+  direction   EngagementDirection
+  summary     String
+  occurredAt  DateTime            @default(now())
+  actorId     String?
+  createdAt   DateTime            @default(now())
+
+  @@index([tenantId, subjectType, subjectId])
+  @@index([subjectType, subjectId, occurredAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Group I — Communications Hub (context 30, `15-communications-and-telephony.md`)
+// Provider-agnostic telephony/SMS + shared-SFU signaling + async media
+// messages. `TelephonyProvider`/`SmsProvider` ports live in the API's
+// `modules/communications` — this schema only carries the resulting state.
+// ─────────────────────────────────────────────────────────────
+
+/// A provisioned E.164 number (`15` §3.1). Provisioning is an admin action
+/// (`comms:configure`) — kept out of this ticket's write surface, seeded here.
+model PhoneNumber {
+  id           String            @id @default(cuid())
+  tenantId     String
+  e164         String
+  provider     String            @default("self_hosted")
+  capabilities PhoneCapability[]
+  assignedTo   String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@unique([tenantId, e164])
+  @@index([tenantId])
+}
+
+/// One row per call, inbound or outbound (`15` §3.4). Recording fields are
+/// populated only once a `recordingConsentId` gate has passed — never set by
+/// this ticket's offline stub, which never records.
+model CallSession {
+  id                  String        @id @default(cuid())
+  tenantId            String
+  direction           CallDirection
+  fromE164            String
+  toE164              String
+  clientId            String?
+  psychologistId      String?
+  purpose             String?
+  startedAt           DateTime      @default(now())
+  endedAt             DateTime?
+  durationSec         Int?
+  status              CallStatus    @default(RINGING)
+  recordingConsentId  String?
+  recordingStorageKey String?
+  providerRef         String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  @@index([tenantId, clientId])
+  @@index([tenantId, status])
+}
+
+/// SMS lifecycle QUEUED → SENT → DELIVERED | FAILED (`15` §4.3).
+model SmsMessage {
+  id          String       @id @default(cuid())
+  tenantId    String
+  direction   SmsDirection
+  toE164      String
+  fromE164    String
+  body        String
+  status      SmsStatus    @default(QUEUED)
+  providerRef String?
+  templateId  String?
+  clientId    String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([tenantId, clientId])
+  @@index([tenantId, status])
+}
+
+/// Async (store-and-forward) voice/video message (`15` §6.2; Messaging,
+/// context 19). `consentId` gates delivery when the tenant requires it;
+/// `deliveredAt`/`readAt` are receipts visible only to thread participants.
+model MediaMessage {
+  id          String    @id @default(cuid())
+  tenantId    String
+  threadId    String
+  senderId    String
+  kind        MediaKind
+  storageKey  String
+  durationSec Int
+  mimeType    String
+  transcript  String?
+  sizeBytes   Int       @default(0)
+  deliveredAt DateTime?
+  readAt      DateTime?
+  consentId   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([tenantId, threadId])
+  @@index([threadId, createdAt])
+}

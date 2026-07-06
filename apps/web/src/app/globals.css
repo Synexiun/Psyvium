@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-display: 'Space Grotesk';
+  --font-body: 'Inter';
+  --font-mono: 'IBM Plex Mono';
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-console-900 text-mist/90 font-sans antialiased;
+    font-feature-settings: 'ss01', 'cv01';
+    overflow-x: clip; /* wide content must scroll in its own container, never the body */
+  }
+  ::selection {
+    @apply bg-teal/30 text-mist;
+  }
+  h1, h2, h3 {
+    @apply font-display tracking-tight;
+  }
+  /* Visible focus everywhere a component doesn't define its own */
+  :focus-visible {
+    @apply outline outline-2 outline-offset-2 outline-teal-soft;
+  }
+}
+
+@layer components {
+  /* Instrument eyebrow — the mono utility label that recurs across the system */
+  .eyebrow {
+    @apply font-mono text-[11px] uppercase tracking-eyebrow text-teal-soft/80;
+  }
+  .container-vpsy {
+    @apply mx-auto w-full max-w-6xl px-6;
+  }
+  .card {
+    @apply rounded-2xl border border-white/[0.06] bg-console-800/60 backdrop-blur-sm;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-teal px-5 py-3 font-medium text-console-950 transition
+           hover:bg-teal-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-soft;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 px-5 py-3 font-medium text-mist/90 transition
+           hover:border-teal/50 hover:text-mist focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-soft;
+  }
+  .field-label {
+    @apply mb-1.5 block font-mono text-[11px] uppercase tracking-[0.14em] text-mist/50;
+  }
+  .field {
+    @apply w-full rounded-xl border border-white/10 bg-console-950/60 px-4 py-3 text-mist placeholder:text-mist/30
+           focus:border-teal/60 focus:outline-none focus:ring-1 focus:ring-teal/40;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-console-700/50 px-3 py-1 font-mono text-[11px] uppercase tracking-wider;
+  }
+  /* Attention chip — signal-amber is reserved for risk/attention only */
+  .chip-signal {
+    @apply chip border-signal/30 bg-signal/10 text-signal-soft;
+  }
+  .card-inset {
+    @apply rounded-xl border border-white/[0.06] bg-console-950/40;
+  }
+  /* Skip link: hidden until focused (WCAG 2.4.1) */
+  .skip-link {
+    @apply absolute start-4 top-4 z-[100] -translate-y-24 rounded-lg bg-teal px-4 py-2 font-medium text-console-950 transition focus:translate-y-0;
+  }
+}
+
+/* Range inputs — calm teal track/thumb across engines */
+input[type='range'] {
+  @apply h-1.5 w-full cursor-pointer appearance-none rounded-full bg-console-600;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  width: 18px;
+  border-radius: 9999px;
+  background: #38bdc9;
+  border: 3px solid #0b1020;
+  box-shadow: 0 0 0 1px rgba(124, 217, 225, 0.4);
+}
+input[type='range']::-moz-range-thumb {
+  height: 18px;
+  width: 18px;
+  border-radius: 9999px;
+  background: #38bdc9;
+  border: 3px solid #0b1020;
+  box-shadow: 0 0 0 1px rgba(124, 217, 225, 0.4);
+}
+input[type='range']:focus-visible {
+  outline: 2px solid #7cd9e1;
+  outline-offset: 4px;
+}
+
+/* Fixed bottom nav clears the home-indicator on iOS */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Respect reduced-motion everywhere */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
