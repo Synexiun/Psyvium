@@ -78,6 +78,10 @@ async function main() {
   const manager = await makeUser('user_manager', 'manager@vpsy.health', 'Dr. Mara Osei (Clinical Director)', 'MANAGER');
   // Executive account — holds reports:read + national:read (powers the /reports dashboard).
   await makeUser('user_exec', 'exec@vpsy.health', 'Sam Okonkwo (Executive)', 'EXECUTIVE');
+  // Admin account (Wave E — Admin Configuration, ctx 27): holds admin:config,
+  // the only role that can drive /admin/tenant, /admin/clinics, and the
+  // EU-AI-Act kill-switch /admin/feature-flags surface.
+  await makeUser('user_admin', 'admin@vpsy.health', 'Priya Nair (System Admin)', 'ADMIN');
 
   const psyUserA = await makeUser('user_psy_a', 'dr.rivera@vpsy.health', 'Dr. Elena Rivera', 'PSYCHOLOGIST');
   const psyA = await prisma.psychologist.upsert({
@@ -351,20 +355,36 @@ async function main() {
   // Worked example (pinned in irt-scoring.service.spec.ts): answers
   // {q1:2,q2:1,q3:3,q4:1,q5:2,q6:2,q7:3} → theta=0.803, SE=0.385.
   // ─────────────────────────────────────────────────────────────
+  // WAVE C: scoringMethod flipped IRT → CAT so the demo instrument can also be
+  // administered adaptively (POST /assessments/cat/start requires an explicit
+  // CAT opt-in). Batch scoring is unchanged — computeIrt() accepts both IRT
+  // and CAT — so the pinned worked example above still holds. The `update`
+  // block flips an already-seeded database too (upsert would otherwise skip it).
   const qIrt = await prisma.questionnaire.upsert({
     where: { code: 'VPSY-ANX-IRT-7' },
-    update: {},
+    update: { scoringMethod: 'CAT' },
     create: {
       code: 'VPSY-ANX-IRT-7',
       name: 'VPSY Anxiety Scale (7-item, IRT)',
       construct: 'anxiety',
       licensing: 'PUBLIC_DOMAIN',
-      scoringMethod: 'IRT',
+      scoringMethod: 'CAT',
     },
   });
   const qvIrt = await prisma.questionnaireVersion.upsert({
     where: { questionnaireId_version: { questionnaireId: qIrt.id, version: '1.0.0' } },
-    update: {},
+    // Band-convention fix must reach an ALREADY-seeded row too (update:{} left
+    // the old drifted bands live in existing DBs — CAT-agent finding).
+    update: {
+      cutoffs: {
+        bands: [
+          { band: 'LOW', min: 0, max: 4 },
+          { band: 'MODERATE', min: 5, max: 9 },
+          { band: 'HIGH', min: 10, max: 14 },
+          { band: 'SEVERE', min: 15, max: 21 },
+        ],
+      },
+    },
     create: {
       questionnaireId: qIrt.id,
       version: '1.0.0',

@@ -175,3 +175,85 @@ export const versionItemsResponseSchema = z.object({
   items: z.array(assessmentItemSchema),
 });
 export type VersionItemsResponseDto = z.infer<typeof versionItemsResponseSchema>;
+
+// ─────────────────────────────────────────────────────────────
+// Computerized Adaptive Testing (docs/technical/07-psychometrics-engine.md §6)
+// Stateful server-driven flow: POST /assessments/cat/start →
+// repeated POST /assessments/cat/:sessionId/answer → final PsychometricScore
+// persisted through the SAME administer pipeline as a batch response
+// (classical banding + safety-item hook + honest IRT/synthetic labeling).
+// ─────────────────────────────────────────────────────────────
+
+export const catStartSchema = z.object({
+  versionId: z.string(),
+  clientId: z.string(),
+});
+export type CatStartInput = z.infer<typeof catStartSchema>;
+
+/**
+ * `itemId` MUST echo the item the server selected (the session's pending
+ * item) — a stale/duplicate submit therefore fails loudly (400) instead of
+ * silently recording an answer against the wrong item.
+ */
+export const catAnswerSchema = z.object({
+  itemId: z.string(),
+  answer: z.number(),
+});
+export type CatAnswerInput = z.infer<typeof catAnswerSchema>;
+
+/** The next item the client should administer (never carries calibration parameters). */
+export const catNextItemSchema = z.object({
+  itemId: z.string(),
+  linkId: z.string().nullable(),
+  stem: z.string(),
+  responseOptions: z.unknown(),
+  orderIndex: z.number(),
+});
+export type CatNextItemDto = z.infer<typeof catNextItemSchema>;
+
+/**
+ * Why the session stopped (doc §6 stopping rules, checked in this order):
+ *  - SE_TARGET_REACHED   — posterior SE(θ) ≤ 0.30
+ *  - MAX_ITEMS_REACHED   — 12 items administered
+ *  - ITEM_BANK_EXHAUSTED — every calibrated item was administered
+ */
+export const catTerminationReasonSchema = z.enum([
+  'SE_TARGET_REACHED',
+  'MAX_ITEMS_REACHED',
+  'ITEM_BANK_EXHAUSTED',
+]);
+export type CatTerminationReason = z.infer<typeof catTerminationReasonSchema>;
+
+/** One step of the θ/SE trajectory: the EAP re-estimate after each recorded answer. */
+export const catThetaPointSchema = z.object({
+  itemId: z.string(),
+  linkId: z.string(),
+  answer: z.number(),
+  theta: z.number(),
+  standardError: z.number(),
+});
+export type CatThetaPoint = z.infer<typeof catThetaPointSchema>;
+
+export const catSessionStatusSchema = z.enum(['ACTIVE', 'COMPLETED']);
+export type CatSessionStatus = z.infer<typeof catSessionStatusSchema>;
+
+export const catSessionStateSchema = z.object({
+  sessionId: z.string(),
+  versionId: z.string(),
+  clientId: z.string(),
+  status: catSessionStatusSchema,
+  /** Count of ANSWERED items (a pending, not-yet-answered item is excluded). */
+  itemsAnswered: z.number().int().nonnegative(),
+  /** Current EAP θ̂ — the prior mean 0 before the first answer. */
+  currentTheta: z.number().nullable(),
+  /** Current posterior SE — the prior SD 1 before the first answer. */
+  currentSE: z.number().nullable(),
+  thetaHistory: z.array(catThetaPointSchema),
+  /** Pending item to administer; null once the session is COMPLETED. */
+  nextItem: catNextItemSchema.nullable(),
+  terminationReason: catTerminationReasonSchema.nullable(),
+  /** QuestionnaireResponse persisted on completion (null while ACTIVE). */
+  responseId: z.string().nullable(),
+  score: psychometricScoreSchema.nullable(),
+});
+export type CatSessionStateDto = z.infer<typeof catSessionStateSchema>;

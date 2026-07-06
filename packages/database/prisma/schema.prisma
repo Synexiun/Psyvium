@@ -1154,6 +1154,42 @@ model PsychometricScore {
   deletedAt          DateTime?
 }
 
+/// Computerized Adaptive Testing session state (07-psychometrics-engine.md §6;
+/// WAVE C). Purely ADDITIVE — server-driven stateful flow: start selects the
+/// first item at the prior mean θ=0; each answer re-runs EAP over every
+/// administered item and either selects the next max-information item or
+/// terminates (SE ≤ 0.30 / 12 items / bank exhausted — see CatService).
+/// `administeredItemIds` includes the currently-pending (selected but not yet
+/// answered) item; `answers` is keyed by Item.linkId ?? Item.id, the SAME key
+/// convention as QuestionnaireResponse.answers, so the safety-item hook and
+/// EAP scoring behave identically to a batch administration. `status` is a
+/// String (ACTIVE | COMPLETED) — deliberately not a new enum (enums are out of
+/// scope for this wave). `responseId` links the QuestionnaireResponse persisted
+/// on completion (no FK — same polymorphic-lite precedent as
+/// IncidentReview.subjectId; application code owns the integrity).
+/// Holds PHI (clientId + item answers) → RLS tenant-isolation applies (raw SQL
+/// in migrations/20260706200000_wave_c_cat_sessions; db push does NOT apply it).
+model CatSession {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  clientId            String
+  versionId           String
+  status              String    @default("ACTIVE") // ACTIVE | COMPLETED
+  administeredItemIds String[]  @default([])
+  answers             Json      @default("{}")
+  thetaHistory        Json      @default("[]") // [{ itemId, linkId, answer, theta, standardError }]
+  currentTheta        Float?
+  currentSE           Float?
+  terminationReason   String? // SE_TARGET_REACHED | MAX_ITEMS_REACHED | ITEM_BANK_EXHAUSTED
+  responseId          String?   @unique
+  startedAt           DateTime  @default(now())
+  completedAt         DateTime?
+  deletedAt           DateTime?
+
+  @@index([tenantId])
+  @@index([clientId, startedAt])
+}
+
 // ─────────────────────────────────────────────────────────────
 // Group E2 — Wearables (registry in Postgres; raw metrics belong in TimescaleDB)
 // ─────────────────────────────────────────────────────────────

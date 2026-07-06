@@ -15,9 +15,72 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
-import { ScoringService } from './scoring.service';
+import { ScoringService, type ClassicalScoreResult, type SafetyItemHit } from './scoring.service';
 import { IrtScoringService, type IrtScorableItem } from './irt-scoring.service';
 import { ScoringMethod, type IrtScoreResult } from '@vpsy/contracts';
+
+/**
+ * Mirrors the Prisma `AdministrationMode` enum values (STATIC batch form vs
+ * server-driven CAT) without widening `@vpsy/contracts` enums (out of scope
+ * this wave). Prisma's generated enum type is a string-literal union, so these
+ * literals are assignable at the create site.
+ */
+export type ResponseAdministrationMode = 'STATIC' | 'CAT';
+
+/**
+ * Minimal shape of a loaded QuestionnaireVersion the scoring pipeline needs —
+ * kept structural so both `administer` (full Prisma row) and the CAT flow
+ * (same include) satisfy it.
+ */
+export interface ScorableVersion {
+  cutoffs: unknown;
+  questionnaire?: { scoringMethod: string } | null;
+  items?: Array<{ id: string; linkId?: string | null; parameters?: unknown[] }>;
+}
+
+/** Deterministic scoring artifacts shared by the batch and CAT persistence paths. */
+export interface ScoreComputation {
+  computed: ClassicalScoreResult;
+  safetyHits: SafetyItemHit[];
+  irtResult: IrtScoreResult | null;
+  interpretation: string;
+}
+
+export interface PersistedScoreResult {
+  response: {
+    id: string;
+    versionId: string;
+    clientId: string;
+    answers: unknown;
+    completedAt: Date;
+  };
+  score: {
+    id: string;
+    responseId: string;
+    rawScore: number | null;
+    thetaEstimate?: number | null;
+    standardError?: number | null;
+    severityBand: SeverityBand | null;
+    interpretation: string | null;
+    createdAt: Date;
+  };
+  raisedFlagIds: string[];
+  raisedEscalations: { escalationId: string; riskFlagId: string }[];
+}
+
+/**
+ * Structural stand-in for Prisma.TransactionClient covering only the tables
+ * the scoring pipeline writes — lets the CAT flow pass the same `tx` it uses
+ * to close the CatSession, and keeps unit-test mocks honest about which
+ * writes the pipeline performs.
+ */
+export interface ScoringTx {
+  questionnaireResponse: { create: (args: any) => Promise<any> };
+  psychometricScore: { create: (args: any) => Promise<any> };
+  riskFlag: { create: (args: any) => Promise<any> };
+  escalation: { create: (args: any) => Promise<any> };
+  client: { update: (args: any) => Promise<any> };
+}
 
 /** Ordering used to only ever escalate — never silently downgrade — a client's reflected risk level. */
 const SEVERITY_RANK: Record<string, number> = {
@@ -73,14 +136,38 @@ export class PsychometricsService {
     });
     if (!client) throw new NotFoundException('Client not found');
 
+    const computation = this.buildScoreComputation(version, input.answers);
+
+    const result = await this.prisma.$transaction(async (tx) =>
+      this.persistScoredResponse(tx, principal, client, input, computation, 'STATIC'),
+    );
+
+    await this.publishScoredOutcome(principal, input.clientId, computation, result);
+
+    return this.toDto(result.response, result.score);
+  }
+
+  /**
+   * Deterministic scoring artifacts for one set of answers against a
+   * published version — classical raw-sum banding, safety-item hits, the
+   * opt-in IRT EAP result, and the persisted interpretation text (incl. the
+   * honest synthetic-calibration branding + the always-on clinician hedge).
+   * Shared VERBATIM between the batch administer path and CAT completion
+   * (07-psychometrics-engine.md §6) so an adaptively-administered score can
+   * never drift from a batch one in labeling or safety semantics.
+   */
+  buildScoreComputation(
+    version: ScorableVersion,
+    answers: Record<string, number>,
+  ): ScoreComputation {
     const cutoffsParsed = questionnaireCutoffsSchema.safeParse(version.cutoffs);
     if (!cutoffsParsed.success) {
       throw new BadRequestException('Questionnaire version has no valid scoring cutoffs configured');
     }
 
-    const computed = this.scoring.score(input.answers, cutoffsParsed.data);
+    const computed = this.scoring.score(answers, cutoffsParsed.data);
     // Deterministic — same principle as Intake's safety screen (§06 core principle).
-    const safetyHits = this.scoring.checkSafetyItems(input.answers, version.cutoffs);
+    const safetyHits = this.scoring.checkSafetyItems(answers, version.cutoffs);
 
     // ── IRT latent-trait scoring (07-psychometrics-engine.md §5) — opt-in per
     // instrument. Only runs when the instrument declares an IRT-family scoring
@@ -93,7 +180,7 @@ export class PsychometricsService {
     const irtResult = this.computeIrt(
       version.questionnaire?.scoringMethod,
       version.items ?? [],
-      input.answers,
+      answers,
     );
     // Calibration provenance (AERA/APA/NCME Standards Ch.4/6 — clinical audit
     // 2026-07-06): a score computed from SYNTHETIC/demo calibration must never
@@ -122,78 +209,112 @@ export class PsychometricsService {
             : '')
         : computed.interpretation) + HEDGE;
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      const response = await tx.questionnaireResponse.create({
-        data: {
-          tenantId: principal.tenantId,
-          versionId: input.versionId,
-          clientId: input.clientId,
-          answers: input.answers as any,
-          responseTimeMs: input.responseTimeMs,
-        },
-      });
-      const score = await tx.psychometricScore.create({
-        data: {
-          tenantId: principal.tenantId,
-          responseId: response.id,
-          rawScore: computed.rawScore,
-          thetaEstimate: irtResult?.thetaEstimate ?? null,
-          standardError: irtResult?.standardError ?? null,
-          reliabilityAtTheta: irtResult?.reliabilityAtTheta ?? null,
-          percentile: irtResult?.percentile ?? null,
-          severityBand: computed.severityBand ?? null,
-          interpretation,
-        },
-      });
+    return { computed, safetyHits, irtResult, interpretation };
+  }
 
-      // Safety item(s) endorsed → raise RiskFlag(s) + Escalation(s), exactly
-      // as Intake & Screening does for its own safety screen — a standalone
-      // assessment must route to Risk & Crisis just as reliably as intake.
-      const raisedFlagIds: string[] = [];
-      const raisedEscalations: { escalationId: string; riskFlagId: string }[] = [];
-      let highestSafetySeverity: SeverityBand = SeverityBand.LOW;
-      for (const hit of safetyHits) {
-        // Graduated safety-item severity (WAVE CR item 2): the raw endorsed
-        // answer value drives severity instead of flattening every hit to
-        // HIGH — answer 1 stays HIGH (as before), answer >= 2 escalates to
-        // SEVERE.
-        const severity = hit.answer >= 2 ? SeverityBand.SEVERE : SeverityBand.HIGH;
-        if (SEVERITY_RANK[severity] > SEVERITY_RANK[highestSafetySeverity]) highestSafetySeverity = severity;
-
-        const rf = await tx.riskFlag.create({
-          data: {
-            tenantId: principal.tenantId,
-            clientId: input.clientId,
-            type: hit.category,
-            severity,
-            source: RiskSource.SCREENING,
-            evidence: `Safety item "${hit.itemId}" answered ${hit.answer} (>= threshold ${hit.minAnswer}) on assessment response`,
-            evidenceDetail: { itemId: hit.itemId, answer: hit.answer, minAnswer: hit.minAnswer, category: hit.category },
-            status: RiskStatus.ESCALATED,
-          },
-        });
-        const openedAt = new Date();
-        const escalation = await tx.escalation.create({
-          data: {
-            tenantId: principal.tenantId,
-            riskFlagId: rf.id,
-            openedAt,
-            slaDueAt: computeEscalationSlaDueAt(severity, openedAt),
-          },
-        });
-        raisedFlagIds.push(rf.id);
-        raisedEscalations.push({ escalationId: escalation.id, riskFlagId: rf.id });
-      }
-
-      // Reflect elevated risk on the client record — escalate only, never
-      // silently downgrade a client already flagged more severely elsewhere.
-      if (raisedFlagIds.length > 0 && SEVERITY_RANK[client.riskLevel] < SEVERITY_RANK[highestSafetySeverity]) {
-        await tx.client.update({ where: { id: client.id }, data: { riskLevel: highestSafetySeverity } });
-      }
-
-      return { response, score, raisedFlagIds, raisedEscalations };
+  /**
+   * Transactional persistence of a scored response: QuestionnaireResponse +
+   * PsychometricScore created together (a response can never exist unscored),
+   * plus the safety-item hook — RiskFlag(s) + Escalation(s) + client risk
+   * escalation, exactly as Intake & Screening does. Runs inside the caller's
+   * transaction so CAT completion can atomically pair it with closing the
+   * CatSession. `administrationMode` distinguishes a STATIC batch form from a
+   * server-driven CAT administration on the persisted record.
+   */
+  async persistScoredResponse(
+    tx: ScoringTx,
+    principal: AuthPrincipal,
+    client: { id: string; riskLevel: string },
+    input: { versionId: string; clientId: string; answers: Record<string, number>; responseTimeMs?: number },
+    computation: ScoreComputation,
+    administrationMode: ResponseAdministrationMode,
+  ): Promise<PersistedScoreResult> {
+    const { computed, safetyHits, irtResult, interpretation } = computation;
+    const response = await tx.questionnaireResponse.create({
+      data: {
+        tenantId: principal.tenantId,
+        versionId: input.versionId,
+        clientId: input.clientId,
+        answers: input.answers as any,
+        administrationMode,
+        responseTimeMs: input.responseTimeMs,
+      },
+    });
+    const score = await tx.psychometricScore.create({
+      data: {
+        tenantId: principal.tenantId,
+        responseId: response.id,
+        rawScore: computed.rawScore,
+        thetaEstimate: irtResult?.thetaEstimate ?? null,
+        standardError: irtResult?.standardError ?? null,
+        reliabilityAtTheta: irtResult?.reliabilityAtTheta ?? null,
+        percentile: irtResult?.percentile ?? null,
+        severityBand: computed.severityBand ?? null,
+        interpretation,
+      },
     });
 
+    // Safety item(s) endorsed → raise RiskFlag(s) + Escalation(s), exactly
+    // as Intake & Screening does for its own safety screen — a standalone
+    // assessment must route to Risk & Crisis just as reliably as intake.
+    const raisedFlagIds: string[] = [];
+    const raisedEscalations: { escalationId: string; riskFlagId: string }[] = [];
+    let highestSafetySeverity: SeverityBand = SeverityBand.LOW;
+    for (const hit of safetyHits) {
+      // Graduated safety-item severity (WAVE CR item 2): the raw endorsed
+      // answer value drives severity instead of flattening every hit to
+      // HIGH — answer 1 stays HIGH (as before), answer >= 2 escalates to
+      // SEVERE.
+      const severity = hit.answer >= 2 ? SeverityBand.SEVERE : SeverityBand.HIGH;
+      if (SEVERITY_RANK[severity] > SEVERITY_RANK[highestSafetySeverity]) highestSafetySeverity = severity;
+
+      const rf = await tx.riskFlag.create({
+        data: {
+          tenantId: principal.tenantId,
+          clientId: input.clientId,
+          type: hit.category,
+          severity,
+          source: RiskSource.SCREENING,
+          evidence: `Safety item "${hit.itemId}" answered ${hit.answer} (>= threshold ${hit.minAnswer}) on assessment response`,
+          evidenceDetail: { itemId: hit.itemId, answer: hit.answer, minAnswer: hit.minAnswer, category: hit.category },
+          status: RiskStatus.ESCALATED,
+        },
+      });
+      const openedAt = new Date();
+      const escalation = await tx.escalation.create({
+        data: {
+          tenantId: principal.tenantId,
+          riskFlagId: rf.id,
+          openedAt,
+          slaDueAt: computeEscalationSlaDueAt(severity, openedAt),
+        },
+      });
+      raisedFlagIds.push(rf.id);
+      raisedEscalations.push({ escalationId: escalation.id, riskFlagId: rf.id });
+    }
+
+    // Reflect elevated risk on the client record — escalate only, never
+    // silently downgrade a client already flagged more severely elsewhere.
+    if (raisedFlagIds.length > 0 && SEVERITY_RANK[client.riskLevel] < SEVERITY_RANK[highestSafetySeverity]) {
+      await tx.client.update({ where: { id: client.id }, data: { riskLevel: highestSafetySeverity } });
+    }
+
+    return { response, score, raisedFlagIds, raisedEscalations };
+  }
+
+  /**
+   * Post-commit audit + event emission for a scored response — shared by the
+   * batch path and CAT completion so both administrations leave the identical
+   * tamper-evident trail and downstream contexts (Risk & Crisis, MBC) react
+   * the same way regardless of how the items were delivered.
+   */
+  async publishScoredOutcome(
+    principal: AuthPrincipal,
+    clientId: string,
+    computation: ScoreComputation,
+    result: PersistedScoreResult,
+  ): Promise<void> {
+    const { computed, irtResult } = computation;
     await this.audit.record({
       tenantId: principal.tenantId,
       actorId: principal.userId,
@@ -210,21 +331,19 @@ export class PsychometricsService {
     });
     await this.bus.publish(Events.AssessmentScored, principal.tenantId, {
       responseId: result.response.id,
-      clientId: input.clientId,
+      clientId,
       severityBand: computed.severityBand,
     });
     for (const flagId of result.raisedFlagIds) {
-      await this.bus.publish(Events.RiskFlagRaised, principal.tenantId, { riskFlagId: flagId, clientId: input.clientId });
+      await this.bus.publish(Events.RiskFlagRaised, principal.tenantId, { riskFlagId: flagId, clientId });
     }
     for (const esc of result.raisedEscalations) {
       await this.bus.publish(Events.EscalationRaised, principal.tenantId, {
         escalationId: esc.escalationId,
         riskFlagId: esc.riskFlagId,
-        clientId: input.clientId,
+        clientId,
       });
     }
-
-    return this.toDto(result.response, result.score);
   }
 
   /**
@@ -349,7 +468,8 @@ export class PsychometricsService {
     return this.toDto(response, response.score);
   }
 
-  private toDto(
+  /** Public: CAT completion reuses the exact same response+score serialization. */
+  toDto(
     response: {
       id: string;
       versionId: string;

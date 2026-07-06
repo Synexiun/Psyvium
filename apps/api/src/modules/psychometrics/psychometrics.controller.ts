@@ -2,9 +2,13 @@ import { Body, Controller, Get, Param, Post, Query, UseGuards, UseInterceptors }
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   administerResponseSchema,
+  catAnswerSchema,
+  catStartSchema,
   Permission,
   type AdministerResponseInput,
   type AuthPrincipal,
+  type CatAnswerInput,
+  type CatStartInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
@@ -13,13 +17,17 @@ import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 import { PsychometricsService } from './psychometrics.service';
+import { CatService } from './cat.service';
 
 @ApiTags('psychometrics')
 @ApiBearerAuth()
 @Controller('assessments')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class PsychometricsController {
-  constructor(private readonly psychometrics: PsychometricsService) {}
+  constructor(
+    private readonly psychometrics: PsychometricsService,
+    private readonly cat: CatService,
+  ) {}
 
   /**
    * Administers a response against a published QuestionnaireVersion and scores
@@ -61,5 +69,46 @@ export class PsychometricsController {
   @RequirePermissions(Permission.ASSESSMENT_ADMINISTER)
   getVersionItems(@Param('id') id: string, @Query('locale') locale?: string) {
     return this.psychometrics.getVersionItems(id, locale);
+  }
+
+  // ── Computerized Adaptive Testing (docs/technical/07-psychometrics-engine.md §6) ──
+  // Same access model as batch self-administer: NOT license-gated (clients
+  // self-report), bounded by ASSESSMENT_ADMINISTER + the ABAC client-self
+  // check inside CatService (a CLIENT only ever touches their own session).
+
+  /** Starts a CAT session against a CAT-declaring, calibrated instrument; returns the first item. */
+  @Post('cat/start')
+  @RequirePermissions(Permission.ASSESSMENT_ADMINISTER)
+  @UseInterceptors(IdempotencyInterceptor)
+  startCat(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(catStartSchema)) body: CatStartInput,
+  ) {
+    return this.cat.start(user, body);
+  }
+
+  /**
+   * Records the answer to the pending item, re-runs EAP, and returns either
+   * the next max-information item or the completed session with its final
+   * persisted score. `itemId` must echo the pending item, so a double-tapped
+   * or stale submit fails loudly (400) instead of double-recording; the
+   * Idempotency-Key replay additionally lets a retried request replay the
+   * original outcome verbatim (doc 04-api-design.md §8).
+   */
+  @Post('cat/:sessionId/answer')
+  @RequirePermissions(Permission.ASSESSMENT_ADMINISTER)
+  @UseInterceptors(IdempotencyInterceptor)
+  answerCat(
+    @CurrentUser() user: AuthPrincipal,
+    @Param('sessionId') sessionId: string,
+    @Body(new ZodValidationPipe(catAnswerSchema)) body: CatAnswerInput,
+  ) {
+    return this.cat.answer(user, sessionId, body);
+  }
+
+  @Get('cat/:sessionId')
+  @RequirePermissions(Permission.ASSESSMENT_ADMINISTER)
+  getCatSession(@CurrentUser() user: AuthPrincipal, @Param('sessionId') sessionId: string) {
+    return this.cat.getState(user, sessionId);
   }
 }
