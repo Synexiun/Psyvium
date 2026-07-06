@@ -76,25 +76,24 @@ Three read-only clinical auditors graded the clinical sections against the publi
 - [x] Persisted-score hedge clause + "assumed-normal, no empirical norm sample" + "⚠ SYNTHETIC CALIBRATION — DEMO ONLY" branding (Standards Ch.4/6).
 
 **P0 — patient safety & scientific integrity**
-- [ ] Graduated C-SSRS-style triage: replace binary safety booleans with ideation-intensity (1–5) + behavior-history items; severity derived from C-SSRS decision logic; safety-item hits route into structured follow-up (pass raw answer value into flag severity).
-- [ ] `Escalation.slaBreached` made real: per-severity response-time targets + scheduled breach job + alerting; on-call auto-routing of unassigned SEVERE escalations (risk-register already *claims* this exists).
-- [ ] Follow-up/caring contacts: `followUpDueAt/CompletedAt` on escalation resolution (Zero Suicide reattempt-reduction evidence).
-- [ ] Structured resolution fields: riskLevelAtResolution, interventionsApplied[], followUpScheduledAt (SAFE-T/NPSG queryability).
-- [ ] Stanley-Brown-complete SafetyPlan: split distraction vs help contacts; structured means-restriction inventory (not free text); crisis-line field; client-visible copy + acknowledgment.
+- [x] Graduated C-SSRS-style triage (`5c102ed`): ideation-intensity 0–5 + behavior-history; severity from C-SSRS decision logic; safety-item raw answer drives flag severity; recentLoss feeds the score; legacy boolean payloads unchanged.
+- [x] `Escalation.slaBreached` real (`5c102ed`): slaDueAt per severity (SEVERE 60min/HIGH 4h); sweep sets breach + audits + event; unassigned SEVERE auto-assigned to least-loaded clinician after 15min. RLS-safe per-tenant.
+- [x] Follow-up/caring contacts (`5c102ed`): followUpDueAt REQUIRED for HIGH/SEVERE resolutions + completion endpoint; board shows resolved-awaiting-follow-up (`d54f5b9`).
+- [x] Structured resolution (`5c102ed`): riskLevelAtResolution + interventionsApplied[] + followUpDueAt.
+- [x] Stanley-Brown-complete SafetyPlan (`5c102ed`+`d54f5b9`): distraction/help split, structured means-restriction, crisisLineInfo, client acknowledgment, client-visible copy (GET /risk/safety-plans/me + home-page card with real tel/sms/chat links).
 - [ ] Location confirmation + jurisdiction-aware emergency numbers (988 is US-only; APA telepsychology guidance).
-- [ ] Coded `Formulation`/Diagnosis model (ICD-10/11 + DSM-5-TR, provisional/confirmed/rule-out) — the clinician's actual diagnosis has nowhere to live; anchors the golden thread.
-- [ ] Golden-thread enforcement: a signed note must reference ≥1 goal/intervention; note-time snapshot fields (date/duration/modality, riskStatusAtNote).
-- [ ] `AI_ASSISTED_ANALYSIS` ConsentType wired into the consent gate + client-facing AI disclosure (APA AI guidance 2025; the compliance doc claims it, the enum lacks it).
-- [ ] Author real item content for VPSY-DEP-SCREEN-9 (zero Item rows exist — content validity unassessable); fix GAD-7-pattern band drift + PHQ-9 5-tier collapse; NormSet/NormTable or keep the honest no-norm labeling.
-- [ ] `ItemTranslation` with back-translation provenance before any non-English clinical use (UI i18n ≠ validated item translation).
+- [x] Coded `Formulation` model (`ae5587a`): ICD+DSM codes, PROVISIONAL/CONFIRMED/RULED_OUT, hypothesis lineage, clinician-only, critical-audited, no AI write path.
+- [x] Golden-thread enforcement (`ae5587a`): note with an active plan must reference planId + ≥1 valid goalId (400 lists valid goals); sessionSnapshot + riskStatusAtNote; no-active-plan honestly flagged.
+- [x] `AI_ASSISTED_ANALYSIS` consent gate (`ba97ee6`): model never invoked without a live grant (withheldReason recorded, honest fallback); never intake-blocking. Client-facing disclosure surface = follow-up (web).
+- [~] Real item content for VPSY-DEP-SCREEN-9 + band fixes + `ItemTranslation` w/ provenance — *in flight*.
 
 **P1 — clinical quality**
-- [ ] SMART-goal enforcement (targetMetric+baseline+target required to activate a plan) + required review cadence w/ overdue tracking + client acknowledgment on TreatmentPlan.
-- [ ] Amendment semantics: amendsVersionId/amendmentReason on post-signature notes (no silent-addenda ambiguity).
-- [ ] Homework loop per Kazantzis: rationale, difficulty tag, reviewedAt/reviewNotes (review-at-next-session drives the outcome effect).
-- [ ] Reliable Change Index (Jacobson-Truax) in outcomes trending (raw delta ≠ reliable change).
-- [ ] Validate-or-replace the intake composite risk score (unvalidated weighted heuristic gating triage); feed `recentLoss` in or remove it.
-- [ ] DIF pipeline (min. Mantel-Haenszel) before cross-group comparisons; TIF/conditional-SE reporting; LicenseGrant 403 gate.
+- [x] SMART-goal enforcement + review cadence + overdue tracking (`e5076b6`). Client acknowledgment on TreatmentPlan = follow-up.
+- [x] Amendment semantics (`ae5587a`): post-signature notes require amendmentReason; amendsVersionId.
+- [x] Homework loop per Kazantzis (`ba97ee6`): rationale, difficulty, review-at-next-session endpoint (reviewedAt/By/Notes/reviewOutcome).
+- [x] Reliable Change Index (`e5076b6`): Jacobson-Truax w/ cited PHQ-9/GAD-7 psychometrics; honest 'unknown-reliability' fallback.
+- [ ] Validate-or-replace the intake composite risk score (recentLoss now feeds it — the validation study remains).
+- [ ] DIF pipeline (min. Mantel-Haenszel); TIF/conditional-SE reporting; LicenseGrant 403 gate.
 - [ ] Post-incident review record (reviewer/co-sign/action items) for SEVERE resolutions + break-glass grants; transition-of-care/step-down record.
 - [ ] AI: persist the de-identified signal bundle (not just hash) for true replay; promote approvedForProduction/approvedBy to real columns; soften the FDA time-sensitivity claim for the crisis agent pending regulatory review.
 
