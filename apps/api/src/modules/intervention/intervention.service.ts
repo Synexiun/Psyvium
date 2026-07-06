@@ -7,6 +7,7 @@ import type {
   CreateInterventionInput,
   HomeworkDto,
   InterventionDto,
+  ReviewHomeworkInput,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
@@ -28,6 +29,12 @@ type HomeworkRow = {
   dueDate: Date | null;
   completionPct: number;
   clientReport: string | null;
+  rationale?: string | null;
+  difficulty?: string | null;
+  reviewedAt?: Date | null;
+  reviewedBy?: string | null;
+  reviewNotes?: string | null;
+  reviewOutcome?: string | null;
   createdAt: Date;
 };
 
@@ -135,6 +142,8 @@ export class InterventionService {
         interventionId: input.interventionId,
         description: input.description,
         dueDate: input.dueDate ? new Date(input.dueDate) : undefined,
+        rationale: input.rationale,
+        difficulty: input.difficulty,
       },
     });
 
@@ -144,10 +153,55 @@ export class InterventionService {
       action: 'homework.assigned',
       entityType: 'Homework',
       entityId: homework.id,
-      after: { interventionId: input.interventionId, dueDate: homework.dueDate },
+      after: {
+        interventionId: input.interventionId,
+        dueDate: homework.dueDate,
+        rationale: homework.rationale,
+        difficulty: homework.difficulty,
+      },
     });
 
     return this.toHomeworkDto(homework);
+  }
+
+  /**
+   * Kazantzis homework-loop remediation (docs/10-10-PROGRAM.md WAVE CR P1):
+   * the meta-analytic homework->outcome effect depends on the clinician
+   * reviewing the client's report at the next session, not just on the
+   * client completing it. Clinician-only (ClinicalWriteGuard +
+   * INTERVENTION_WRITE at the controller) — a CLIENT principal is rejected
+   * here too, defense-in-depth against any future permission drift.
+   */
+  async reviewHomework(principal: AuthPrincipal, input: ReviewHomeworkInput): Promise<HomeworkDto> {
+    if (principal.roles.includes(Role.CLIENT)) {
+      throw new ForbiddenException('A client may not review homework');
+    }
+
+    const homework = await this.prisma.homework.findFirst({
+      where: { id: input.homeworkId, tenantId: principal.tenantId },
+    });
+    if (!homework) throw new NotFoundException('Homework not found');
+
+    const updated = await this.prisma.homework.update({
+      where: { id: input.homeworkId },
+      data: {
+        reviewedAt: new Date(),
+        reviewedBy: principal.userId,
+        reviewNotes: input.reviewNotes,
+        reviewOutcome: input.outcomeAlignment,
+      },
+    });
+
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'homework.reviewed',
+      entityType: 'Homework',
+      entityId: updated.id,
+      after: { reviewedAt: updated.reviewedAt, reviewOutcome: updated.reviewOutcome },
+    });
+
+    return this.toHomeworkDto(updated);
   }
 
   /**
@@ -228,6 +282,12 @@ export class InterventionService {
       dueDate: h.dueDate ? h.dueDate.toISOString() : null,
       completionPct: h.completionPct,
       clientReport: h.clientReport,
+      rationale: h.rationale ?? null,
+      difficulty: h.difficulty ?? null,
+      reviewedAt: h.reviewedAt ? h.reviewedAt.toISOString() : null,
+      reviewedBy: h.reviewedBy ?? null,
+      reviewNotes: h.reviewNotes ?? null,
+      reviewOutcome: h.reviewOutcome ?? null,
       createdAt: h.createdAt.toISOString(),
     };
   }

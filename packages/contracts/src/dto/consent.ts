@@ -16,6 +16,18 @@ export const REQUIRED_CONSENT_VERSIONS: Partial<Record<ConsentType, string>> = {
   [ConsentType.DATA_PROCESSING]: '1.0.0',
 };
 
+/**
+ * WAVE CR — AI-consent remediation (APA AI guidance 2025 / GDPR Art.22).
+ * Current required version for `ConsentType.AI_ASSISTED_ANALYSIS`, checked by
+ * `ConsentService.hasActiveAiConsent`. This is intentionally kept OUT of
+ * `REQUIRED_CONSENT_VERSIONS`: it must never block intake or any clinical
+ * workflow. It gates ONE thing only — whether `AiGatewayService` may send a
+ * client-linked inference to a real model. Missing/revoked consent means the
+ * AI Gateway degrades honestly to its rule-based path; care proceeds as
+ * normal.
+ */
+export const AI_CONSENT_VERSION = '1.0.0';
+
 export const grantConsentSchema = z.object({
   type: z.nativeEnum(ConsentType),
   version: z.string().min(1).max(20),

@@ -68,6 +68,12 @@ function makeService() {
         dueDate: null,
         completionPct: 0,
         clientReport: null,
+        rationale: null,
+        difficulty: null,
+        reviewedAt: null,
+        reviewedBy: null,
+        reviewNotes: null,
+        reviewOutcome: null,
         createdAt: new Date('2026-01-01T00:00:00Z'),
       }),
       findFirst: jest.fn(),
@@ -118,6 +124,43 @@ describe('InterventionService', () => {
 
     expect(result.interventionId).toBe('iv_1');
     expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'homework.assigned' }));
+  });
+
+  it('accepts rationale and difficulty when assigning homework (Kazantzis mechanisms 1 & 2)', async () => {
+    const { svc, prisma } = makeService();
+    (prisma.homework.create as jest.Mock).mockResolvedValue({
+      id: 'hw_1',
+      interventionId: 'iv_1',
+      description: 'Practice diaphragmatic breathing 2x/day',
+      dueDate: null,
+      completionPct: 0,
+      clientReport: null,
+      rationale: 'Builds distress tolerance before next exposure step',
+      difficulty: 'gentle',
+      reviewedAt: null,
+      reviewedBy: null,
+      reviewNotes: null,
+      reviewOutcome: null,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    });
+
+    const result = await svc.assignHomework(clinician, {
+      interventionId: 'iv_1',
+      description: 'Practice diaphragmatic breathing 2x/day',
+      rationale: 'Builds distress tolerance before next exposure step',
+      difficulty: 'gentle',
+    });
+
+    expect(prisma.homework.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          rationale: 'Builds distress tolerance before next exposure step',
+          difficulty: 'gentle',
+        }),
+      }),
+    );
+    expect(result.rationale).toBe('Builds distress tolerance before next exposure step');
+    expect(result.difficulty).toBe('gentle');
   });
 
   it('rejects homework assignment when the intervention does not exist in this tenant', async () => {
@@ -171,6 +214,68 @@ describe('InterventionService', () => {
     await expect(svc.completeHomework(otherClient, 'hw_1', { completionPct: 100 })).rejects.toBeInstanceOf(
       ForbiddenException,
     );
+  });
+
+  it('lets a clinician review homework at the next session and audits it (Kazantzis mechanism 3)', async () => {
+    const { svc, prisma, audit } = makeService();
+    (prisma.homework.findFirst as jest.Mock).mockResolvedValue({
+      id: 'hw_1',
+      interventionId: 'iv_1',
+      tenantId: 'tenant_demo',
+    });
+    (prisma.homework.update as jest.Mock).mockResolvedValue({
+      id: 'hw_1',
+      interventionId: 'iv_1',
+      description: 'Practice diaphragmatic breathing 2x/day',
+      dueDate: null,
+      completionPct: 100,
+      clientReport: 'done, felt calmer',
+      rationale: null,
+      difficulty: null,
+      reviewedAt: new Date('2026-01-08T00:00:00Z'),
+      reviewedBy: 'user_psy_a',
+      reviewNotes: 'Discussed in session; client generalized the skill well',
+      reviewOutcome: 'helped',
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    });
+
+    const result = await svc.reviewHomework(clinician, {
+      homeworkId: 'hw_1',
+      reviewNotes: 'Discussed in session; client generalized the skill well',
+      outcomeAlignment: 'helped',
+    });
+
+    expect(prisma.homework.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'hw_1' },
+        data: expect.objectContaining({
+          reviewedBy: 'user_psy_a',
+          reviewNotes: 'Discussed in session; client generalized the skill well',
+          reviewOutcome: 'helped',
+        }),
+      }),
+    );
+    expect(result.reviewedBy).toBe('user_psy_a');
+    expect(result.reviewOutcome).toBe('helped');
+    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'homework.reviewed' }));
+  });
+
+  it('rejects homework review when the homework does not exist in this tenant', async () => {
+    const { svc, prisma } = makeService();
+    (prisma.homework.findFirst as jest.Mock).mockResolvedValue(null);
+
+    await expect(
+      svc.reviewHomework(clinician, { homeworkId: 'hw_missing', reviewNotes: 'n/a' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('blocks a CLIENT from reviewing homework', async () => {
+    const { svc, prisma } = makeService();
+
+    await expect(
+      svc.reviewHomework(clientOwner, { homeworkId: 'hw_1', reviewNotes: 'trying to self-approve' }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.homework.findFirst).not.toHaveBeenCalled();
   });
 
   it('blocks a CLIENT from listing another client’s interventions', async () => {

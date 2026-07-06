@@ -29,6 +29,16 @@ function makePrisma() {
   };
 }
 
+/**
+ * WAVE CR — AI-consent gate (APA AI guidance 2025 / GDPR Art.22). Defaults to
+ * "consented" so every pre-existing test in this file (which predates the
+ * gate) keeps exercising model-configured/not-configured behavior unchanged.
+ * The dedicated gate describe-blocks below flip this to `false`/rejecting.
+ */
+function makeConsent(hasConsent = true) {
+  return { hasActiveAiConsent: jest.fn().mockResolvedValue(hasConsent) };
+}
+
 const ORIGINAL_ENV = process.env;
 
 function withNoKey() {
@@ -48,12 +58,13 @@ describe('AiGatewayService.summarizeSessionNote (Session-Note Assistant, §3.4)'
     withNoKey();
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
 
     expect(svc.aiConfigured).toBe(false);
 
     const result = await svc.summarizeSessionNote({
       tenantId: 'tenant_demo',
+      clientId: 'client_1',
       sessionId: 'sess_1',
       sessionType: 'INDIVIDUAL',
       presentingThemeCodes: ['anxiety-worry'],
@@ -94,10 +105,11 @@ describe('AiGatewayService.summarizeSessionNote (Session-Note Assistant, §3.4)'
     withNoKey();
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
 
     await svc.summarizeSessionNote({
       tenantId: 'tenant_demo',
+      clientId: 'client_1',
       sessionId: 'sess_1',
       sessionType: 'COUPLE',
       presentingThemeCodes: ['communication'],
@@ -130,10 +142,11 @@ describe('AiGatewayService.summarizeSessionNote (Session-Note Assistant, §3.4)'
     });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
 
     const result = await svc.summarizeSessionNote({
       tenantId: 'tenant_demo',
+      clientId: 'client_2',
       sessionId: 'sess_2',
       sessionType: 'INDIVIDUAL',
       presentingThemeCodes: ['sleep', 'low-mood'],
@@ -165,10 +178,11 @@ describe('AiGatewayService.summarizeSessionNote (Session-Note Assistant, §3.4)'
     });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
 
     const result = await svc.summarizeSessionNote({
       tenantId: 'tenant_demo',
+      clientId: 'client_3',
       sessionId: 'sess_3',
       sessionType: 'INDIVIDUAL',
       presentingThemeCodes: [],
@@ -185,7 +199,7 @@ describe('AiGatewayService.suggestTreatmentPlan (Treatment-Plan Support, §3.3)'
     withNoKey();
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
 
     const result = await svc.suggestTreatmentPlan({
       tenantId: 'tenant_demo',
@@ -241,7 +255,7 @@ describe('AiGatewayService.suggestTreatmentPlan (Treatment-Plan Support, §3.3)'
     });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
 
     const result = await svc.suggestTreatmentPlan({
       tenantId: 'tenant_demo',
@@ -277,7 +291,7 @@ describe('AiGatewayService.suggestTreatmentPlan (Treatment-Plan Support, §3.3)'
     });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
 
     const result = await svc.suggestTreatmentPlan({
       tenantId: 'tenant_demo',
@@ -288,5 +302,188 @@ describe('AiGatewayService.suggestTreatmentPlan (Treatment-Plan Support, §3.3)'
     });
 
     expect(result.source).toBe('rule-based');
+  });
+});
+
+/**
+ * WAVE CR — AI-consent remediation (docs/10-10-PROGRAM.md WAVE CR; APA AI
+ * guidance 2025 / GDPR Art.22). `ConsentType.AI_ASSISTED_ANALYSIS` gates the
+ * three live client-linked agents. This consent is NEVER blocking for care —
+ * it is checked ONLY here, inside the AI Gateway, to decide whether a real
+ * model call is permitted. Missing/revoked consent must degrade exactly like
+ * "no API key": the model client is NEVER invoked, and the rule-based result
+ * is tagged `withheldReason: 'no-ai-consent'`.
+ */
+describe('AiGatewayService — WAVE CR AI-consent gate', () => {
+  describe('summarizeIntake', () => {
+    const baseParams = {
+      tenantId: 'tenant_demo',
+      clientId: 'client_1',
+      intakeId: 'intake_1',
+      presentingProblem: 'free text — must never reach the model',
+      severityBand: 'MODERATE',
+      suggestedSpecialty: 'anxiety disorders',
+      riskPresent: false,
+    };
+
+    it('withholds AI and never invokes the model when the client has no AI_ASSISTED_ANALYSIS consent', async () => {
+      withKey();
+      const prisma = makePrisma();
+      const bus = { publish: jest.fn() };
+      const consent = makeConsent(false);
+      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+
+      const result = await svc.summarizeIntake(baseParams);
+
+      expect(consent.hasActiveAiConsent).toHaveBeenCalledWith('client_1');
+      expect(mockMessagesCreate).not.toHaveBeenCalled();
+      expect(result.source).toBe('rule-based');
+      expect(result.withheldReason).toBe('no-ai-consent');
+
+      const createArgs = (prisma.aIRecommendation.create as jest.Mock).mock.calls[0][0];
+      expect(createArgs.data.output).toEqual(
+        expect.objectContaining({ source: 'rule-based', withheldReason: 'no-ai-consent' }),
+      );
+    });
+
+    it('proceeds to call the model when the client has an active AI_ASSISTED_ANALYSIS consent', async () => {
+      withKey();
+      mockMessagesCreate.mockResolvedValue({
+        content: [{ type: 'text', text: 'Assistive summary text.' }],
+      });
+      const prisma = makePrisma();
+      const bus = { publish: jest.fn() };
+      const consent = makeConsent(true);
+      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+
+      const result = await svc.summarizeIntake(baseParams);
+
+      expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
+      expect(result.source).toBe('ai');
+      expect(result.withheldReason).toBeUndefined();
+    });
+
+    it('withholds AI when a previously granted consent has since been revoked', async () => {
+      withKey();
+      const prisma = makePrisma();
+      const bus = { publish: jest.fn() };
+      // Revoked consent surfaces the same way as "never granted" from the
+      // gate's perspective — ConsentService.hasActiveAiConsent returns false.
+      const consent = makeConsent(false);
+      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+
+      const result = await svc.summarizeIntake(baseParams);
+
+      expect(mockMessagesCreate).not.toHaveBeenCalled();
+      expect(result.source).toBe('rule-based');
+      expect(result.withheldReason).toBe('no-ai-consent');
+    });
+
+    it('does not report withheldReason when AI is simply not configured (no API key) — a distinct reason from consent', async () => {
+      withNoKey();
+      const prisma = makePrisma();
+      const bus = { publish: jest.fn() };
+      const consent = makeConsent(false);
+      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+
+      const result = await svc.summarizeIntake(baseParams);
+
+      expect(result.source).toBe('rule-based');
+      expect(result.withheldReason).toBeUndefined();
+    });
+  });
+
+  describe('summarizeSessionNote', () => {
+    const baseParams = {
+      tenantId: 'tenant_demo',
+      clientId: 'client_1',
+      sessionId: 'sess_1',
+      sessionType: 'INDIVIDUAL',
+      presentingThemeCodes: [] as string[],
+      riskPresent: false,
+      planGoalIds: [] as string[],
+    };
+
+    it('withholds AI and never invokes the model without an active AI_ASSISTED_ANALYSIS consent', async () => {
+      withKey();
+      const prisma = makePrisma();
+      const bus = { publish: jest.fn() };
+      const consent = makeConsent(false);
+      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+
+      const result = await svc.summarizeSessionNote(baseParams);
+
+      expect(mockMessagesCreate).not.toHaveBeenCalled();
+      expect(result.source).toBe('rule-based');
+      expect(result.withheldReason).toBe('no-ai-consent');
+    });
+
+    it('proceeds to call the model when consented', async () => {
+      withKey();
+      mockMessagesCreate.mockResolvedValue({
+        content: [
+          {
+            type: 'text',
+            text: 'SUBJECTIVE: s\nOBJECTIVE: o\nASSESSMENT: a\nPLAN: p',
+          },
+        ],
+      });
+      const prisma = makePrisma();
+      const bus = { publish: jest.fn() };
+      const consent = makeConsent(true);
+      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+
+      const result = await svc.summarizeSessionNote(baseParams);
+
+      expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
+      expect(result.source).toBe('ai');
+      expect(result.withheldReason).toBeUndefined();
+    });
+  });
+
+  describe('suggestTreatmentPlan', () => {
+    const baseParams = {
+      tenantId: 'tenant_demo',
+      clientId: 'client_1',
+      severityBand: 'MODERATE',
+      specialty: 'anxiety disorders',
+      outcomeTrend: 'stable' as const,
+    };
+
+    it('withholds AI and never invokes the model without an active AI_ASSISTED_ANALYSIS consent', async () => {
+      withKey();
+      const prisma = makePrisma();
+      const bus = { publish: jest.fn() };
+      const consent = makeConsent(false);
+      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+
+      const result = await svc.suggestTreatmentPlan(baseParams);
+
+      expect(mockMessagesCreate).not.toHaveBeenCalled();
+      expect(result.source).toBe('rule-based');
+      expect(result.withheldReason).toBe('no-ai-consent');
+    });
+
+    it('proceeds to call the model when consented', async () => {
+      withKey();
+      mockMessagesCreate.mockResolvedValue({
+        content: [
+          {
+            type: 'text',
+            text: 'GOALS:\n- g1\n- g2\nINTERVENTIONS:\n- CBT: rationale\n- MINDFULNESS: rationale\nCADENCE: every 3 sessions',
+          },
+        ],
+      });
+      const prisma = makePrisma();
+      const bus = { publish: jest.fn() };
+      const consent = makeConsent(true);
+      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+
+      const result = await svc.suggestTreatmentPlan(baseParams);
+
+      expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
+      expect(result.source).toBe('ai');
+      expect(result.withheldReason).toBeUndefined();
+    });
   });
 });

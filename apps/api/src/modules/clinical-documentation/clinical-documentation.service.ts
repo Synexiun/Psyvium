@@ -212,11 +212,13 @@ export class ClinicalDocumentationService {
   async aiAssist(principal: AuthPrincipal, input: SessionNoteAiAssistInput): Promise<SessionNoteAiAssistResult> {
     const session = await this.prisma.session.findFirst({
       where: { id: input.sessionId, tenantId: principal.tenantId },
+      include: { appointment: true },
     });
     if (!session) throw new NotFoundException('Session not found');
 
     return this.ai.summarizeSessionNote({
       tenantId: principal.tenantId,
+      clientId: session.appointment.clientId,
       sessionId: input.sessionId,
       sessionType: input.sessionType,
       presentingThemeCodes: input.presentingThemeCodes,

@@ -145,6 +145,7 @@ export class IntakeService {
     try {
       const ai = await this.ai.summarizeIntake({
         tenantId: principal.tenantId,
+        clientId: client.id,
         intakeId: result.intake.id,
         presentingProblem: input.presentingProblem,
         severityBand: computed.severityBand,

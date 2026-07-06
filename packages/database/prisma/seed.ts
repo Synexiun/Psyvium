@@ -6,7 +6,7 @@
  * Passwords are argon2-hashed. Demo password for every account: "Vpsy!2026".
  */
 import { PrismaClient } from '@prisma/client';
-import { REQUIRED_CONSENT_VERSIONS, ROLE_PERMISSIONS } from '@vpsy/contracts';
+import { AI_CONSENT_VERSION, REQUIRED_CONSENT_VERSIONS, ROLE_PERMISSIONS } from '@vpsy/contracts';
 import argon2 from 'argon2';
 
 const prisma = new PrismaClient();
@@ -156,11 +156,18 @@ async function main() {
   // in the shared enum yet, so DATA_PROCESSING is the category used to gate
   // physiological/behavioral signal ingestion, kept separate from the intake
   // consent so revoking one never silently revokes the other.
+  // WAVE CR — AI-consent remediation (APA AI guidance 2025 / GDPR Art.22):
+  // `consent_demo_ai_assisted_analysis` is a distinct, separately revocable
+  // grant that lets the demo client's AI flows (intake summary, session-note
+  // assist, treatment-plan assist) call the real model. It is intentionally
+  // NOT in REQUIRED_CONSENT_VERSIONS — revoking it would only make those AI
+  // Gateway calls degrade to their honest rule-based path, never block care.
   const demoConsents: Array<{ id: string; type: string; version: string }> = [
     { id: 'consent_demo_telepsychology', type: 'TELEPSYCHOLOGY', version: REQUIRED_CONSENT_VERSIONS.TELEPSYCHOLOGY! },
     { id: 'consent_demo_data_processing', type: 'DATA_PROCESSING', version: REQUIRED_CONSENT_VERSIONS.DATA_PROCESSING! },
     { id: 'consent_demo_crisis_policy', type: 'CRISIS_POLICY', version: '1.0.0' },
     { id: 'consent_demo_wearable_data', type: 'DATA_PROCESSING', version: '1.0.0' },
+    { id: 'consent_demo_ai_assisted_analysis', type: 'AI_ASSISTED_ANALYSIS', version: AI_CONSENT_VERSION },
   ];
   for (const c of demoConsents) {
     await prisma.consent.upsert({

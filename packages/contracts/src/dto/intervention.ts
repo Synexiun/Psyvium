@@ -45,10 +45,32 @@ export const interventionSchema = z.object({
 });
 export type InterventionDto = z.infer<typeof interventionSchema>;
 
+/**
+ * WAVE CR P1 — Kazantzis homework-loop remediation (docs/10-10-PROGRAM.md).
+ * The meta-analytic homework->outcome effect is driven by assignment
+ * rationale, difficulty calibration, and clinician review-at-next-session.
+ * `difficulty` is a plain string validated against this fixed set — no new
+ * Prisma enum (schema.prisma column is a bare String? for this field).
+ */
+export const HOMEWORK_DIFFICULTY = ['gentle', 'moderate', 'challenging'] as const;
+export const homeworkDifficultySchema = z.enum(HOMEWORK_DIFFICULTY);
+export type HomeworkDifficulty = z.infer<typeof homeworkDifficultySchema>;
+
+/**
+ * Outcome-alignment tag recorded by the clinician when reviewing a client's
+ * homework report at the next session — the third Kazantzis mechanism.
+ * Same "plain string, DTO-validated" treatment as `difficulty` above.
+ */
+export const HOMEWORK_OUTCOME_ALIGNMENT = ['helped', 'neutral', 'unclear', 'setback'] as const;
+export const homeworkOutcomeAlignmentSchema = z.enum(HOMEWORK_OUTCOME_ALIGNMENT);
+export type HomeworkOutcomeAlignment = z.infer<typeof homeworkOutcomeAlignmentSchema>;
+
 export const assignHomeworkSchema = z.object({
   interventionId: z.string(),
   description: z.string().min(2).max(1000),
   dueDate: z.string().datetime().optional(),
+  rationale: z.string().max(2000).optional(),
+  difficulty: homeworkDifficultySchema.optional(),
 });
 export type AssignHomeworkInput = z.infer<typeof assignHomeworkSchema>;
 
@@ -59,9 +81,30 @@ export const homeworkSchema = z.object({
   dueDate: z.string().nullable(),
   completionPct: z.number(),
   clientReport: z.string().nullable(),
+  rationale: z.string().nullable(),
+  difficulty: z.string().nullable(),
+  reviewedAt: z.string().nullable(),
+  reviewedBy: z.string().nullable(),
+  reviewNotes: z.string().nullable(),
+  reviewOutcome: z.string().nullable(),
   createdAt: z.string(),
 });
 export type HomeworkDto = z.infer<typeof homeworkSchema>;
+
+/**
+ * Clinician review-at-next-session step (the third Kazantzis mechanism):
+ * discussing the homework report and its bearing on treatment is what
+ * converts an assigned task into an outcome-linked one. CLIENT principals
+ * must never be able to call this — enforced in the service, not just RBAC,
+ * since `Permission.INTERVENTION_WRITE` is clinician-only already, and this
+ * endpoint additionally sits behind `ClinicalWriteGuard`.
+ */
+export const reviewHomeworkSchema = z.object({
+  homeworkId: z.string(),
+  reviewNotes: z.string().min(3).max(2000),
+  outcomeAlignment: homeworkOutcomeAlignmentSchema.optional(),
+});
+export type ReviewHomeworkInput = z.infer<typeof reviewHomeworkSchema>;
 
 /**
  * Marks homework complete (or partially complete via a resumed report).

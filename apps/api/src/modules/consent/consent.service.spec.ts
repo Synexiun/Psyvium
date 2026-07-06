@@ -57,4 +57,52 @@ describe('ConsentService.assertRequiredConsents', () => {
     ]);
     await expect(svc.assertRequiredConsents('client_1')).resolves.toBeUndefined();
   });
+
+  it('is unaffected by a missing/revoked AI_ASSISTED_ANALYSIS consent — that type is never required for intake', async () => {
+    const svc = makeService([
+      { type: 'TELEPSYCHOLOGY', version: currentTelepsychologyVersion, revokedAt: null },
+      { type: 'DATA_PROCESSING', version: currentDataProcessingVersion, revokedAt: null },
+    ]);
+    await expect(svc.assertRequiredConsents('client_1')).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * WAVE CR — AI-consent gate (APA AI guidance 2025 / GDPR Art.22). Unlike
+ * `assertRequiredConsents`, `hasActiveAiConsent` never throws — it is a
+ * boolean check consumed by `AiGatewayService` to decide whether a real
+ * model call is permitted for a given client.
+ */
+describe('ConsentService.hasActiveAiConsent', () => {
+  function makeService(consent: { type: string; version: string; revokedAt: Date | null } | null) {
+    const prisma = {
+      consent: {
+        findFirst: jest.fn().mockResolvedValue(consent),
+      },
+    };
+    const audit = { record: jest.fn() };
+    return { svc: new ConsentService(prisma as any, audit as any), prisma };
+  }
+
+  it('returns true for a non-revoked, current-version AI_ASSISTED_ANALYSIS grant', async () => {
+    const { svc, prisma } = makeService({ type: 'AI_ASSISTED_ANALYSIS', version: '1.0.0', revokedAt: null });
+    await expect(svc.hasActiveAiConsent('client_1')).resolves.toBe(true);
+    expect(prisma.consent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ clientId: 'client_1', type: 'AI_ASSISTED_ANALYSIS', revokedAt: null }),
+      }),
+    );
+  });
+
+  it('returns false when no AI_ASSISTED_ANALYSIS consent exists', async () => {
+    const { svc } = makeService(null);
+    await expect(svc.hasActiveAiConsent('client_1')).resolves.toBe(false);
+  });
+
+  it('returns false when the consent was revoked (query excludes revoked rows)', async () => {
+    // revokedAt: null is baked into the query itself, so a revoked grant
+    // simply never comes back from prisma — mirrors assertRequiredConsents.
+    const { svc } = makeService(null);
+    await expect(svc.hasActiveAiConsent('client_1')).resolves.toBe(false);
+  });
 });

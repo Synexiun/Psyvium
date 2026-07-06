@@ -102,6 +102,11 @@ enum ConsentType {
   RECORDING
   RESEARCH
   CRISIS_POLICY
+  // WAVE CR — AI-consent remediation (APA AI guidance 2025 / GDPR Art.22):
+  // gates whether the AI Gateway may send a client-linked inference to a
+  // real model. Additive only — never added to REQUIRED_CONSENT_VERSIONS,
+  // so it never blocks intake or any clinical workflow.
+  AI_ASSISTED_ANALYSIS
 }
 
 enum RiskType {
@@ -825,6 +830,17 @@ model Homework {
   dueDate        DateTime?
   completionPct  Float        @default(0)
   clientReport   String?
+  // WAVE CR P1 — Kazantzis homework-loop remediation
+  // (docs/10-10-PROGRAM.md): the meta-analytic homework->outcome effect is
+  // driven by (1) assignment rationale, (2) difficulty calibration, and (3)
+  // clinician review-at-next-session. All additive/nullable — existing rows
+  // are unaffected.
+  rationale      String? // why this homework was assigned (clinical purpose)
+  difficulty     String? // 'gentle' | 'moderate' | 'challenging' — validated at DTO layer, no new Prisma enum
+  reviewedAt     DateTime? // set when a clinician reviews the client's report at next session
+  reviewedBy     String? // userId of the reviewing clinician
+  reviewNotes    String?
+  reviewOutcome  String? // 'helped' | 'neutral' | 'unclear' | 'setback' — validated at DTO layer
   createdAt      DateTime     @default(now())
   deletedAt      DateTime?
 

@@ -5,10 +5,12 @@ import {
   completeHomeworkSchema,
   createInterventionSchema,
   Permission,
+  reviewHomeworkSchema,
   type AssignHomeworkInput,
   type AuthPrincipal,
   type CompleteHomeworkInput,
   type CreateInterventionInput,
+  type ReviewHomeworkInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
@@ -68,5 +70,24 @@ export class InterventionController {
     @Body(new ZodValidationPipe(completeHomeworkSchema)) body: CompleteHomeworkInput,
   ) {
     return this.interventions.completeHomework(user, id, body);
+  }
+
+  /**
+   * Kazantzis homework-loop remediation (docs/10-10-PROGRAM.md WAVE CR P1):
+   * clinician review-at-next-session step. Clinician-only — gated by both
+   * ClinicalWriteGuard and INTERVENTION_WRITE (not held by CLIENT, see
+   * packages/contracts/src/rbac.ts), with a service-layer check as
+   * defense-in-depth. The `:id` route param is the authoritative homework
+   * id; it overrides whatever `homeworkId` the body carries.
+   */
+  @Patch('homework/:id/review')
+  @UseGuards(ClinicalWriteGuard)
+  @RequirePermissions(Permission.INTERVENTION_WRITE)
+  reviewHomework(
+    @CurrentUser() user: AuthPrincipal,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(reviewHomeworkSchema)) body: ReviewHomeworkInput,
+  ) {
+    return this.interventions.reviewHomework(user, { ...body, homeworkId: id });
   }
 }

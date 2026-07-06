@@ -110,6 +110,15 @@ export const ConsentType = {
   RECORDING: 'RECORDING',
   RESEARCH: 'RESEARCH',
   CRISIS_POLICY: 'CRISIS_POLICY',
+  /**
+   * WAVE CR — AI-consent remediation (docs/10-10-PROGRAM.md WAVE CR; APA AI
+   * guidance 2025 / GDPR Art.22). Gates whether the AI Gateway may send a
+   * client-linked inference to a real model. Deliberately NOT part of
+   * `REQUIRED_CONSENT_VERSIONS` (packages/contracts/src/dto/consent.ts) — a
+   * client who declines or revokes this consent still receives full care;
+   * the AI Gateway simply degrades to its honest rule-based path.
+   */
+  AI_ASSISTED_ANALYSIS: 'AI_ASSISTED_ANALYSIS',
 } as const;
 export type ConsentType = (typeof ConsentType)[keyof typeof ConsentType];
 

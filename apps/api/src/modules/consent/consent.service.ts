@@ -1,5 +1,12 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { REQUIRED_CONSENT_VERSIONS, type AuthPrincipal, type ConsentDto, type GrantConsentInput } from '@vpsy/contracts';
+import {
+  AI_CONSENT_VERSION,
+  ConsentType,
+  REQUIRED_CONSENT_VERSIONS,
+  type AuthPrincipal,
+  type ConsentDto,
+  type GrantConsentInput,
+} from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 
@@ -103,6 +110,26 @@ export class ConsentService {
         missing: missing.map(([type, version]) => ({ type, requiredVersion: version })),
       });
     }
+  }
+
+  /**
+   * WAVE CR — AI gate (APA AI guidance 2025 / GDPR Art.22). Checks for a
+   * non-revoked, current-version `AI_ASSISTED_ANALYSIS` grant for this
+   * client. Unlike `assertRequiredConsents`, this NEVER throws and never
+   * blocks a clinical workflow — it only tells `AiGatewayService` whether a
+   * real model call is permitted for this client. Missing/revoked consent
+   * simply means the AI Gateway degrades honestly to its rule-based path.
+   */
+  async hasActiveAiConsent(clientId: string): Promise<boolean> {
+    const consent = await this.prisma.consent.findFirst({
+      where: {
+        clientId,
+        type: ConsentType.AI_ASSISTED_ANALYSIS,
+        version: AI_CONSENT_VERSION,
+        revokedAt: null,
+      },
+    });
+    return consent !== null;
   }
 
   private async resolveClient(principal: AuthPrincipal) {

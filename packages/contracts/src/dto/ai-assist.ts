@@ -42,6 +42,13 @@ export const sessionNoteAiAssistResponseSchema = z.object({
   source: z.enum(['ai', 'rule-based']),
   aiConfigured: z.boolean(),
   recommendationId: z.string().optional(),
+  /**
+   * WAVE CR — set when a real model call was skipped because the client has
+   * no non-revoked `AI_ASSISTED_ANALYSIS` consent (source stays 'rule-based';
+   * the model client is never invoked). Absent when AI simply isn't
+   * configured or the client has consented.
+   */
+  withheldReason: z.literal('no-ai-consent').optional(),
 });
 export type SessionNoteAiAssistResult = z.infer<typeof sessionNoteAiAssistResponseSchema>;
 
@@ -69,5 +76,12 @@ export const treatmentPlanAiAssistResponseSchema = z.object({
   source: z.enum(['ai', 'rule-based']),
   aiConfigured: z.boolean(),
   recommendationId: z.string().optional(),
+  /**
+   * WAVE CR — set when a real model call was skipped because the client has
+   * no non-revoked `AI_ASSISTED_ANALYSIS` consent (source stays 'rule-based';
+   * the model client is never invoked). Absent when AI simply isn't
+   * configured or the client has consented.
+   */
+  withheldReason: z.literal('no-ai-consent').optional(),
 });
 export type TreatmentPlanAiAssistResult = z.infer<typeof treatmentPlanAiAssistResponseSchema>;

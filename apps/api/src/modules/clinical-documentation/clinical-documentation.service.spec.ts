@@ -18,7 +18,11 @@ const principal: AuthPrincipal = {
 
 function makeService() {
   const prisma = {
-    session: { findFirst: jest.fn().mockResolvedValue({ id: 'sess_1', tenantId: 'tenant_demo' }) },
+    session: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ id: 'sess_1', tenantId: 'tenant_demo', appointment: { clientId: 'client_1' } }),
+    },
     sessionNote: { findFirst: jest.fn(), create: jest.fn() },
   };
   const audit = { record: jest.fn() };
@@ -50,6 +54,7 @@ describe('ClinicalDocumentationService.aiAssist', () => {
 
     expect(ai.summarizeSessionNote).toHaveBeenCalledWith({
       tenantId: 'tenant_demo',
+      clientId: 'client_1',
       sessionId: 'sess_1',
       sessionType: 'INDIVIDUAL',
       presentingThemeCodes: ['anxiety-worry'],

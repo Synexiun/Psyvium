@@ -10,6 +10,7 @@ import {
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
+import { ConsentService } from '../consent/consent.service';
 
 /**
  * The AI Gateway is a GOVERNED bounded context (ADR-007). Rules enforced here:
@@ -24,6 +25,17 @@ import { EventBus, Events } from '../../common/events/event-bus.service';
  *    success — we return a transparent, deterministic RULE-BASED note derived
  *    from real screening outputs, tagged source 'rule-based', so nothing is
  *    ever presented as AI output that a model did not produce.
+ *  - WAVE CR — AI-consent gate (APA AI guidance 2025 / GDPR Art.22): every
+ *    CLIENT-linked inference (intake summary, session-note assist,
+ *    treatment-plan assist) additionally requires a non-revoked, current
+ *    `AI_ASSISTED_ANALYSIS` consent (`ConsentService.hasActiveAiConsent`).
+ *    Missing/revoked consent is handled exactly like "no API key": the real
+ *    model is NEVER called, the honest rule-based path runs instead, and the
+ *    withholding is recorded (`withheldReason: 'no-ai-consent'` on both the
+ *    return value and the logged AIRecommendation output). This consent is
+ *    intentionally NOT part of `REQUIRED_CONSENT_VERSIONS` — declining or
+ *    revoking it never blocks intake or any clinical workflow; it only
+ *    means AI is not used for that client.
  */
 @Injectable()
 export class AiGatewayService {
@@ -34,7 +46,21 @@ export class AiGatewayService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly bus: EventBus,
+    private readonly consents: ConsentService,
   ) {}
+
+  /**
+   * WAVE CR gate check. Fails CLOSED: any lookup error is treated as "no
+   * consent" rather than silently permitting a model call.
+   */
+  private async hasAiConsent(clientId: string): Promise<boolean> {
+    try {
+      return await this.consents.hasActiveAiConsent(clientId);
+    } catch (err) {
+      this.logger.warn(`AI consent check failed for client ${clientId}, withholding AI: ${(err as Error).message}`);
+      return false;
+    }
+  }
 
   /** True when a real model can be called. */
   get aiConfigured(): boolean {
@@ -58,16 +84,26 @@ export class AiGatewayService {
   /** Intake intelligence agent — summarize + suggest specialty & battery. */
   async summarizeIntake(params: {
     tenantId: string;
+    clientId: string;
     intakeId: string;
     presentingProblem: string; // received but NEVER forwarded to the model (PHI)
     severityBand: string;
     suggestedSpecialty: string;
     riskPresent: boolean;
-  }): Promise<{ summary: string; source: 'ai' | 'rule-based'; aiConfigured: boolean; recommendationId?: string }> {
+  }): Promise<{
+    summary: string;
+    source: 'ai' | 'rule-based';
+    aiConfigured: boolean;
+    recommendationId?: string;
+    withheldReason?: 'no-ai-consent';
+  }> {
     let summary: string;
     let source: 'ai' | 'rule-based';
+    let withheldReason: 'no-ai-consent' | undefined;
 
-    if (this.aiConfigured) {
+    const aiConsented = await this.hasAiConsent(params.clientId);
+
+    if (this.aiConfigured && aiConsented) {
       try {
         summary = await this.callModel(AiAgent.INTAKE, {
           severityBand: params.severityBand,
@@ -84,18 +120,19 @@ export class AiGatewayService {
     } else {
       summary = this.ruleBasedIntakeSummary(params);
       source = 'rule-based';
+      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
     }
 
     const recommendationId = await this.logRecommendation({
       tenantId: params.tenantId,
       agent: AiAgent.INTAKE,
       input: { severityBand: params.severityBand, presentingProblem: '[redacted-phi]' },
-      output: { summary, source },
+      output: { summary, source, ...(withheldReason ? { withheldReason } : {}) },
       confidence: source === 'ai' ? 0.6 : 0.4,
       linkedEntityType: 'Intake',
       linkedEntityId: params.intakeId,
     });
-    return { summary, source, aiConfigured: this.aiConfigured, recommendationId };
+    return { summary, source, aiConfigured: this.aiConfigured, recommendationId, ...(withheldReason ? { withheldReason } : {}) };
   }
 
   /** Manager allocation agent — rank candidates. Manager remains final authority. */
@@ -122,6 +159,7 @@ export class AiGatewayService {
   /** Session-Note Assistant (doc 05 §3.4) — draft SCAFFOLD only, never a fabricated note. */
   async summarizeSessionNote(params: {
     tenantId: string;
+    clientId: string;
     sessionId: string;
     sessionType: string;
     presentingThemeCodes: string[];
@@ -133,6 +171,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
+    withheldReason?: 'no-ai-consent';
   }> {
     const signals = {
       sessionType: params.sessionType,
@@ -142,8 +181,11 @@ export class AiGatewayService {
     };
     let draft: SessionNoteDraftScaffold;
     let source: 'ai' | 'rule-based';
+    let withheldReason: 'no-ai-consent' | undefined;
 
-    if (this.aiConfigured) {
+    const aiConsented = await this.hasAiConsent(params.clientId);
+
+    if (this.aiConfigured && aiConsented) {
       try {
         draft = await this.callSessionNoteModel(signals);
         source = 'ai';
@@ -155,13 +197,14 @@ export class AiGatewayService {
     } else {
       draft = this.ruleBasedSessionNoteDraft(signals);
       source = 'rule-based';
+      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
     }
 
     const recommendationId = await this.logRecommendation({
       tenantId: params.tenantId,
       agent: AiAgent.SESSION_NOTE,
       input: signals,
-      output: { draft, source },
+      output: { draft, source, ...(withheldReason ? { withheldReason } : {}) },
       confidence: source === 'ai' ? 0.6 : 0.4,
       linkedEntityType: 'Session',
       linkedEntityId: params.sessionId,
@@ -173,6 +216,7 @@ export class AiGatewayService {
       source,
       aiConfigured: this.aiConfigured,
       recommendationId,
+      ...(withheldReason ? { withheldReason } : {}),
     };
   }
 
@@ -188,6 +232,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
+    withheldReason?: 'no-ai-consent';
   }> {
     const signals = {
       severityBand: params.severityBand,
@@ -196,8 +241,11 @@ export class AiGatewayService {
     };
     let suggestions: TreatmentPlanSuggestions;
     let source: 'ai' | 'rule-based';
+    let withheldReason: 'no-ai-consent' | undefined;
 
-    if (this.aiConfigured) {
+    const aiConsented = await this.hasAiConsent(params.clientId);
+
+    if (this.aiConfigured && aiConsented) {
       try {
         suggestions = await this.callTreatmentPlanModel(signals);
         source = 'ai';
@@ -209,19 +257,26 @@ export class AiGatewayService {
     } else {
       suggestions = this.ruleBasedTreatmentPlanSuggestions(signals);
       source = 'rule-based';
+      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
     }
 
     const recommendationId = await this.logRecommendation({
       tenantId: params.tenantId,
       agent: AiAgent.TREATMENT_PLAN,
       input: signals,
-      output: { suggestions, source },
+      output: { suggestions, source, ...(withheldReason ? { withheldReason } : {}) },
       confidence: source === 'ai' ? 0.6 : 0.4,
       linkedEntityType: 'Client',
       linkedEntityId: params.clientId,
     });
 
-    return { suggestions, source, aiConfigured: this.aiConfigured, recommendationId };
+    return {
+      suggestions,
+      source,
+      aiConfigured: this.aiConfigured,
+      recommendationId,
+      ...(withheldReason ? { withheldReason } : {}),
+    };
   }
 
   /**
