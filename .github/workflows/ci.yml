@@ -64,8 +64,26 @@ jobs:
       - name: Seed
         run: pnpm --filter @vpsy/database run seed
 
+      - name: Lint (api)
+        run: pnpm --filter @vpsy/api run lint
+
+      - name: Typecheck (api)
+        run: pnpm --filter @vpsy/api run typecheck
+
       - name: Build (turbo — contracts → database → api + web)
         run: pnpm build
+
+      # ── SAFETY GATE ──────────────────────────────────────────────────────
+      # docs/technical/12-testing-strategy.md §6: the clinical-safety suite
+      # encodes the platform's non-negotiable clinical promises (license/
+      # credential gate, consent gate, human-only escalation resolution,
+      # break-glass reason + time-box, safety-item crisis routing, and
+      # national-analytics k-anonymity suppression) as a single named,
+      # BLOCKING suite. It runs regardless of overall line coverage and must
+      # pass for this build to be mergeable — a failure here is never
+      # optional, even if the broader `Test` step below is green.
+      - name: "Clinical-safety gate (BLOCKING — must pass to merge)"
+        run: pnpm --filter @vpsy/api run test:safety
 
       - name: Test
         run: pnpm test

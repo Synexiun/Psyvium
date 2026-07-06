@@ -10,6 +10,7 @@
     "start:prod": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest --passWithNoTests",
+    "test:safety": "jest --config jest.config.cjs --testPathPattern clinical-safety",
     "lint": "echo 'lint ok'"
   },
   "dependencies": {
