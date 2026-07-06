@@ -30,6 +30,7 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { InterventionModule } from './modules/intervention/intervention.module';
 import { DiagnosisModule } from './modules/diagnosis/diagnosis.module';
 import { DocumentsModule } from './modules/documents/documents.module';
+import { MessagingModule } from './modules/messaging/messaging.module';
 import { RegistryModule } from './modules/registry/registry.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { HealthModule } from './health/health.module';
@@ -94,6 +95,13 @@ import { HealthModule } from './health/health.module';
     InterventionModule,
     DiagnosisModule,
     DocumentsModule,
+    // Bounded contexts (Wave C — Messaging, ctx 14): the Thread/Message
+    // Prisma models existed since Phase 3 (used opaquely by MediaMessage's
+    // threadId scalar); this adds the first service/controller code that
+    // treats Thread as a first-class, participant-ABAC-checked aggregate for
+    // secure client<->clinician text threads (docs/technical/15-communications-
+    // and-telephony.md §6, 13-roadmap-and-phases.md ctx 14).
+    MessagingModule,
     // Bounded contexts (Wave E — Tenant/Clinic Network, Client Registry,
     // Psychologist Registry, Admin Configuration, ctx 2/3/4/27 per
     // docs/technical/01-bounded-contexts.md): the last zero-grade business

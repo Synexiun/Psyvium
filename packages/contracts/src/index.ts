@@ -13,6 +13,7 @@ export * from './dto/credential';
 export * from './dto/consent';
 export * from './dto/crm';
 export * from './dto/communications';
+export * from './dto/messaging';
 export * from './dto/risk';
 export * from './dto/scheduling';
 export * from './dto/finance';

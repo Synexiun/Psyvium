@@ -961,6 +961,82 @@ async function main() {
   }
 
   // ─────────────────────────────────────────────────────────────
+  // Messaging (ctx 14, docs/technical/13-roadmap-and-phases.md,
+  // docs/technical/15-communications-and-telephony.md §6) — the first real
+  // `Thread` row (previously `MediaMessage.threadId` only ever referenced
+  // `commsThreadId` as an opaque string, per `02-data-model.md` §I) plus two
+  // demo text messages on it: one read (client -> Dr. Rivera) and one unread
+  // (Dr. Rivera -> client), so both the thread list's unread-count and the
+  // paginated message view render against real rows. Idempotent (fixed ids).
+  // ─────────────────────────────────────────────────────────────
+  const messagingThread = await prisma.thread.upsert({
+    where: { id: commsThreadId },
+    update: {},
+    create: {
+      id: commsThreadId,
+      tenantId: tenant.id,
+      clientId: client.id,
+    },
+  });
+
+  await prisma.message.upsert({
+    where: { id: 'message_demo_1' },
+    update: {},
+    create: {
+      id: 'message_demo_1',
+      threadId: messagingThread.id,
+      senderId: clientUser.id,
+      body: 'Hi Dr. Rivera, quick question before our session tomorrow — is it still at 3pm?',
+      readAt: new Date('2026-06-29T11:00:00Z'),
+      createdAt: new Date('2026-06-29T10:30:00Z'),
+    },
+  });
+
+  await prisma.message.upsert({
+    where: { id: 'message_demo_2' },
+    update: {},
+    create: {
+      id: 'message_demo_2',
+      threadId: messagingThread.id,
+      senderId: psyUserA.id,
+      body: 'Yes, 3pm still works — see you then!',
+      readAt: null,
+      createdAt: new Date('2026-06-29T11:05:00Z'),
+    },
+  });
+
+  const messageEngagementDefs = [
+    {
+      id: 'engagement_message_1',
+      direction: 'INBOUND' as const,
+      summary: 'Message: Hi Dr. Rivera, quick question before our session tomorrow...',
+      actorId: clientUser.id,
+      occurredAt: new Date('2026-06-29T10:30:00Z'),
+    },
+    {
+      id: 'engagement_message_2',
+      direction: 'OUTBOUND' as const,
+      summary: 'Message: Yes, 3pm still works — see you then!',
+      actorId: psyUserA.id,
+      occurredAt: new Date('2026-06-29T11:05:00Z'),
+    },
+  ];
+  for (const e of messageEngagementDefs) {
+    await prisma.engagementActivity.upsert({
+      where: { id: e.id },
+      update: {},
+      create: {
+        id: e.id, tenantId: tenant.id, subjectType: 'Client', subjectId: client.id,
+        // GAP (flagged, not fixed — schema out of scope this pass): `EngagementKind`
+        // has no dedicated value for an in-platform text message; `EMAIL` is the
+        // nearest existing analog (async, written, non-phone correspondence). See
+        // the same note in MessagingService.sendMessage.
+        kind: 'EMAIL', direction: e.direction, summary: e.summary, actorId: e.actorId, occurredAt: e.occurredAt,
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // Risk & Crisis (ctx 21) — one demo SafetyPlan on file for alex.client so
   // the Risk board's safety-plan lookup renders against a real row.
   // Idempotent (fixed id); safety plans are append-only, so re-seeding never

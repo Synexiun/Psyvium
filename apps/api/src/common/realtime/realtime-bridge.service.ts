@@ -137,6 +137,20 @@ export class RealtimeBridgeService implements OnModuleInit {
       };
     });
 
+    // ── Messaging (context 14) ──
+    // Reuses the CommsMessage envelope shape — ids/refs only, NEVER the
+    // message body, which is what PHI minimization on the wire means here
+    // (`RealtimeEventType` doc comment). The recipient's client reloads the
+    // thread over the authenticated REST API to see the actual text.
+    this.wire(Events.MessageSent, (e) => {
+      const p = e.payload as { messageId: string; threadId: string; senderId: string };
+      return {
+        type: RealtimeEventType.CommsMessage,
+        entity: { type: 'Message', id: p.messageId },
+        data: { threadId: p.threadId },
+      };
+    });
+
     // ── AI Gateway (ADR-007) ──
     this.wire(Events.AIRecommendationCreated, (e) => {
       const p = e.payload as {

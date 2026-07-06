@@ -62,6 +62,8 @@ export const Events = {
   CallCompleted: 'call.completed',
   SmsDelivered: 'sms.delivered',
   MediaMessageSent: 'media_message.sent',
+  // Messaging (context 14) — secure client<->clinician text threads
+  MessageSent: 'message.sent',
   // Risk & Crisis (context 21)
   EscalationRaised: 'escalation.raised',
   EscalationAssigned: 'escalation.assigned',
