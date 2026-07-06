@@ -143,10 +143,17 @@ async function main() {
   // DATA_PROCESSING (see REQUIRED_CONSENT_VERSIONS); CRISIS_POLICY is also
   // granted so the demo client's consent record is representative. Idempotent
   // via fixed ids — never re-created, only left as-is on re-seed.
+  // `consent_demo_wearable_data` is a dedicated DATA_PROCESSING-typed grant for
+  // the wearable ingestion category (doc 09 §5 — P0 clinical-safety: consent is
+  // mandatory at wearable ingest). There is no distinct `WEARABLE` ConsentType
+  // in the shared enum yet, so DATA_PROCESSING is the category used to gate
+  // physiological/behavioral signal ingestion, kept separate from the intake
+  // consent so revoking one never silently revokes the other.
   const demoConsents: Array<{ id: string; type: string; version: string }> = [
     { id: 'consent_demo_telepsychology', type: 'TELEPSYCHOLOGY', version: REQUIRED_CONSENT_VERSIONS.TELEPSYCHOLOGY! },
     { id: 'consent_demo_data_processing', type: 'DATA_PROCESSING', version: REQUIRED_CONSENT_VERSIONS.DATA_PROCESSING! },
     { id: 'consent_demo_crisis_policy', type: 'CRISIS_POLICY', version: '1.0.0' },
+    { id: 'consent_demo_wearable_data', type: 'DATA_PROCESSING', version: '1.0.0' },
   ];
   for (const c of demoConsents) {
     await prisma.consent.upsert({
@@ -450,6 +457,7 @@ async function main() {
       clientId: client.id,
       provider: 'apple_health',
       externalId: 'demo-device-001',
+      consentId: 'consent_demo_wearable_data',
       connectedAt: daysAgo(20),
       lastSyncAt: now,
     },
@@ -476,6 +484,7 @@ async function main() {
         value: hrv,
         unit: 'ms',
         recordedAt,
+        consentId: 'consent_demo_wearable_data',
       },
     });
     await prisma.wearableMetric.upsert({
@@ -489,6 +498,7 @@ async function main() {
         value: sleepMinutes,
         unit: 'min',
         recordedAt,
+        consentId: 'consent_demo_wearable_data',
       },
     });
     await prisma.wearableMetric.upsert({
@@ -502,6 +512,7 @@ async function main() {
         value: rhr,
         unit: 'bpm',
         recordedAt,
+        consentId: 'consent_demo_wearable_data',
       },
     });
   }

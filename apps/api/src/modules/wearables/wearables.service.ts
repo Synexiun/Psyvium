@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { AuthPrincipal, RecordWearableMetricInput, WearableMetricDto, WearableRollup } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
@@ -11,6 +11,21 @@ type MetricRow = {
   unit: string | null;
   recordedAt: Date;
 };
+
+type DeviceRow = {
+  id: string;
+  clientId: string;
+  consentId: string;
+};
+
+/**
+ * There is no dedicated `WEARABLE` ConsentType in the shared enum
+ * (`packages/contracts`) yet, so `DATA_PROCESSING` is the category used to
+ * gate wearable/physiological-signal ingestion — see the demo
+ * `consent_demo_wearable_data` grant in `seed.ts`, kept separate from the
+ * intake consent so revoking one never silently revokes the other.
+ */
+const WEARABLE_CONSENT_TYPE = 'DATA_PROCESSING';
 
 const MIN_WINDOW_DAYS = 1;
 const MAX_WINDOW_DAYS = 90;
@@ -31,24 +46,26 @@ export class WearablesService {
 
   async ingest(principal: AuthPrincipal, input: RecordWearableMetricInput): Promise<WearableMetricDto> {
     const client = await this.prisma.client.findFirst({
-      where: { id: input.clientId, tenantId: principal.tenantId },
+      where: { id: input.clientId, tenantId: principal.tenantId, deletedAt: null },
     });
     if (!client) throw new NotFoundException('Client not found');
 
-    const deviceId = await this.resolveDeviceId(principal, input);
+    const device = await this.resolveDevice(principal, input);
+    const consentId = await this.assertActiveWearableConsent(input.clientId, device.consentId);
 
     const metric = await this.prisma.wearableMetric.create({
       data: {
         tenantId: principal.tenantId,
-        deviceId,
+        deviceId: device.id,
         kind: input.kind,
         value: input.value,
         unit: input.unit,
         recordedAt: new Date(input.recordedAt),
+        consentId,
       },
     });
     await this.prisma.wearableDevice.update({
-      where: { id: deviceId },
+      where: { id: device.id },
       data: { lastSyncAt: new Date() },
     });
 
@@ -58,7 +75,7 @@ export class WearablesService {
       action: 'wearable.metric.ingested',
       entityType: 'WearableMetric',
       entityId: metric.id,
-      after: { clientId: input.clientId, kind: input.kind, value: input.value },
+      after: { clientId: input.clientId, kind: input.kind, value: input.value, consentId },
     });
 
     return this.toMetricDto(metric);
@@ -66,7 +83,7 @@ export class WearablesService {
 
   async getRollup(principal: AuthPrincipal, clientId: string, windowDaysInput?: number): Promise<WearableRollup> {
     const client = await this.prisma.client.findFirst({
-      where: { id: clientId, tenantId: principal.tenantId },
+      where: { id: clientId, tenantId: principal.tenantId, deletedAt: null },
     });
     if (!client) throw new NotFoundException('Client not found');
 
@@ -79,7 +96,8 @@ export class WearablesService {
       where: {
         tenantId: principal.tenantId,
         recordedAt: { gte: since },
-        device: { clientId },
+        deletedAt: null,
+        device: { clientId, deletedAt: null },
       },
       orderBy: { recordedAt: 'asc' },
     });
@@ -89,23 +107,43 @@ export class WearablesService {
 
   /** Used by other read-models (e.g. ClinicalSummary) to embed a rollup only when a device is connected. */
   async hasConnectedDevice(tenantId: string, clientId: string): Promise<boolean> {
-    const device = await this.prisma.wearableDevice.findFirst({ where: { tenantId, clientId } });
+    const device = await this.prisma.wearableDevice.findFirst({ where: { tenantId, clientId, deletedAt: null } });
     return !!device;
   }
 
-  private async resolveDeviceId(principal: AuthPrincipal, input: RecordWearableMetricInput): Promise<string> {
+  /**
+   * P0 clinical-safety gate (doc 09 §5): every ingested point requires a
+   * valid, non-revoked Consent grant for the wearable data category. The
+   * device's `consentId` is mandatory in the schema, but the grant itself
+   * must still exist, belong to this client, and not have been revoked —
+   * revocation must stop ingestion immediately even though the device row
+   * still carries the (now-stale) consent id.
+   */
+  private async assertActiveWearableConsent(clientId: string, consentId: string): Promise<string> {
+    const consent = await this.prisma.consent.findFirst({
+      where: { id: consentId, clientId, type: WEARABLE_CONSENT_TYPE, revokedAt: null },
+    });
+    if (!consent) {
+      throw new ForbiddenException(
+        'Wearable ingestion rejected: no active, non-revoked consent grant for this device/category.',
+      );
+    }
+    return consent.id;
+  }
+
+  private async resolveDevice(principal: AuthPrincipal, input: RecordWearableMetricInput): Promise<DeviceRow> {
     if (input.deviceId) {
       const device = await this.prisma.wearableDevice.findFirst({
-        where: { id: input.deviceId, clientId: input.clientId, tenantId: principal.tenantId },
+        where: { id: input.deviceId, clientId: input.clientId, tenantId: principal.tenantId, deletedAt: null },
       });
       if (!device) throw new NotFoundException('Wearable device not found for this client');
-      return device.id;
+      return device;
     }
 
     const devices = await this.prisma.wearableDevice.findMany({
-      where: { clientId: input.clientId, tenantId: principal.tenantId },
+      where: { clientId: input.clientId, tenantId: principal.tenantId, deletedAt: null },
     });
-    if (devices.length === 1) return devices[0].id;
+    if (devices.length === 1) return devices[0];
     if (devices.length === 0) {
       throw new NotFoundException('No wearable device registered for this client; provide deviceId');
     }

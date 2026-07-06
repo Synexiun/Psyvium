@@ -410,13 +410,14 @@ model Client {
 }
 
 model EmergencyContact {
-  id        String  @id @default(cuid())
+  id        String    @id @default(cuid())
   clientId  String
-  client    Client  @relation(fields: [clientId], references: [id])
+  client    Client    @relation(fields: [clientId], references: [id])
   name      String
   relation  String
   phone     String
-  isPrimary Boolean @default(false)
+  isPrimary Boolean   @default(false)
+  deletedAt DateTime?
 
   @@index([clientId])
 }
@@ -491,6 +492,7 @@ model Contract {
   effectiveTo    DateTime?
   status         String       @default("active")
   createdAt      DateTime     @default(now())
+  deletedAt      DateTime?
 
   revenueShareRules RevenueShareRule[]
 
@@ -517,6 +519,7 @@ model Intake {
   status               IntakeStatus @default(SUBMITTED)
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
+  deletedAt            DateTime?
 
   screeningResult ScreeningResult?
   riskFlags       RiskFlag[]
@@ -539,6 +542,7 @@ model ScreeningResult {
   aiSummary           String?
   aiRecommendationId  String?
   createdAt           DateTime     @default(now())
+  deletedAt           DateTime?
 
   @@index([tenantId, severityBand])
 }
@@ -557,6 +561,7 @@ model ClinicalProfile {
   culturalReligiousNotes   String?
   createdAt                DateTime      @default(now())
   updatedAt                DateTime      @updatedAt
+  deletedAt                DateTime?
 }
 
 model Assignment {
@@ -574,6 +579,7 @@ model Assignment {
   rank           Int?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
+  deletedAt      DateTime?
 
   appointments Appointment[]
 
@@ -611,6 +617,7 @@ model Appointment {
   isUrgent       Boolean           @default(false)
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
+  deletedAt      DateTime?
 
   session Session?
 
@@ -632,6 +639,7 @@ model Session {
   recordingConsentId         String?
   recordingUrl               String?
   createdAt                  DateTime        @default(now())
+  deletedAt                  DateTime?
 
   notes         SessionNote[]
   interventions Intervention[]
@@ -650,6 +658,7 @@ model SessionNote {
   signedBy          String?
   version           Int       @default(1)
   createdAt         DateTime  @default(now())
+  deletedAt         DateTime?
 
   @@index([sessionId])
 }
@@ -658,17 +667,18 @@ model SessionNote {
 // Group D — Clinical intelligence
 // ─────────────────────────────────────────────────────────────
 model DiagnosisHypothesis {
-  id                 String   @id @default(cuid())
+  id                 String    @id @default(cuid())
   tenantId           String
   clientId           String
-  client             Client   @relation(fields: [clientId], references: [id])
+  client             Client    @relation(fields: [clientId], references: [id])
   hypothesis         String // non-diagnostic language
-  confidence         Float    @default(0)
+  confidence         Float     @default(0)
   evidence           String[]
   referralFlags      String[]
-  clinicianConfirmed Boolean  @default(false)
+  clinicianConfirmed Boolean   @default(false)
   aiRecommendationId String?
-  createdAt          DateTime @default(now())
+  createdAt          DateTime  @default(now())
+  deletedAt          DateTime?
 
   @@index([clientId])
 }
@@ -687,6 +697,7 @@ model TreatmentPlan {
   version             Int       @default(1)
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+  deletedAt           DateTime?
 
   goals         Goal[]
   interventions Intervention[]
@@ -705,6 +716,7 @@ model Goal {
   target       Float?
   progressPct  Float         @default(0)
   status       String        @default("active")
+  deletedAt    DateTime?
 
   interventions Intervention[]
 
@@ -732,6 +744,7 @@ model Intervention {
   aiRecommendationId  String?
   clinicianApproved   Boolean          @default(false)
   createdAt           DateTime         @default(now())
+  deletedAt           DateTime?
 
   homework Homework[]
 
@@ -749,22 +762,24 @@ model Homework {
   completionPct  Float        @default(0)
   clientReport   String?
   createdAt      DateTime     @default(now())
+  deletedAt      DateTime?
 
   @@index([interventionId])
 }
 
 model OutcomeMeasure {
-  id                  String   @id @default(cuid())
+  id                  String    @id @default(cuid())
   tenantId            String
   clientId            String
-  client              Client   @relation(fields: [clientId], references: [id])
+  client              Client    @relation(fields: [clientId], references: [id])
   construct           String
   value               Float
-  dropoutRisk         Float    @default(0)
-  deteriorationRisk   Float    @default(0)
-  relapseRisk         Float    @default(0)
-  therapeuticResponse String   @default("unknown")
-  occurredAt          DateTime @default(now())
+  dropoutRisk         Float     @default(0)
+  deteriorationRisk   Float     @default(0)
+  relapseRisk         Float     @default(0)
+  therapeuticResponse String    @default("unknown")
+  occurredAt          DateTime  @default(now())
+  deletedAt           DateTime?
 
   @@index([clientId, occurredAt])
 }
@@ -782,6 +797,7 @@ model RiskFlag {
   evidence  String?
   status    RiskStatus   @default(OPEN)
   createdAt DateTime     @default(now())
+  deletedAt DateTime?
 
   escalations Escalation[]
 
@@ -799,22 +815,24 @@ model Escalation {
   resolvedAt  DateTime?
   resolution  String?
   slaBreached Boolean   @default(false)
+  deletedAt   DateTime?
 
   @@index([tenantId, resolvedAt])
 }
 
 model SafetyPlan {
-  id                   String   @id @default(cuid())
+  id                   String    @id @default(cuid())
   tenantId             String
   clientId             String
-  client               Client   @relation(fields: [clientId], references: [id])
+  client               Client    @relation(fields: [clientId], references: [id])
   warningSigns         String[]
   copingStrategies     String[]
-  supportContacts      Json     @default("[]")
-  professionalContacts Json     @default("[]")
+  supportContacts      Json      @default("[]")
+  professionalContacts Json      @default("[]")
   environmentSafety    String?
-  version              Int      @default(1)
-  createdAt            DateTime @default(now())
+  version              Int       @default(1)
+  createdAt            DateTime  @default(now())
+  deletedAt            DateTime?
 
   @@index([clientId])
 }
@@ -913,6 +931,7 @@ model QuestionnaireResponse {
   validityFlags      Json                 @default("{}")
   responseTimeMs     Int?
   completedAt        DateTime             @default(now())
+  deletedAt          DateTime?
 
   score PsychometricScore?
 
@@ -933,6 +952,7 @@ model PsychometricScore {
   interpretation     String?
   reliabilityAtTheta Float?
   createdAt          DateTime              @default(now())
+  deletedAt          DateTime?
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -945,9 +965,10 @@ model WearableDevice {
   client      Client    @relation(fields: [clientId], references: [id])
   provider    String // apple_health | google_fit | fitbit | oura | garmin
   externalId  String?
-  consentId   String? // gated by an explicit Consent
+  consentId   String // mandatory: gated by an explicit, non-revoked Consent (doc 09 §5 — P0 clinical-safety)
   connectedAt DateTime  @default(now())
   lastSyncAt  DateTime?
+  deletedAt   DateTime?
 
   metrics WearableMetric[]
 
@@ -963,6 +984,8 @@ model WearableMetric {
   value      Float
   unit       String?
   recordedAt DateTime
+  consentId  String // mandatory: the grant that authorized this point (mirrors TimescaleDB signal_samples.consent_id, doc 09 §4/§5) — unconsented data physically cannot be stored
+  deletedAt  DateTime?
 
   @@index([deviceId, recordedAt])
 }
@@ -971,11 +994,12 @@ model WearableMetric {
 // Group F — Engagement & documents
 // ─────────────────────────────────────────────────────────────
 model Thread {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   tenantId  String
   clientId  String
   subject   String?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
 
   messages Message[]
 
@@ -990,12 +1014,13 @@ model Message {
   body      String
   readAt    DateTime?
   createdAt DateTime  @default(now())
+  deletedAt DateTime?
 
   @@index([threadId])
 }
 
 model Document {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   tenantId        String
   ownerType       String
   ownerId         String
@@ -1003,8 +1028,9 @@ model Document {
   storageKey      String
   mimeType        String
   sizeBytes       Int
-  virusScanStatus String   @default("pending")
-  createdAt       DateTime @default(now())
+  virusScanStatus String    @default("pending")
+  createdAt       DateTime  @default(now())
+  deletedAt       DateTime?
 
   @@index([tenantId, ownerType, ownerId])
 }
@@ -1038,6 +1064,7 @@ model Invoice {
   subscriptionId String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
 
   payments Payment[]
 
@@ -1057,16 +1084,18 @@ model Payment {
   status     String    @default("pending")
   capturedAt DateTime?
   createdAt  DateTime  @default(now())
+  deletedAt  DateTime?
 
   @@index([invoiceId])
 }
 
 model LedgerAccount {
-  id       String @id @default(cuid())
-  tenantId String
-  code     String
-  name     String
-  type     String // asset|liability|equity|revenue|expense
+  id        String    @id @default(cuid())
+  tenantId  String
+  code      String
+  name      String
+  type      String // asset|liability|equity|revenue|expense
+  deletedAt DateTime?
 
   entries AccountingEntry[]
 
@@ -1084,22 +1113,24 @@ model AccountingEntry {
   payoutId        String?
   memo            String?
   postedAt        DateTime      @default(now())
+  deletedAt       DateTime?
 
   @@index([tenantId, ledgerAccountId])
 }
 
 model RevenueShareRule {
-  id                 String   @id @default(cuid())
+  id                 String    @id @default(cuid())
   tenantId           String
   contractId         String
-  contract           Contract @relation(fields: [contractId], references: [id])
-  basis              String   @default("REVENUE") // SESSION|REVENUE|GROUP_SPLIT
-  pct                Float    @default(0)
-  seniorOverridePct  Float    @default(0)
-  supervisorSharePct Float    @default(0)
-  clinicSharePct     Float    @default(0)
-  referralSharePct   Float    @default(0)
-  countryRules       Json     @default("{}")
+  contract           Contract  @relation(fields: [contractId], references: [id])
+  basis              String    @default("REVENUE") // SESSION|REVENUE|GROUP_SPLIT
+  pct                Float     @default(0)
+  seniorOverridePct  Float     @default(0)
+  supervisorSharePct Float     @default(0)
+  clinicSharePct     Float     @default(0)
+  referralSharePct   Float     @default(0)
+  countryRules       Json      @default("{}")
+  deletedAt          DateTime?
 
   @@index([contractId])
 }
@@ -1117,6 +1148,7 @@ model Payout {
   status         PayoutStatus @default(PENDING)
   releasedAt     DateTime?
   createdAt      DateTime     @default(now())
+  deletedAt      DateTime?
 
   @@index([tenantId, status])
   @@index([psychologistId])
@@ -1373,6 +1405,7 @@ model CallSession {
   providerRef         String?
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
+  deletedAt           DateTime?
 
   @@index([tenantId, clientId])
   @@index([tenantId, status])
@@ -1392,6 +1425,7 @@ model SmsMessage {
   clientId    String?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
 
   @@index([tenantId, clientId])
   @@index([tenantId, status])
@@ -1416,6 +1450,7 @@ model MediaMessage {
   consentId   String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
 
   @@index([tenantId, threadId])
   @@index([threadId, createdAt])
