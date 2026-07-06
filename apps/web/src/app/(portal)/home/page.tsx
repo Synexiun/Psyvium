@@ -24,10 +24,11 @@ import { useRouter } from 'next/navigation';
 import { useI18n } from '@/i18n';
 import { api, getToken, ApiError } from '@/lib/api';
 import type { ClinicalSummary, OutcomePoint, TrendDirection } from '@/lib/clinical-types';
+import type { SafetyPlanDto } from '@/lib/risk-types';
 import { Sparkline } from '@/components/Sparkline';
 import { useResource } from '@/lib/use-resource';
 import { ContextPanel } from '@/components/ContextPanel';
-import { SkeletonStack } from '@/components/Skeleton';
+import { SkeletonCard, SkeletonStack } from '@/components/Skeleton';
 import { ErrorPanel } from '@/components/ErrorPanel';
 import { EmptyState } from '@/components/EmptyState';
 import { StatTile } from '@/components/StatTile';
@@ -327,6 +328,12 @@ export default function PatientHomePage() {
           </>
         )}
 
+        {/* My safety plan — the client-visible copy of the Stanley-Brown plan
+            written together with the clinician (GET /risk/safety-plans/me).
+            Deliberately adjacent to the emergency card below: in a hard
+            moment, the plan and the crisis line are one glance apart. */}
+        <MySafetyPlanCard />
+
         {/* Emergency help — calm, always reachable, unmistakable. Stays in the
             main flow (never the collapsible panel) and uses the reserved
             risk/critical accent. */}
@@ -446,5 +453,152 @@ export default function PatientHomePage() {
         </section>
       </ContextPanel>
     </div>
+  );
+}
+
+/** One Stanley-Brown step: canonical step number + title + the client's own items. */
+function PlanStep({ n, title, items }: { n: number; title: string; items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <p className="flex items-baseline gap-2">
+        <span className="figure text-xs text-teal-soft" dir="ltr">{n}</span>
+        <span className="font-mono text-[10px] uppercase tracking-wider text-haze/90">{title}</span>
+      </p>
+      <ul className="mt-2 space-y-1.5 ps-5">
+        {items.map((it, i) => (
+          <li key={i} className="text-sm leading-relaxed text-mist/80">{it}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The client's own latest safety plan (Stanley-Brown SPI, client-visible
+ * copy — GET /risk/safety-plans/me). Calm and supportive: this is a crisis
+ * artifact the client relies on, so it renders only what was actually
+ * written together with the clinician — nothing fabricated, nothing filled
+ * in. Three honest states: loading, error (+retry), or the plan / an honest
+ * "your clinician will create this with you".
+ */
+function MySafetyPlanCard() {
+  const { t, fmtDate } = useI18n();
+  const { data: plan, loading, error, reload } = useResource<SafetyPlanDto | null>(
+    // No session on file — the page-level effect is redirecting to /login; skip the call.
+    () => (getToken() ? api.riskMySafetyPlan() : Promise.resolve(null)),
+    [],
+  );
+
+  if (loading) return <SkeletonCard />;
+  if (error) {
+    // 403/404 = the signed-in user has no client profile (e.g. staff opening
+    // the patient surface) — the plan simply isn't theirs to see; stay quiet.
+    if (error instanceof ApiError && (error.status === 403 || error.status === 404)) return null;
+    return <ErrorPanel message={t('patient.safetyPlanErr')} onRetry={reload} />;
+  }
+  if (!plan) {
+    return <EmptyState eyebrow={t('patient.safetyPlanEyebrow')} body={t('patient.safetyPlanEmpty')} />;
+  }
+
+  // Step 5 back-compat: older plans kept help contacts in `supportContacts`.
+  const helpPeople = plan.helpContacts ?? plan.supportContacts;
+  const crisis = plan.crisisLineInfo;
+  const telHref = crisis ? `tel:${crisis.phone.replace(/[^\d+]/g, '')}` : null;
+  const hasStepSix = (plan.meansRestriction?.length ?? 0) > 0 || !!plan.environmentSafety;
+
+  return (
+    <section className="card p-5">
+      <p className="eyebrow">{t('patient.safetyPlanEyebrow')}</p>
+      <h2 className="mt-1.5 font-display text-lg font-medium text-mist">{t('patient.safetyPlanTitle')}</h2>
+      <p className="mt-1 text-sm text-mist/55">{t('patient.safetyPlanIntro')}</p>
+
+      <div className="mt-5 space-y-5">
+        <PlanStep n={1} title={t('patient.spWarningSigns')} items={plan.warningSigns} />
+        <PlanStep n={2} title={t('patient.spCoping')} items={plan.copingStrategies} />
+        <PlanStep n={3} title={t('patient.spDistraction')} items={plan.distractionContacts ?? []} />
+        <PlanStep n={4} title={t('patient.spHelp')} items={helpPeople} />
+        <PlanStep n={5} title={t('patient.spProfessional')} items={plan.professionalContacts} />
+
+        {/* Crisis line — part of step 5; quietly prominent, one tap away. */}
+        {crisis && (
+          <div className="rounded-md border border-signal/30 bg-signal/[0.05] p-4">
+            <p className="font-mono text-[10px] uppercase tracking-wider text-signal/90">
+              {t('patient.spCrisisLine')}
+            </p>
+            <p className="mt-1.5 text-sm font-medium text-mist/85">{crisis.label}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {telHref && (
+                <a
+                  href={telHref}
+                  className="inline-flex items-center rounded bg-signal px-3.5 py-2 text-sm font-medium text-ink transition hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal"
+                >
+                  {t('patient.spCrisisCall', { phone: crisis.phone })}
+                </a>
+              )}
+              {crisis.text && (
+                <a
+                  href={`sms:${crisis.text.replace(/[^\d+]/g, '')}`}
+                  className="inline-flex items-center rounded border border-signal/50 px-3.5 py-2 text-sm font-medium text-signal transition hover:bg-signal/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal"
+                >
+                  {t('patient.spCrisisText', { number: crisis.text })}
+                </a>
+              )}
+              {crisis.chatUrl && (
+                <a
+                  href={crisis.chatUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center rounded border border-signal/50 px-3.5 py-2 text-sm font-medium text-signal transition hover:bg-signal/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal"
+                >
+                  {t('patient.spCrisisChat')}
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Step 6: means restriction + environment safety, with honest secured status. */}
+        {hasStepSix && (
+          <div>
+            <p className="flex items-baseline gap-2">
+              <span className="figure text-xs text-teal-soft" dir="ltr">6</span>
+              <span className="font-mono text-[10px] uppercase tracking-wider text-haze/90">
+                {t('patient.spEnvironment')}
+              </span>
+            </p>
+            {(plan.meansRestriction?.length ?? 0) > 0 && (
+              <ul className="mt-2 space-y-2 ps-5">
+                {plan.meansRestriction!.map((m, i) => (
+                  <li key={i} className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm leading-relaxed text-mist/80">{m.means}</p>
+                      {m.how && <p className="mt-0.5 text-[11px] text-mist/45">{m.how}</p>}
+                    </div>
+                    <span className={`chip shrink-0 border ${m.secured ? 'border-teal/25 text-teal-soft' : 'border-signal/40 text-signal'}`}>
+                      {m.secured ? t('patient.spSecured') : t('patient.spNotSecured')}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {plan.environmentSafety && (
+              <p className="mt-2 ps-5 text-sm leading-relaxed text-mist/80">{plan.environmentSafety}</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="hairline-t mt-5 pt-3">
+        <p className="font-mono text-[10px] uppercase tracking-wider text-haze/70">
+          {t('patient.spVersion', { n: plan.version, date: fmtDate(plan.createdAt) })}
+        </p>
+        {plan.clientAcknowledgedAt && (
+          <p className="mt-1 text-[11px] text-mist/45">
+            {t('patient.spAcknowledged', { date: fmtDate(plan.clientAcknowledgedAt) })}
+          </p>
+        )}
+      </div>
+    </section>
   );
 }

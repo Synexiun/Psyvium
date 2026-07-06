@@ -104,7 +104,16 @@ export class RiskService {
   async getBoard(principal: AuthPrincipal): Promise<RiskBoardDto> {
     const [escalations, flags] = await Promise.all([
       this.prisma.escalation.findMany({
-        where: { tenantId: principal.tenantId, resolvedAt: null },
+        // Open escalations PLUS resolved ones still awaiting their caring-contact
+        // follow-up (Zero Suicide: resolution isn't the end of the pathway — the
+        // board's follow-ups lane must see them until the contact is recorded).
+        where: {
+          tenantId: principal.tenantId,
+          OR: [
+            { resolvedAt: null },
+            { resolvedAt: { not: null }, followUpDueAt: { not: null }, followUpCompletedAt: null },
+          ],
+        },
         include: { riskFlag: { include: { client: { include: { user: true } } } } },
       }),
       this.prisma.riskFlag.findMany({

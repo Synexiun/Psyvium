@@ -40,8 +40,10 @@ import type {
 } from './comms-types';
 import type {
   BreakGlassResultDto,
+  CompleteEscalationFollowUpInput,
   CreateSafetyPlanInput,
   EscalationDto,
+  ResolveEscalationInput,
   RiskBoardDto,
   RiskFlagDto,
   SafetyPlanDto,
@@ -284,12 +286,16 @@ export const api = {
     request<RiskFlagDto>(`/risk/flags/${id}/acknowledge`, { method: 'PATCH' }),
   riskAssignEscalation: (id: string, assignedTo: string) =>
     request<EscalationDto>(`/risk/escalations/${id}/assign`, { method: 'POST', body: JSON.stringify({ assignedTo }) }),
-  riskResolveEscalation: (id: string, resolution: string) =>
-    request<EscalationDto>(`/risk/escalations/${id}/resolve`, { method: 'POST', body: JSON.stringify({ resolution }) }),
+  riskResolveEscalation: (id: string, payload: ResolveEscalationInput) =>
+    request<EscalationDto>(`/risk/escalations/${id}/resolve`, { method: 'POST', body: JSON.stringify(payload) }),
+  riskCompleteFollowUp: (id: string, payload: CompleteEscalationFollowUpInput = {}) =>
+    request<EscalationDto>(`/risk/escalations/${id}/follow-up`, { method: 'PATCH', body: JSON.stringify(payload) }),
   riskCreateSafetyPlan: (payload: CreateSafetyPlanInput) =>
     request<SafetyPlanDto>('/risk/safety-plans', { method: 'POST', body: JSON.stringify(payload) }),
   riskSafetyPlan: (clientId: string) =>
     request<SafetyPlanDto | null>(`/risk/safety-plans/client/${clientId}`),
+  /** Client-facing read of the signed-in client's own latest safety plan. */
+  riskMySafetyPlan: () => request<SafetyPlanDto | null>('/risk/safety-plans/me'),
   riskBreakGlass: (clientId: string, reason: string) =>
     request<BreakGlassResultDto>('/risk/break-glass', { method: 'POST', body: JSON.stringify({ clientId, reason }) }),
 
