@@ -68,6 +68,36 @@
 - [ ] **Twilio Voice** click-to-call + status-callback webhook + recording (consent+jurisdiction gated) (doc 15) (infra: number/webhook).
 - [ ] Pagination/cursor on all list endpoints (doc 04); RFC-9457 error filter app-wide; FHIR-alignable facade (doc 03).
 
+## WAVE CR — Clinical Rigor (from the 2026-07-06 evidence-based audit; each item cites its literature)
+Three read-only clinical auditors graded the clinical sections against the published evidence base (AERA/APA/NCME Standards, COSMIN, C-SSRS, Stanley-Brown SPI, Zero Suicide, Joint Commission NPSG 15.01.01, APA Record Keeping, Kazantzis homework meta-analyses, FDA CDS 2022, EU AI Act, APA AI guidance 2025). IRT math, break-glass, human-only resolution, and EU-AI-Act oversight/logging were **credited as sound**. Gaps, ranked:
+
+**Done immediately (commit `10f5cf5`):**
+- [x] Dead crisis-chat button → real 988 chat link (top patient-safety hazard).
+- [x] Persisted-score hedge clause + "assumed-normal, no empirical norm sample" + "⚠ SYNTHETIC CALIBRATION — DEMO ONLY" branding (Standards Ch.4/6).
+
+**P0 — patient safety & scientific integrity**
+- [ ] Graduated C-SSRS-style triage: replace binary safety booleans with ideation-intensity (1–5) + behavior-history items; severity derived from C-SSRS decision logic; safety-item hits route into structured follow-up (pass raw answer value into flag severity).
+- [ ] `Escalation.slaBreached` made real: per-severity response-time targets + scheduled breach job + alerting; on-call auto-routing of unassigned SEVERE escalations (risk-register already *claims* this exists).
+- [ ] Follow-up/caring contacts: `followUpDueAt/CompletedAt` on escalation resolution (Zero Suicide reattempt-reduction evidence).
+- [ ] Structured resolution fields: riskLevelAtResolution, interventionsApplied[], followUpScheduledAt (SAFE-T/NPSG queryability).
+- [ ] Stanley-Brown-complete SafetyPlan: split distraction vs help contacts; structured means-restriction inventory (not free text); crisis-line field; client-visible copy + acknowledgment.
+- [ ] Location confirmation + jurisdiction-aware emergency numbers (988 is US-only; APA telepsychology guidance).
+- [ ] Coded `Formulation`/Diagnosis model (ICD-10/11 + DSM-5-TR, provisional/confirmed/rule-out) — the clinician's actual diagnosis has nowhere to live; anchors the golden thread.
+- [ ] Golden-thread enforcement: a signed note must reference ≥1 goal/intervention; note-time snapshot fields (date/duration/modality, riskStatusAtNote).
+- [ ] `AI_ASSISTED_ANALYSIS` ConsentType wired into the consent gate + client-facing AI disclosure (APA AI guidance 2025; the compliance doc claims it, the enum lacks it).
+- [ ] Author real item content for VPSY-DEP-SCREEN-9 (zero Item rows exist — content validity unassessable); fix GAD-7-pattern band drift + PHQ-9 5-tier collapse; NormSet/NormTable or keep the honest no-norm labeling.
+- [ ] `ItemTranslation` with back-translation provenance before any non-English clinical use (UI i18n ≠ validated item translation).
+
+**P1 — clinical quality**
+- [ ] SMART-goal enforcement (targetMetric+baseline+target required to activate a plan) + required review cadence w/ overdue tracking + client acknowledgment on TreatmentPlan.
+- [ ] Amendment semantics: amendsVersionId/amendmentReason on post-signature notes (no silent-addenda ambiguity).
+- [ ] Homework loop per Kazantzis: rationale, difficulty tag, reviewedAt/reviewNotes (review-at-next-session drives the outcome effect).
+- [ ] Reliable Change Index (Jacobson-Truax) in outcomes trending (raw delta ≠ reliable change).
+- [ ] Validate-or-replace the intake composite risk score (unvalidated weighted heuristic gating triage); feed `recentLoss` in or remove it.
+- [ ] DIF pipeline (min. Mantel-Haenszel) before cross-group comparisons; TIF/conditional-SE reporting; LicenseGrant 403 gate.
+- [ ] Post-incident review record (reviewer/co-sign/action items) for SEVERE resolutions + break-glass grants; transition-of-care/step-down record.
+- [ ] AI: persist the de-identified signal bundle (not just hash) for true replay; promote approvedForProduction/approvedBy to real columns; soften the FDA time-sensitivity claim for the crisis agent pending regulatory review.
+
 ## WAVE F — In-house telehealth video (infra)
 - [ ] **LiveKit/mediasoup SFU + TURN**, signaling, waiting room, session state machine, in-session tooling, recording, audio-only fallback, post-session summary (doc 08) — activate-on-deploy.
 
