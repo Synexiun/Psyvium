@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { LOCALE_COOKIE, dirOf, normalizeLocale } from '@/i18n/config';
 import { I18nProvider } from '@/i18n';
 import { THEME_INIT_SCRIPT } from '@/lib/theme';
+import { ServiceWorkerRegistration } from '@/components/ServiceWorkerRegistration';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -10,7 +11,10 @@ export const metadata: Metadata = {
   description:
     'A country-scale behavioral-health operating system. Intake to national analytics, governed end-to-end. AI assists, licensed clinicians decide.',
   applicationName: 'VPSY OS',
-  manifest: '/manifest.webmanifest',
+  // No explicit `manifest` field: `app/manifest.ts` (the dynamic PWA
+  // manifest — see docs/technical/11-frontend-architecture.md §5) is served
+  // at this same /manifest.webmanifest path and Next injects the <link>
+  // tag for it automatically.
   icons: { icon: '/icon.svg' },
 };
 
@@ -46,6 +50,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body>
+        <ServiceWorkerRegistration />
         <I18nProvider initialLocale={locale}>{children}</I18nProvider>
       </body>
     </html>

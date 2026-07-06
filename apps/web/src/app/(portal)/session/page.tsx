@@ -35,9 +35,22 @@ import { ErrorPanel } from '@/components/ErrorPanel';
 import { EmptyState } from '@/components/EmptyState';
 import { StatTile } from '@/components/StatTile';
 import { DataTable, type DataColumn } from '@/components/DataTable';
+import { enqueue, remove as removeFromOutbox, list as listOutbox, OUTBOX_FLUSHED_EVENT, type FlushResult } from '@/lib/offline-outbox';
 
 const NOTE_KEY = 'vpsy.session.note.draft';
 const NOTE_TS_KEY = 'vpsy.session.note.ts';
+
+/**
+ * A fetch-level failure (offline, DNS, connection reset) throws a TypeError
+ * from `fetch` itself — distinct from `ApiError`, which means the request
+ * DID reach the server and got a real (non-2xx) response. Only the former is
+ * treated as "queue it for background sync"; a genuine server-side rejection
+ * still surfaces as an honest error.
+ */
+function isConnectivityFailure(e: unknown): boolean {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+  return e instanceof TypeError;
+}
 
 const KIND_STYLE: Record<'note' | 'outcome', { dot: string; label: 'workspace.evNote' | 'workspace.evOutcome' }> = {
   note: { dot: 'bg-console-500 ring-1 ring-teal/50', label: 'workspace.evNote' },
@@ -99,12 +112,16 @@ export default function SessionWorkspacePage() {
     reloadSummary();
   }
 
-  // ── Note drafting (local autosave) + real file/sign actions ──
+  // ── Note drafting (local autosave + durable IndexedDB outbox) + real file/sign actions ──
   const [note, setNote] = useState('');
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [filed, setFiled] = useState<{ id: string; signedAt: Date | null } | null>(null);
   const [noteBusy, setNoteBusy] = useState<'idle' | 'filing' | 'signing'>('idle');
   const [noteError, setNoteError] = useState<string | null>(null);
+  // True once "File note" was submitted but couldn't reach the server and is
+  // durably queued in the outbox awaiting reconnect — never a silent drop.
+  const [outboxPending, setOutboxPending] = useState(false);
+  const [justSynced, setJustSynced] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [ackedAt, setAckedAt] = useState<Date | null>(null);
@@ -118,39 +135,115 @@ export default function SessionWorkspacePage() {
     } catch {}
   }, []);
 
+  // The session to attach the note to: the client's session from the summary.
+  const sessionId = summary?.nextAppointment?.id ?? null;
+
+  // Reconcile against the IndexedDB outbox once the session is known — it
+  // survives a tab close even in cases where localStorage doesn't (private
+  // browsing, storage-pressure eviction, "clear on close" settings), so on
+  // reopen we recover whichever copy is actually newer, and re-surface an
+  // unfinished offline "file note" attempt so it isn't silently forgotten.
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    listOutbox().then((drafts) => {
+      if (cancelled) return;
+      const mine = drafts.find((d) => d.id === sessionId);
+      if (!mine) return;
+      const outboxUpdatedAt = new Date(mine.updatedAt);
+      if (!savedAt || outboxUpdatedAt > savedAt) {
+        setNote(mine.narrative);
+        setSavedAt(outboxUpdatedAt);
+      }
+      if (mine.status === 'pending-file') setOutboxPending(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
+  // React to a background/foreground outbox flush for THIS session — mirrors
+  // the online-path outcome of fileNote(): look up the note the flush just
+  // created (no fabricated id), clear the editor, and reload the timeline
+  // through the existing reload path.
+  useEffect(() => {
+    function onFlushed(e: Event) {
+      const detail = (e as CustomEvent<FlushResult>).detail;
+      if (!sessionId || !detail?.syncedIds.includes(sessionId)) return;
+      setOutboxPending(false);
+      setJustSynced(true);
+      setNote('');
+      setSavedAt(null);
+      try {
+        localStorage.removeItem(NOTE_KEY);
+        localStorage.removeItem(NOTE_TS_KEY);
+      } catch {}
+      api
+        .listSessionNotes(sessionId)
+        .then((notes: Array<{ id: string; signedAt: string | null }>) => {
+          const mine = notes.find((n) => !n.signedAt) ?? notes[0];
+          if (mine) setFiled({ id: mine.id, signedAt: mine.signedAt ? new Date(mine.signedAt) : null });
+        })
+        .catch(() => {
+          // Best-effort — reloadSummary() below still reflects the synced note in the timeline even if this lookup fails.
+        });
+      reloadSummary();
+    }
+    window.addEventListener(OUTBOX_FLUSHED_EVENT, onFlushed);
+    return () => window.removeEventListener(OUTBOX_FLUSHED_EVENT, onFlushed);
+  }, [sessionId, reloadSummary]);
+
   function onNoteChange(v: string) {
     setNote(v);
+    setJustSynced(false);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => saveDraft(v), 1200);
   }
 
   function saveDraft(v = note) {
+    const now = new Date();
     try {
       localStorage.setItem(NOTE_KEY, v);
-      const now = new Date();
       localStorage.setItem(NOTE_TS_KEY, now.toISOString());
       setSavedAt(now);
     } catch {}
+    // Durable copy — never auto-filed (see offline-outbox.ts), just recoverable across a tab close.
+    if (sessionId && v.trim().length > 0) {
+      void enqueue({ id: sessionId, sessionId, narrative: v, status: 'draft', updatedAt: now.toISOString() });
+    }
   }
 
-  // The session to attach the note to: the client's session from the summary.
-  const sessionId = summary?.nextAppointment?.id ?? null;
-  const canFile = !!sessionId && note.trim().length > 0 && noteBusy === 'idle' && !filed;
+  const canFile = !!sessionId && note.trim().length > 0 && noteBusy === 'idle' && !filed && !outboxPending;
 
   async function fileNote() {
     if (!sessionId || !note.trim()) return;
+    const narrative = note.trim();
     setNoteBusy('filing');
     setNoteError(null);
     try {
       const created = (await api.createSessionNote(sessionId, {
         format: 'narrative',
-        narrative: note.trim(),
+        narrative,
       })) as { id: string };
       setFiled({ id: created.id, signedAt: null });
-      saveDraft();
+      // Filed — remove the outbox copy rather than re-enqueueing it via
+      // saveDraft() (which would immediately resurrect a 'draft' record for
+      // a note that's already on the server).
+      await removeFromOutbox(sessionId);
+      setOutboxPending(false);
+      setSavedAt(new Date());
       reloadSummary();
-    } catch {
-      setNoteError(t('workspace.noteFailed'));
+    } catch (e) {
+      if (isConnectivityFailure(e)) {
+        // Never a hard failure when it's purely a connectivity problem — the
+        // filing intent is durably queued and completes automatically via
+        // the offline outbox once the browser is back online.
+        await enqueue({ id: sessionId, sessionId, narrative, status: 'pending-file', updatedAt: new Date().toISOString() });
+        setOutboxPending(true);
+      } else {
+        setNoteError(t('workspace.noteFailed'));
+      }
     } finally {
       setNoteBusy('idle');
     }
@@ -367,10 +460,14 @@ export default function SessionWorkspacePage() {
                       <button
                         onClick={fileNote}
                         disabled={!canFile}
-                        title={!sessionId ? t('workspace.noSessionForNote') : undefined}
+                        title={!sessionId ? t('workspace.noSessionForNote') : outboxPending ? t('workspace.noteQueuedOffline') : undefined}
                         className="btn-primary disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {noteBusy === 'filing' ? t('workspace.filingNote') : t('workspace.fileNote')}
+                        {outboxPending
+                          ? t('workspace.noteQueuedOffline')
+                          : noteBusy === 'filing'
+                            ? t('workspace.filingNote')
+                            : t('workspace.fileNote')}
                       </button>
                     )}
                     {filed && !filed.signedAt && (
@@ -399,11 +496,15 @@ export default function SessionWorkspacePage() {
                 />
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                   <p className="font-mono text-[10px] uppercase tracking-wider text-haze/90" role="status">
-                    {filed && !filed.signedAt
-                      ? t('workspace.noteFiled')
-                      : savedAt
-                        ? t('workspace.draftSaved', { time: fmtTime(savedAt) })
-                        : t('workspace.draftEmpty')}
+                    {outboxPending
+                      ? t('workspace.noteQueuedOffline')
+                      : justSynced
+                        ? t('workspace.noteSynced')
+                        : filed && !filed.signedAt
+                          ? t('workspace.noteFiled')
+                          : savedAt
+                            ? t('workspace.draftSaved', { time: fmtTime(savedAt) })
+                            : t('workspace.draftEmpty')}
                   </p>
                   {!sessionId && !filed && (
                     <p className="text-xs text-mist/40">{t('workspace.noSessionForNote')}</p>

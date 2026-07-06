@@ -682,6 +682,8 @@ const en = {
     draftSaved: 'Draft saved {time}',
     draftEmpty: 'Nothing saved yet — drafts stay on this device until filed.',
     saveDraft: 'Save draft',
+    noteQueuedOffline: 'Saved offline — will sync automatically once you’re back online.',
+    noteSynced: 'Synced — your note reached the server.',
     planEyebrow: 'Treatment plan',
     planReview: 'Next review {date}',
     alertsEyebrow: 'Risk alerts',
