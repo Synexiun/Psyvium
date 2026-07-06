@@ -7,7 +7,12 @@ import { AppModule } from './app.module';
 import { assertJwtSecretsPresent } from './common/config/jwt-secrets';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: false });
+  // `rawBody: true` — needed ONLY by POST /finance/webhooks/stripe (Stripe
+  // signs the exact bytes it sent; verifying against the JSON-parsed-then-
+  // reserialized req.body would never match). Nest still parses req.body as
+  // usual for every route; this additionally captures the original buffer
+  // onto req.rawBody. See finance/webhooks/stripe-webhook.controller.ts.
+  const app = await NestFactory.create(AppModule, { bufferLogs: false, rawBody: true });
   const logger = new Logger('Bootstrap');
 
   // Fail fast (before listening) if signing secrets are unset — never serve with

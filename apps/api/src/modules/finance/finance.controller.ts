@@ -66,6 +66,19 @@ export class FinanceController {
     return this.payments.payInvoice(user, id, body);
   }
 
+  // Stripe-hosted Checkout is the realistic v1 "client pays online" flow (see
+  // payments.service.ts's class doc): this only starts the session — the
+  // invoice is marked PAID later, by StripeWebhookController, once Stripe
+  // confirms `checkout.session.completed`.
+  @Post('invoices/:id/checkout')
+  @RequirePermissions(Permission.FINANCE_MANAGE)
+  createCheckoutSession(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
+    const origin = process.env.WEB_ORIGIN ?? 'http://localhost:3000';
+    const successUrl = `${origin}/finance/invoices/${id}?checkout=success`;
+    const cancelUrl = `${origin}/finance/invoices/${id}?checkout=cancelled`;
+    return this.payments.createCheckoutSession(user, id, successUrl, cancelUrl);
+  }
+
   @Get('ledger')
   @RequirePermissions(Permission.FINANCE_READ)
   listLedger(@CurrentUser() user: AuthPrincipal) {
