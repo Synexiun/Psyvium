@@ -68,7 +68,7 @@ export class SchedulingController {
     return this.scheduling.updateAppointmentStatus(user, id, body);
   }
 
-  /** Decoupled seam: emits AppointmentReminderDue for a Communications-Hub subscriber. */
+  /** Sends a real reminder SMS via CommunicationsService (offline stub or Twilio); still emits AppointmentReminderDue. */
   @Post('appointments/:id/remind')
   @RequirePermissions(Permission.SCHEDULING_MANAGE)
   remind(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {

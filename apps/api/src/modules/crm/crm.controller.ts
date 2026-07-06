@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   convertLeadSchema,
@@ -6,6 +6,7 @@ import {
   createReferrerSchema,
   logEngagementSchema,
   moveLeadStageSchema,
+  stalledLeadsQuerySchema,
   Permission,
   type AuthPrincipal,
   type ConvertLeadInput,
@@ -13,6 +14,7 @@ import {
   type CreateReferrerInput,
   type LogEngagementInput,
   type MoveLeadStageInput,
+  type StalledLeadsQuery,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
@@ -38,6 +40,16 @@ export class CrmController {
   @RequirePermissions(Permission.CRM_WRITE)
   createLead(@CurrentUser() user: AuthPrincipal, @Body(new ZodValidationPipe(createLeadSchema)) body: CreateLeadInput) {
     return this.crm.createLead(user, body);
+  }
+
+  /** Leads unchanged in-stage past N days (default 14) — `16` §2 "operational nudge." */
+  @Get('leads/stalled')
+  @RequirePermissions(Permission.CRM_READ)
+  getStalledLeads(
+    @CurrentUser() user: AuthPrincipal,
+    @Query(new ZodValidationPipe(stalledLeadsQuerySchema)) query: StalledLeadsQuery,
+  ) {
+    return this.crm.getStalledLeads(user, query.days);
   }
 
   @Patch('leads/:id/stage')

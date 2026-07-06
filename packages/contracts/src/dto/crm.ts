@@ -39,8 +39,29 @@ export const leadSchema = z.object({
   status: z.string(),
   referrerId: z.string().nullable().optional(),
   createdAt: z.string(),
+  /**
+   * Set on the response of `POST /crm/leads` when the submitted contact
+   * deterministically matched an existing NON-converted lead (`16-crm-and-
+   * referrals.md` §6.2) — the existing lead was enriched in place instead of
+   * a duplicate being created. Absent/false on a normal fresh capture.
+   */
+  deduped: z.boolean().optional(),
 });
 export type LeadDto = z.infer<typeof leadSchema>;
+
+/**
+ * `GET /crm/leads/stalled` row (`16-crm-and-referrals.md` §2 — "a stalled-lead
+ * rule ... surfaces overdue leads"). `basis` is always `'updatedAt'` today: the
+ * `Lead` row has no dedicated "entered current stage" timestamp, so this is an
+ * honest proxy — ANY field edit (not only a stage move) resets the clock, not
+ * just a `LeadStageChanged` transition.
+ */
+export const stalledLeadSchema = leadSchema.extend({
+  daysStalled: z.number().int().nonnegative(),
+  staleSince: z.string(),
+  basis: z.literal('updatedAt'),
+});
+export type StalledLeadDto = z.infer<typeof stalledLeadSchema>;
 
 export const referrerSchema = z.object({
   id: z.string(),
@@ -112,6 +133,18 @@ export const convertLeadResultSchema = z.object({
 });
 export type ConvertLeadResult = z.infer<typeof convertLeadResultSchema>;
 
+/**
+ * Machine-readable CRM error codes, distinct from a generic 409, so the UI
+ * can tell "the funnel has no won stage configured" apart from "this contact
+ * is already a client — route to care, not marketing" (`16-crm-and-referrals.md`
+ * §6.2 dedupe: a match against a CONVERTED lead is a routing error, not a
+ * duplicate to merge).
+ */
+export const CrmErrorCode = {
+  LEAD_ALREADY_CLIENT: 'lead.already_client',
+} as const;
+export type CrmErrorCode = (typeof CrmErrorCode)[keyof typeof CrmErrorCode];
+
 export const createReferrerSchema = z.object({
   type: z.nativeEnum(ReferrerType),
   organizationName: z.string().min(1).max(200),
@@ -126,6 +159,11 @@ export const createReferrerSchema = z.object({
   agreementId: z.string().optional(),
 });
 export type CreateReferrerInput = z.infer<typeof createReferrerSchema>;
+
+export const stalledLeadsQuerySchema = z.object({
+  days: z.coerce.number().int().positive().max(3650).default(14),
+});
+export type StalledLeadsQuery = z.infer<typeof stalledLeadsQuerySchema>;
 
 export const logEngagementSchema = z.object({
   subjectType: z.string().min(1).max(50),

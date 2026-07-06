@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import * as argon2 from 'argon2';
+import { CrmErrorCode } from '@vpsy/contracts';
 import type {
   AuthPrincipal,
   ConvertLeadInput,
@@ -15,6 +16,7 @@ import type {
   MoveLeadStageInput,
   PipelineStageDto,
   ReferrerDto,
+  StalledLeadDto,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
@@ -28,7 +30,9 @@ type LeadRow = {
   pipelineStageId: string;
   status: string;
   referrerId: string | null;
+  convertedClientId?: string | null;
   createdAt: Date;
+  updatedAt?: Date;
   pipelineStage: { name: string };
 };
 
@@ -85,6 +89,36 @@ export class CrmService {
     if (input.referrerId) {
       const referrer = await this.prisma.referrer.findFirst({ where: { id: input.referrerId, tenantId } });
       if (!referrer) throw new NotFoundException('Referrer not found');
+    }
+
+    // ── Dedupe (`16-crm-and-referrals.md` §6.2) — deterministic match on
+    // normalized email OR E.164 phone within the tenant, checked before any
+    // new `Lead` row is created. ──
+    const normalizedEmail = input.contact.email ? CrmService.normalizeEmail(input.contact.email) : undefined;
+    const normalizedPhone = input.contact.phone ? CrmService.normalizePhone(input.contact.phone) : undefined;
+
+    if (normalizedEmail || normalizedPhone) {
+      const existing = await this.findDuplicateLead(tenantId, normalizedEmail, normalizedPhone);
+      if (existing) {
+        const alreadyConverted = Boolean(existing.convertedClientId) || existing.status === 'won';
+        if (alreadyConverted) {
+          await this.audit.record({
+            tenantId,
+            actorId: principal.userId,
+            action: 'lead.dedupe_blocked_already_client',
+            entityType: 'Lead',
+            entityId: existing.id,
+            after: { attemptedSource: input.source, convertedClientId: existing.convertedClientId ?? null },
+          });
+          throw new ConflictException({
+            code: CrmErrorCode.LEAD_ALREADY_CLIENT,
+            message: 'This contact is already a client — route them to care, not marketing.',
+            leadId: existing.id,
+            clientId: existing.convertedClientId ?? null,
+          });
+        }
+        return this.enrichExistingLead(principal, existing, input);
+      }
     }
 
     // Default to the first configured stage in the funnel (lowest `order`).
@@ -262,6 +296,133 @@ export class CrmService {
       pipelineStageId: wonStage.id,
       convertedAt: result.lead.updatedAt.toISOString(),
     };
+  }
+
+  /**
+   * Deterministic dedupe lookup (`16-crm-and-referrals.md` §6.2). `contact`
+   * is a JSON blob, so this is an in-memory scan over the tenant's leads
+   * rather than an indexed query — honest trade-off for now; at real scale
+   * this wants a normalized, indexed `contactEmailKey`/`contactPhoneKey`
+   * column populated at write time.
+   */
+  private async findDuplicateLead(
+    tenantId: string,
+    normalizedEmail: string | undefined,
+    normalizedPhone: string | undefined,
+  ): Promise<LeadRow | null> {
+    const candidates = await this.prisma.lead.findMany({
+      where: { tenantId },
+      include: { pipelineStage: true },
+    });
+    for (const lead of candidates as LeadRow[]) {
+      const contact = (lead.contact ?? {}) as CrmContact;
+      const candidateEmail = contact.email ? CrmService.normalizeEmail(contact.email) : undefined;
+      const candidatePhone = contact.phone ? CrmService.normalizePhone(contact.phone) : undefined;
+      if ((normalizedEmail && candidateEmail === normalizedEmail) || (normalizedPhone && candidatePhone === normalizedPhone)) {
+        return lead;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * A dedupe match against a NON-converted lead never creates a duplicate
+   * pipeline row — it enriches the existing lead (fills in fields the first
+   * touch didn't have) and records the re-contact on the unified timeline.
+   * Referrer attribution is immutable once set (§3.1): a later touch can
+   * fill a previously-null `referrerId`, but never overwrite one.
+   */
+  private async enrichExistingLead(
+    principal: AuthPrincipal,
+    existing: LeadRow,
+    input: CreateLeadInput,
+  ): Promise<LeadDto> {
+    const tenantId = principal.tenantId;
+    const existingContact = (existing.contact ?? {}) as CrmContact;
+    const mergedContact: CrmContact = {
+      name: existingContact.name || input.contact.name,
+      email: existingContact.email ?? input.contact.email,
+      phone: existingContact.phone ?? input.contact.phone,
+    };
+
+    const updated = await this.prisma.lead.update({
+      where: { id: existing.id },
+      data: {
+        contact: mergedContact as object,
+        presentingInterest: existing.presentingInterest ?? input.presentingInterest ?? null,
+        ...(existing.referrerId ? {} : input.referrerId ? { referrerId: input.referrerId } : {}),
+      },
+      include: { pipelineStage: true },
+    });
+
+    await this.prisma.engagementActivity.create({
+      data: {
+        tenantId,
+        subjectType: 'Lead',
+        subjectId: existing.id,
+        kind: 'NOTE',
+        direction: 'INBOUND',
+        summary: `Re-contact via ${input.source}${
+          input.referrerId ? ` (referrer ${input.referrerId})` : ''
+        } — deduped against an existing lead, no duplicate created`,
+        actorId: principal.userId,
+      },
+    });
+
+    await this.audit.record({
+      tenantId,
+      actorId: principal.userId,
+      action: 'lead.recontact',
+      entityType: 'Lead',
+      entityId: existing.id,
+      after: { attemptedSource: input.source },
+    });
+
+    return { ...this.toLeadDto(updated as LeadRow), deduped: true };
+  }
+
+  /**
+   * Best-effort dedupe-matching normalization — case-folds the email and
+   * strips all non-digit characters from the phone (no leading `+`, so
+   * "+1 555-123-0099" and "15551230099" collapse to the same key). Not full
+   * E.164 validation (`libphonenumber`-class), only a matching key.
+   */
+  private static normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
+  }
+
+  private static normalizePhone(phone: string): string {
+    return phone.trim().replace(/\D/g, '');
+  }
+
+  /**
+   * Stalled-lead surfacing (`16-crm-and-referrals.md` §2 — "an operational
+   * nudge, not a clinical escalation"). Honesty note: `Lead` has no dedicated
+   * "entered current stage" timestamp, so this uses `updatedAt` as the basis
+   * — any field edit resets the clock, not only a `LeadStageChanged` move.
+   * Only active (non-won, non-lost) leads are considered "stalled."
+   */
+  async getStalledLeads(principal: AuthPrincipal, days: number): Promise<StalledLeadDto[]> {
+    const tenantId = principal.tenantId;
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const leads = await this.prisma.lead.findMany({
+      where: { tenantId, status: 'active', updatedAt: { lte: cutoff } },
+      include: { pipelineStage: true },
+      orderBy: { updatedAt: 'asc' },
+    });
+
+    const now = Date.now();
+    return (leads as LeadRow[]).map((lead) => {
+      const updatedAt = lead.updatedAt ?? lead.createdAt;
+      const daysStalled = Math.floor((now - updatedAt.getTime()) / (24 * 60 * 60 * 1000));
+      return {
+        ...this.toLeadDto(lead),
+        daysStalled,
+        staleSince: updatedAt.toISOString(),
+        basis: 'updatedAt' as const,
+      };
+    });
   }
 
   // ── Referrers ──

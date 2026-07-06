@@ -45,7 +45,7 @@ const appointmentRow = {
   timezone: 'UTC',
   format: 'VIDEO',
   isUrgent: false,
-  client: { user: { fullName: 'Alex Chen' } },
+  client: { user: { fullName: 'Alex Chen', phone: '+15551234567' } },
   psychologist: { user: { fullName: 'Dr. Elena Rivera' } },
 };
 
@@ -59,7 +59,7 @@ const bookInput = {
   isUrgent: false,
 };
 
-function makeService(overrides: Partial<Record<string, unknown>> = {}) {
+function makeService(overrides: Partial<Record<string, unknown>> = {}, commsOverride?: { sendSystemSms: jest.Mock }) {
   const prismaTx = {
     appointment: { create: jest.fn().mockResolvedValue(appointmentRow) },
     availabilitySlot: { update: jest.fn() },
@@ -78,13 +78,15 @@ function makeService(overrides: Partial<Record<string, unknown>> = {}) {
       findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn().mockResolvedValue(appointmentRow),
     },
+    tenant: { findUnique: jest.fn().mockResolvedValue({ name: 'Serenity Clinic' }) },
     $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(prismaTx)),
     ...overrides,
   };
   const audit = { record: jest.fn() };
   const bus = { publish: jest.fn() };
-  const svc = new SchedulingService(prisma as any, audit as any, bus as any);
-  return { svc, prisma, audit, bus, prismaTx };
+  const comms = commsOverride ?? { sendSystemSms: jest.fn().mockResolvedValue({ sent: true, smsId: 'sms_1' }) };
+  const svc = new SchedulingService(prisma as any, audit as any, bus as any, comms as any);
+  return { svc, prisma, audit, bus, comms, prismaTx };
 }
 
 describe('SchedulingService.bookAppointment', () => {
@@ -200,6 +202,62 @@ describe('SchedulingService.updateAppointmentStatus', () => {
       'appointment.status_changed',
       'tenant_demo',
       expect.objectContaining({ appointmentId: 'appt_1', status: 'NO_SHOW' }),
+    );
+  });
+});
+
+describe('SchedulingService.sendReminder', () => {
+  it('sends a real reminder SMS via CommunicationsService with a tz-correct time and no PHI', async () => {
+    const { svc, comms, audit } = makeService();
+
+    const result = await svc.sendReminder(managerPrincipal, 'appt_1');
+
+    expect(result).toEqual({ sent: true, smsId: 'sms_1' });
+    expect(comms.sendSystemSms).toHaveBeenCalledWith(
+      'tenant_demo',
+      '+15551234567',
+      expect.stringContaining('Serenity Clinic'),
+      { clientId: 'client_1' },
+    );
+    const body = comms.sendSystemSms.mock.calls[0][2] as string;
+    // PHI minimization: date/time + clinic name only, never a reason/diagnosis.
+    expect(body).not.toMatch(/anxiety|diagnosis|risk|presenting/i);
+    expect(body).toMatch(/UTC/);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'appointment.reminder_sent', entityId: 'appt_1' }),
+    );
+  });
+
+  it('reports {sent:false, reason:"no-phone-on-record"} and never fakes a send when the client has no phone', async () => {
+    const { svc, comms, audit } = makeService({
+      appointment: {
+        findFirst: jest.fn().mockResolvedValue({
+          ...appointmentRow,
+          client: { user: { fullName: 'Alex Chen', phone: null } },
+        }),
+        findMany: jest.fn(),
+        update: jest.fn(),
+      },
+    });
+
+    const result = await svc.sendReminder(managerPrincipal, 'appt_1');
+
+    expect(result).toEqual({ sent: false, reason: 'no-phone-on-record' });
+    expect(comms.sendSystemSms).not.toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'appointment.reminder_skipped', entityId: 'appt_1' }),
+    );
+  });
+
+  it('reports a failed send honestly instead of pretending it succeeded', async () => {
+    const failingComms = { sendSystemSms: jest.fn().mockResolvedValue({ sent: false, reason: 'send-failed' }) };
+    const { svc, audit } = makeService({}, failingComms);
+
+    const result = await svc.sendReminder(managerPrincipal, 'appt_1');
+
+    expect(result).toEqual({ sent: false, reason: 'send-failed' });
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'appointment.reminder_send_failed', entityId: 'appt_1' }),
     );
   });
 });

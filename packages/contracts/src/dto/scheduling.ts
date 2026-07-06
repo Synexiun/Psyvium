@@ -66,3 +66,17 @@ export const updateAppointmentStatusSchema = z.object({
   status: z.nativeEnum(AppointmentStatus),
 });
 export type UpdateAppointmentStatusInput = z.infer<typeof updateAppointmentStatusSchema>;
+
+/**
+ * Result of `POST /scheduling/appointments/:id/remind` (`15-communications-
+ * and-telephony.md` / `09-*` reminder seam). `sent` is only ever true once an
+ * SMS provider has actually accepted the message (offline stub or Twilio) —
+ * never fabricated. `reason` is set whenever `sent` is false, e.g.
+ * `'no-phone-on-record'` when the client has no phone on file.
+ */
+export const sendReminderResultSchema = z.object({
+  sent: z.boolean(),
+  smsId: z.string().optional(),
+  reason: z.string().optional(),
+});
+export type SendReminderResult = z.infer<typeof sendReminderResultSchema>;

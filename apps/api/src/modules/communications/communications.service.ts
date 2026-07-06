@@ -247,6 +247,83 @@ export class CommunicationsService {
     return this.toSmsMessageDto(sms as SmsMessageRow);
   }
 
+  /**
+   * System-originated SMS send — no principal/staff-role gate, because the
+   * caller is another bounded context (e.g. Scheduling's appointment-
+   * reminder seam, `15`/`09-*`), not an end-user request. Reuses the exact
+   * same provider selection (incl. offline stub) and
+   * `SmsMessage`/`EngagementActivity`/audit lifecycle as `sendSms`, but never
+   * throws on a missing SMS-capable number or a provider failure — it always
+   * reports the outcome honestly so a system caller (e.g. a reminder flow)
+   * can decide what to do next instead of the whole request blowing up.
+   */
+  async sendSystemSms(
+    tenantId: string,
+    toE164: string,
+    body: string,
+    opts?: { clientId?: string },
+  ): Promise<{ sent: boolean; smsId?: string; reason?: string }> {
+    const fromNumber = await this.prisma.phoneNumber.findFirst({
+      where: { tenantId, capabilities: { has: 'SMS' } },
+    });
+    if (!fromNumber) {
+      this.logger.warn(`sendSystemSms: no SMS-capable phone number provisioned for tenant ${tenantId}`);
+      return { sent: false, reason: 'no-sms-number-provisioned' };
+    }
+
+    let sms = await this.prisma.smsMessage.create({
+      data: {
+        tenantId,
+        direction: 'OUTBOUND',
+        toE164,
+        fromE164: fromNumber.e164,
+        body,
+        clientId: opts?.clientId,
+        status: 'QUEUED',
+      },
+    });
+
+    const result = await this.sms.sendSms(toE164, fromNumber.e164, body);
+    sms = await this.prisma.smsMessage.update({
+      where: { id: sms.id },
+      data: { status: result.status === 'SENT' ? 'SENT' : 'FAILED', providerRef: result.providerRef },
+    });
+
+    if (sms.status === 'SENT') {
+      // Same simulated-delivery-receipt simplification as `sendSms`.
+      sms = await this.prisma.smsMessage.update({ where: { id: sms.id }, data: { status: 'DELIVERED' } });
+    }
+
+    await this.prisma.engagementActivity.create({
+      data: {
+        tenantId,
+        subjectType: opts?.clientId ? 'Client' : 'PhoneNumber',
+        subjectId: opts?.clientId ?? toE164,
+        kind: 'SMS',
+        direction: 'OUTBOUND',
+        summary: `System SMS to ${toE164}: ${body.slice(0, 80)}`,
+      },
+    });
+
+    await this.audit.record({
+      tenantId,
+      action: sms.status === 'DELIVERED' ? 'comms.system_sms.delivered' : 'comms.system_sms.failed',
+      entityType: 'SmsMessage',
+      entityId: sms.id,
+      after: { status: sms.status, clientId: sms.clientId },
+    });
+
+    if (sms.status === 'DELIVERED') {
+      await this.bus.publish(Events.SmsDelivered, tenantId, { smsId: sms.id, clientId: sms.clientId });
+    }
+
+    return {
+      sent: sms.status === 'DELIVERED',
+      smsId: sms.id,
+      reason: sms.status === 'DELIVERED' ? undefined : 'send-failed',
+    };
+  }
+
   // ── Unified comms log ──
 
   async getLog(principal: AuthPrincipal, clientId?: string): Promise<CommsLogEntryDto[]> {

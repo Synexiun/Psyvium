@@ -7,11 +7,13 @@ import {
   type AvailabilitySlotDto,
   type BookAppointmentInput,
   type CreateAvailabilitySlotInput,
+  type SendReminderResult,
   type UpdateAppointmentStatusInput,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
+import { CommunicationsService } from '../communications/communications.service';
 
 type AvailabilitySlotRow = {
   id: string;
@@ -31,7 +33,7 @@ type AppointmentRow = {
   format: string;
   status: string;
   isUrgent: boolean;
-  client: { user: { fullName: string } };
+  client: { user: { fullName: string; phone: string | null } };
   psychologist: { user: { fullName: string } };
 };
 
@@ -54,6 +56,7 @@ export class SchedulingService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly bus: EventBus,
+    private readonly comms: CommunicationsService,
   ) {}
 
   /** A psychologist opens a slot on their own calendar. */
@@ -282,30 +285,66 @@ export class SchedulingService {
   }
 
   /**
-   * Fires the decoupled reminder seam: a Communications-Hub subscriber turns
-   * this into an SMS. This service never imports the communications module.
+   * Reminder seam (`15-communications-and-telephony.md` / `09-*`), now wired
+   * end to end: still publishes `AppointmentReminderDue` (any other future
+   * subscriber can still react to it), but the actual delivery is a direct
+   * call into `CommunicationsService.sendSystemSms` — plain date/time/clinic
+   * name only, in the appointment's own `timezone` (never the reason for the
+   * visit or any other clinical detail: PHI minimization). If the client has
+   * no phone on file this is reported honestly as `{ sent: false, reason:
+   * 'no-phone-on-record' }` — never a fabricated send.
    */
-  async sendReminder(principal: AuthPrincipal, appointmentId: string): Promise<{ ok: true }> {
+  async sendReminder(principal: AuthPrincipal, appointmentId: string): Promise<SendReminderResult> {
     const appointment = await this.prisma.appointment.findFirst({
       where: { id: appointmentId, tenantId: principal.tenantId },
+      include: APPOINTMENT_INCLUDE,
     });
     if (!appointment) throw new NotFoundException('Appointment not found');
+    const appt = appointment as unknown as AppointmentRow;
+
+    await this.bus.publish(Events.AppointmentReminderDue, principal.tenantId, {
+      appointmentId: appt.id,
+      clientId: appt.clientId,
+      psychologistId: appt.psychologistId,
+      startsAt: appt.startsAt.toISOString(),
+    });
+
+    const phone = appt.client.user.phone;
+    if (!phone) {
+      await this.audit.record({
+        tenantId: principal.tenantId,
+        actorId: principal.userId,
+        action: 'appointment.reminder_skipped',
+        entityType: 'Appointment',
+        entityId: appt.id,
+        after: { reason: 'no-phone-on-record' },
+      });
+      return { sent: false, reason: 'no-phone-on-record' };
+    }
+
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: principal.tenantId }, select: { name: true } });
+    const clinicName = tenant?.name ?? 'your clinic';
+    const whenText = new Intl.DateTimeFormat('en-US', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: appt.timezone,
+    }).format(appt.startsAt);
+    // PHI minimization: date/time + clinic name only — never the reason for
+    // the visit, a diagnosis, or any other clinical detail.
+    const body = `Reminder from ${clinicName}: you have an appointment on ${whenText} (${appt.timezone}).`;
+
+    const result = await this.comms.sendSystemSms(principal.tenantId, phone, body, { clientId: appt.clientId });
 
     await this.audit.record({
       tenantId: principal.tenantId,
       actorId: principal.userId,
-      action: 'appointment.reminder_sent',
+      action: result.sent ? 'appointment.reminder_sent' : 'appointment.reminder_send_failed',
       entityType: 'Appointment',
-      entityId: appointment.id,
-    });
-    await this.bus.publish(Events.AppointmentReminderDue, principal.tenantId, {
-      appointmentId: appointment.id,
-      clientId: appointment.clientId,
-      psychologistId: appointment.psychologistId,
-      startsAt: appointment.startsAt.toISOString(),
+      entityId: appt.id,
+      after: { smsId: result.smsId ?? null, reason: result.reason ?? null },
     });
 
-    return { ok: true };
+    return result.sent ? { sent: true, smsId: result.smsId } : { sent: false, reason: result.reason ?? 'send-failed' };
   }
 
   private toSlotDto(slot: AvailabilitySlotRow): AvailabilitySlotDto {
