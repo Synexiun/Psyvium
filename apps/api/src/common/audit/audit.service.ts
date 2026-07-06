@@ -12,6 +12,14 @@ export interface AuditInput {
   after?: unknown;
   ip?: string;
   userAgent?: string;
+  /**
+   * When true, a failed audit write is re-thrown so the triggering action
+   * fails closed instead of silently succeeding without its audit trail
+   * (docs/technical/06-security-and-rbac.md §5 — "every clinical action
+   * emits a tamper-evident audit event"). Defaults to false so existing
+   * callers keep today's best-effort (log-and-continue) behavior.
+   */
+  critical?: boolean;
 }
 
 /**
@@ -63,8 +71,23 @@ export class AuditService {
         },
       });
     } catch (err) {
-      // Audit must never break the request path, but a failure is itself notable.
-      this.logger.error(`audit write failed for ${input.action}: ${(err as Error).message}`);
+      // A failed audit write is never silent: always log at ERROR with full
+      // context so it surfaces to on-call/monitoring even when the caller
+      // swallows the rejection.
+      this.logger.error(
+        `audit write FAILED action=${input.action} entityType=${input.entityType} entityId=${
+          input.entityId ?? 'n/a'
+        } tenantId=${input.tenantId} actorId=${input.actorId ?? 'n/a'} critical=${Boolean(input.critical)}: ${
+          (err as Error).message
+        }`,
+        (err as Error).stack,
+      );
+      if (input.critical) {
+        // Fail closed: the caller's action must not silently succeed without
+        // its audit record for critical (e.g. break-glass, escalation
+        // resolution) events.
+        throw err;
+      }
     }
   }
 }

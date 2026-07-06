@@ -182,7 +182,10 @@ async function main() {
       questionnaireId: q.id,
       version: '1.0.0',
       published: true,
-      // Shape consumed by the Psychometrics ScoringService: exhaustive inclusive raw-score bands.
+      // Shape consumed by the Psychometrics ScoringService: exhaustive inclusive raw-score bands,
+      // plus the safety-item hook (07-psychometrics-engine.md §4) — item 9 is the
+      // suicidal-ideation item; any endorsement (answer >= 1) raises a deterministic
+      // HIGH RiskFlag + Escalation on a standalone assessment, same as intake's safety screen.
       cutoffs: {
         bands: [
           { band: 'LOW', min: 0, max: 4 },
@@ -190,6 +193,7 @@ async function main() {
           { band: 'HIGH', min: 10, max: 14 },
           { band: 'SEVERE', min: 15, max: 27 },
         ],
+        safetyItems: [{ itemId: 'q9', minAnswer: 1, category: 'suicidal_ideation' }],
       },
     },
   });

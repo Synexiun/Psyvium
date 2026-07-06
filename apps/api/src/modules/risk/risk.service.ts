@@ -224,6 +224,9 @@ export class RiskService {
       entityId: updated.id,
       before: { resolvedAt: null },
       after: { resolvedAt: resolvedAt.toISOString(), resolution: input.resolution },
+      // Fail-closed (06-security-and-rbac.md §5): an escalation resolution
+      // must never silently succeed without its audit trail.
+      critical: true,
     });
 
     await this.bus.publish(Events.EscalationResolved, principal.tenantId, {
@@ -332,6 +335,9 @@ export class RiskService {
         reason: grant.reason,
         expiresAt: expiresAt.toISOString(),
       },
+      // Fail-closed (06-security-and-rbac.md §5): emergency PHI access must
+      // never proceed silently without its audit + DPO-alert trail.
+      critical: true,
     });
 
     await this.bus.publish(Events.BreakGlassInvoked, principal.tenantId, {
