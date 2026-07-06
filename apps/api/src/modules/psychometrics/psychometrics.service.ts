@@ -91,11 +91,32 @@ export class PsychometricsService {
       version.items ?? [],
       input.answers,
     );
-    const interpretation = irtResult
-      ? `${computed.interpretation} IRT EAP theta=${irtResult.thetaEstimate.toFixed(3)} (SE=${irtResult.standardError.toFixed(3)}, ` +
-        `T=${(50 + 10 * irtResult.thetaEstimate).toFixed(1)}, percentile=${irtResult.percentile.toFixed(1)}) ` +
-        `from ${irtResult.itemsUsed} calibrated item(s) [${irtResult.irtModelsUsed.join(', ')}] on the N(0,1) reference metric.`
-      : computed.interpretation;
+    // Calibration provenance (AERA/APA/NCME Standards Ch.4/6 — clinical audit
+    // 2026-07-06): a score computed from SYNTHETIC/demo calibration must never
+    // read like a validated report. Detect the provenance marker stored on the
+    // ItemParameter rows and brand the persisted interpretation accordingly.
+    const syntheticCalibration =
+      irtResult != null &&
+      (version.items ?? []).some((item) =>
+        JSON.stringify((item.parameters?.[0] as { seEstimates?: unknown } | undefined)?.seEstimates ?? '')
+          .toLowerCase()
+          .includes('synthetic'),
+      );
+    // Standards Ch.6: the persisted record itself carries the hedge — not just
+    // the UI wrapper — so any surface reading PsychometricScore.interpretation
+    // inherits it.
+    const HEDGE =
+      ' Screening result only — requires clinician confirmation; does not constitute a diagnosis.';
+    const interpretation =
+      (irtResult
+        ? `${computed.interpretation} IRT EAP theta=${irtResult.thetaEstimate.toFixed(3)} (SE=${irtResult.standardError.toFixed(3)}, ` +
+          `T=${(50 + 10 * irtResult.thetaEstimate).toFixed(1)}, percentile=${irtResult.percentile.toFixed(1)}) ` +
+          `from ${irtResult.itemsUsed} calibrated item(s) [${irtResult.irtModelsUsed.join(', ')}] on an assumed-normal N(0,1) ` +
+          `reference metric (no empirical norm sample).` +
+          (syntheticCalibration
+            ? ' ⚠ SYNTHETIC CALIBRATION — DEMO ONLY: item parameters are not fitted to real response data; theta/SE/percentile are illustrative and must not inform clinical decisions.'
+            : '')
+        : computed.interpretation) + HEDGE;
 
     const result = await this.prisma.$transaction(async (tx) => {
       const response = await tx.questionnaireResponse.create({

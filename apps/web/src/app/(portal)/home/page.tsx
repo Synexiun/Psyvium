@@ -344,9 +344,19 @@ export default function PatientHomePage() {
               </svg>
               {t('patient.helpCall')}
             </a>
-            <button className="inline-flex items-center gap-2 rounded border border-signal/50 px-4 py-2 text-sm font-medium text-signal transition hover:bg-signal/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal">
+            {/* REAL crisis channel (clinical audit 2026-07-06, P0): this was a dead
+                <button> with no handler — a visible but non-functional crisis
+                control is a patient-safety hazard. Now links to the 988 Suicide &
+                Crisis Lifeline's actual chat service. US-only; jurisdiction-aware
+                localized crisis resources are the tracked follow-up. */}
+            <a
+              href="https://988lifeline.org/chat"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded border border-signal/50 px-4 py-2 text-sm font-medium text-signal transition hover:bg-signal/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal"
+            >
               {t('patient.helpChat')}
-            </button>
+            </a>
           </div>
           <p className="mt-4 text-xs text-mist/50">{t('patient.helpEmergency')}</p>
         </section>
