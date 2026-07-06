@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { REQUIRED_CONSENT_VERSIONS } from '@vpsy/contracts';
+import { REQUIRED_CONSENT_VERSIONS, SeverityBand } from '@vpsy/contracts';
 import type { AuthPrincipal } from '@vpsy/contracts';
 import { CredentialingService } from '../modules/credentialing/credentialing.service';
 import { ConsentService } from '../modules/consent/consent.service';
@@ -185,6 +185,8 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
       await expect(
         svc.resolveEscalation({ tenantId: 'tenant_demo' } as AuthPrincipal, 'esc_1', {
           resolution: 'Auto-resolved by risk-triage agent',
+          riskLevelAtResolution: SeverityBand.LOW,
+          interventionsApplied: [],
         }),
       ).rejects.toBeInstanceOf(ForbiddenException);
       // Fails closed before ever touching storage — proves this is a hard
@@ -197,6 +199,8 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
       const { svc, audit } = makeService();
       const result = await svc.resolveEscalation(principal, 'esc_1', {
         resolution: 'Contacted client by phone; safety plan reviewed; no acute risk, follow-up booked.',
+        riskLevelAtResolution: SeverityBand.LOW,
+        interventionsApplied: [],
       });
       expect(result.resolvedAt).not.toBeNull();
       expect(audit.record).toHaveBeenCalledWith(
@@ -333,7 +337,7 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
       await svc.administer(principal, {
         versionId: 'qv_1',
         clientId: 'client_1',
-        answers: { q1: 1, q2: 1, q9: 2 }, // q9 (safety item) endorsed >= minAnswer(1)
+        answers: { q1: 1, q2: 1, q9: 1 }, // q9 (safety item) endorsed at minAnswer(1) -> HIGH (graduated: >=2 -> SEVERE)
       });
 
       expect(tx.riskFlag.create).toHaveBeenCalledTimes(1);

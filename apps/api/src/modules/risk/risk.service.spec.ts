@@ -1,5 +1,5 @@
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import type { AuthPrincipal } from '@vpsy/contracts';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { SeverityBand, type AuthPrincipal } from '@vpsy/contracts';
 import { RiskService } from './risk.service';
 
 /**
@@ -81,6 +81,8 @@ describe('RiskService.resolveEscalation', () => {
     await expect(
       svc.resolveEscalation({ tenantId: 'tenant_demo' } as AuthPrincipal, 'esc_1', {
         resolution: 'Auto-resolved by risk-triage agent',
+        riskLevelAtResolution: SeverityBand.LOW,
+        interventionsApplied: [],
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(prisma.escalation.findFirst).not.toHaveBeenCalled();
@@ -91,6 +93,8 @@ describe('RiskService.resolveEscalation', () => {
     const { svc, audit, bus } = makeService();
     const result = await svc.resolveEscalation(principal, 'esc_1', {
       resolution: 'Contacted client by phone; safety plan reviewed; no acute risk, follow-up booked.',
+      riskLevelAtResolution: SeverityBand.LOW,
+      interventionsApplied: ['Phone contact', 'Safety plan review'],
     });
 
     expect(result.resolvedAt).not.toBeNull();
@@ -114,15 +118,129 @@ describe('RiskService.resolveEscalation', () => {
         update: jest.fn(),
       },
     });
-    await expect(svc.resolveEscalation(principal, 'esc_1', { resolution: 'Second attempt' })).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(
+      svc.resolveEscalation(principal, 'esc_1', {
+        resolution: 'Second attempt',
+        riskLevelAtResolution: SeverityBand.LOW,
+        interventionsApplied: [],
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('rejects when the escalation does not exist in this tenant', async () => {
     const { svc } = makeService({ escalation: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() } });
-    await expect(svc.resolveEscalation(principal, 'esc_missing', { resolution: 'x'.repeat(10) })).rejects.toBeInstanceOf(
-      NotFoundException,
+    await expect(
+      svc.resolveEscalation(principal, 'esc_missing', {
+        resolution: 'x'.repeat(10),
+        riskLevelAtResolution: SeverityBand.LOW,
+        interventionsApplied: [],
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('rejects resolving with riskLevelAtResolution SEVERE/HIGH and no followUpDueAt (SAFE-T / NPSG 15.01.01)', async () => {
+    const { svc, prisma } = makeService();
+    await expect(
+      svc.resolveEscalation(principal, 'esc_1', {
+        resolution: 'Client stabilized, still at elevated risk, needs caring-contact follow-up.',
+        riskLevelAtResolution: SeverityBand.SEVERE,
+        interventionsApplied: ['Safety plan updated'],
+      } as any),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('accepts resolving with riskLevelAtResolution SEVERE when followUpDueAt is supplied', async () => {
+    const { svc } = makeService();
+    const followUpDueAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const result = await svc.resolveEscalation(principal, 'esc_1', {
+      resolution: 'Client stabilized, still at elevated risk, follow-up scheduled within 24h.',
+      riskLevelAtResolution: SeverityBand.SEVERE,
+      interventionsApplied: ['Safety plan updated', 'Means restriction counseling'],
+      followUpDueAt,
+    });
+    expect(result.resolvedAt).not.toBeNull();
+  });
+});
+
+describe('RiskService.completeFollowUp', () => {
+  it('rejects completing follow-up on an escalation with no followUpDueAt scheduled', async () => {
+    const { svc } = makeService();
+    await expect(svc.completeFollowUp(principal, 'esc_1', {})).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects double-completion of the same follow-up (idempotency guard)', async () => {
+    const { svc } = makeService({
+      escalation: {
+        findFirst: jest.fn().mockResolvedValue({
+          ...escalationRow,
+          followUpDueAt: new Date('2026-01-02T00:00:00Z'),
+          followUpCompletedAt: new Date('2026-01-02T01:00:00Z'),
+        }),
+        update: jest.fn(),
+      },
+    });
+    await expect(svc.completeFollowUp(principal, 'esc_1', {})).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('records followUpCompletedAt and an audit event when a follow-up is due and not yet completed', async () => {
+    const { svc, prisma, audit } = makeService({
+      escalation: {
+        findFirst: jest.fn().mockResolvedValue({
+          ...escalationRow,
+          followUpDueAt: new Date('2026-01-02T00:00:00Z'),
+          followUpCompletedAt: null,
+        }),
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          ...escalationRow,
+          followUpDueAt: new Date('2026-01-02T00:00:00Z'),
+          ...data,
+        })),
+      },
+    });
+    const result = await svc.completeFollowUp(principal, 'esc_1', { notes: 'Reached client by phone.' });
+    expect(result.followUpCompletedAt).not.toBeNull();
+    expect(prisma.escalation.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'esc_1' } }),
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'escalation.followup_completed', actorId: 'user_psy_a' }),
+    );
+  });
+});
+
+describe('RiskService.getMySafetyPlan', () => {
+  it('rejects when the authenticated principal has no Client row in this tenant', async () => {
+    const { svc } = makeService({
+      client: { findFirst: jest.fn().mockResolvedValue(null) },
+    });
+    await expect(svc.getMySafetyPlan(principal)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('returns the latest safety plan for the client owned by the authenticated principal (own-only)', async () => {
+    const plan = {
+      id: 'plan_1',
+      clientId: 'client_1',
+      version: 1,
+      warningSigns: ['Isolating from friends'],
+      copingStrategies: ['Call support contact'],
+      supportContacts: [],
+      professionalContacts: [],
+      distractionContacts: null,
+      helpContacts: null,
+      crisisLineInfo: { label: '988 Suicide & Crisis Lifeline', phone: '988' },
+      meansRestriction: null,
+      clientAcknowledgedAt: null,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const { svc, prisma } = makeService({
+      client: { findFirst: jest.fn().mockResolvedValue({ id: 'client_1', tenantId: 'tenant_demo' }) },
+      safetyPlan: { findFirst: jest.fn().mockResolvedValue(plan), create: jest.fn() },
+    });
+    const result = await svc.getMySafetyPlan(principal);
+    expect(result?.id).toBe('plan_1');
+    expect(prisma.client.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ userId: principal.userId, tenantId: principal.tenantId }) }),
     );
   });
 });

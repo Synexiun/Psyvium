@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import type { AuthPrincipal, ScreeningResult, SubmitIntakeInput } from '@vpsy/contracts';
+import type { Prisma } from '@vpsy/database';
+import { computeEscalationSlaDueAt, type AuthPrincipal, type ScreeningResult, type SubmitIntakeInput } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
@@ -102,11 +103,20 @@ export class IntakeService {
             severity: flag.severity,
             source: flag.source,
             evidence: flag.evidence,
+            evidenceDetail: (flag.evidenceDetail as Prisma.InputJsonValue | undefined) ?? undefined,
             status: 'ESCALATED',
           },
         });
+        // Real per-severity SLA target (WAVE CR item 3) set at creation time —
+        // never left to a background job to backfill.
+        const openedAt = new Date();
         const escalation = await tx.escalation.create({
-          data: { tenantId: principal.tenantId, riskFlagId: rf.id },
+          data: {
+            tenantId: principal.tenantId,
+            riskFlagId: rf.id,
+            openedAt,
+            slaDueAt: computeEscalationSlaDueAt(flag.severity, openedAt),
+          },
         });
         raisedFlagIds.push(rf.id);
         raisedEscalations.push({ escalationId: escalation.id, riskFlagId: rf.id });

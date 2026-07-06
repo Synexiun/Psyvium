@@ -5,6 +5,7 @@ import type {
   AuthPrincipal,
   BreakGlassInput,
   BreakGlassResultDto,
+  CompleteEscalationFollowUpInput,
   CreateSafetyPlanInput,
   EscalationDto,
   ResolveEscalationInput,
@@ -27,6 +28,9 @@ const SEVERITY_RANK: Record<string, number> = {
   [SeverityBand.LOW]: 1,
 };
 
+/** Resolution risk levels that require a Zero Suicide caring-contact follow-up. */
+const FOLLOW_UP_REQUIRED_LEVELS = new Set<string>([SeverityBand.HIGH, SeverityBand.SEVERE]);
+
 type RiskFlagRow = {
   id: string;
   clientId: string;
@@ -34,6 +38,7 @@ type RiskFlagRow = {
   severity: string;
   source: string;
   evidence: string | null;
+  evidenceDetail?: unknown;
   status: string;
   createdAt: Date;
   client: { user: { fullName: string } };
@@ -47,6 +52,11 @@ type EscalationRow = {
   resolvedAt: Date | null;
   resolution: string | null;
   slaBreached: boolean;
+  slaDueAt?: Date | null;
+  riskLevelAtResolution?: string | null;
+  interventionsApplied?: string[];
+  followUpDueAt?: Date | null;
+  followUpCompletedAt?: Date | null;
   riskFlag: RiskFlagRow;
 };
 
@@ -58,9 +68,17 @@ type SafetyPlanRow = {
   supportContacts: unknown;
   professionalContacts: unknown;
   environmentSafety: string | null;
+  distractionContacts?: unknown;
+  helpContacts?: unknown;
+  crisisLineInfo?: unknown;
+  meansRestriction?: unknown;
+  clientAcknowledgedAt?: Date | null;
   version: number;
   createdAt: Date;
 };
+
+/** Default crisis-line entry persisted when a safety plan doesn't specify one. */
+const DEFAULT_CRISIS_LINE_INFO = { label: '988 Suicide & Crisis Lifeline', phone: '988' };
 
 /**
  * Risk & Crisis (context 21, Phase 4). Owns the human escalation workflow,
@@ -185,6 +203,12 @@ export class RiskService {
    * human principal with `escalation:handle`; the resolution narrative is
    * mandatory. Also marks the underlying RiskFlag RESOLVED so it drops off
    * the board's `openFlags`, closing the loop deterministically.
+   *
+   * SAFE-T/Joint Commission NPSG 15.01.01 (WAVE CR item 4): the contract
+   * (`resolveEscalationSchema`) already enforces `followUpDueAt` whenever
+   * `riskLevelAtResolution` is HIGH/SEVERE via `superRefine`; this service
+   * re-asserts the same invariant defensively so it holds even if this
+   * method is ever invoked from a non-HTTP entrypoint.
    */
   async resolveEscalation(
     principal: AuthPrincipal,
@@ -193,6 +217,11 @@ export class RiskService {
   ): Promise<EscalationDto> {
     if (!principal?.userId) {
       throw new ForbiddenException('Escalation resolution requires an authenticated human principal');
+    }
+    if (FOLLOW_UP_REQUIRED_LEVELS.has(input.riskLevelAtResolution) && !input.followUpDueAt) {
+      throw new BadRequestException(
+        'followUpDueAt is required when riskLevelAtResolution is HIGH or SEVERE (Zero Suicide caring-contact follow-up)',
+      );
     }
 
     const escalation = await this.prisma.escalation.findFirst({
@@ -203,10 +232,17 @@ export class RiskService {
     if (escalation.resolvedAt) throw new ConflictException('Escalation is already resolved');
 
     const resolvedAt = new Date();
+    const followUpDueAt = input.followUpDueAt ? new Date(input.followUpDueAt) : null;
     const updated = await this.prisma.$transaction(async (tx) => {
       const esc = await tx.escalation.update({
         where: { id: escalation.id },
-        data: { resolvedAt, resolution: input.resolution },
+        data: {
+          resolvedAt,
+          resolution: input.resolution,
+          riskLevelAtResolution: input.riskLevelAtResolution,
+          interventionsApplied: input.interventionsApplied ?? [],
+          followUpDueAt,
+        },
         include: { riskFlag: { include: { client: { include: { user: true } } } } },
       });
       await tx.riskFlag.update({
@@ -223,7 +259,13 @@ export class RiskService {
       entityType: 'Escalation',
       entityId: updated.id,
       before: { resolvedAt: null },
-      after: { resolvedAt: resolvedAt.toISOString(), resolution: input.resolution },
+      after: {
+        resolvedAt: resolvedAt.toISOString(),
+        resolution: input.resolution,
+        riskLevelAtResolution: input.riskLevelAtResolution,
+        interventionsApplied: input.interventionsApplied ?? [],
+        followUpDueAt: followUpDueAt ? followUpDueAt.toISOString() : null,
+      },
       // Fail-closed (06-security-and-rbac.md §5): an escalation resolution
       // must never silently succeed without its audit trail.
       critical: true,
@@ -234,6 +276,49 @@ export class RiskService {
       riskFlagId: updated.riskFlagId,
       clientId: updated.riskFlag.clientId,
       resolvedBy: principal.userId,
+    });
+
+    return this.toEscalationDto(updated as EscalationRow);
+  }
+
+  /**
+   * Records that the Zero Suicide caring-contact follow-up actually
+   * happened. Requires a scheduled `followUpDueAt` (i.e. the escalation must
+   * already be resolved with a follow-up requirement) and is idempotent —
+   * recording it twice is a conflict, not a silent no-op, so double-entry
+   * mistakes surface rather than hide.
+   */
+  async completeFollowUp(
+    principal: AuthPrincipal,
+    id: string,
+    input: CompleteEscalationFollowUpInput,
+  ): Promise<EscalationDto> {
+    const escalation = await this.prisma.escalation.findFirst({
+      where: { id, tenantId: principal.tenantId },
+      include: { riskFlag: { include: { client: { include: { user: true } } } } },
+    });
+    if (!escalation) throw new NotFoundException('Escalation not found');
+    if (!escalation.followUpDueAt) {
+      throw new BadRequestException('This escalation has no follow-up contact scheduled');
+    }
+    if (escalation.followUpCompletedAt) {
+      throw new ConflictException('Follow-up has already been recorded as completed');
+    }
+
+    const completedAt = new Date();
+    const updated = await this.prisma.escalation.update({
+      where: { id: escalation.id },
+      data: { followUpCompletedAt: completedAt },
+      include: { riskFlag: { include: { client: { include: { user: true } } } } },
+    });
+
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'escalation.followup_completed',
+      entityType: 'Escalation',
+      entityId: updated.id,
+      after: { followUpCompletedAt: completedAt.toISOString(), notes: input.notes ?? null },
     });
 
     return this.toEscalationDto(updated as EscalationRow);
@@ -264,6 +349,12 @@ export class RiskService {
         supportContacts: input.supportContacts ?? [],
         professionalContacts: input.professionalContacts ?? [],
         environmentSafety: input.environmentSafety,
+        // Stanley-Brown SPI completeness (WAVE CR item 5) — additive fields.
+        distractionContacts: input.distractionContacts ?? undefined,
+        helpContacts: input.helpContacts ?? undefined,
+        crisisLineInfo: input.crisisLineInfo ?? DEFAULT_CRISIS_LINE_INFO,
+        meansRestriction: input.meansRestriction ?? undefined,
+        clientAcknowledgedAt: input.clientAcknowledgedAt ? new Date(input.clientAcknowledgedAt) : undefined,
         version: (latest?.version ?? 0) + 1,
       },
     });
@@ -292,6 +383,19 @@ export class RiskService {
       orderBy: { version: 'desc' },
     });
     return plan ? this.toSafetyPlanDto(plan as SafetyPlanRow) : null;
+  }
+
+  /**
+   * Client-facing read of their own latest safety plan (Stanley-Brown SPI
+   * "client-visible copy" requirement, WAVE CR item 5) — own-client-only,
+   * mirroring the `ClientsService.getMySummary` own-record lookup pattern.
+   */
+  async getMySafetyPlan(principal: AuthPrincipal): Promise<SafetyPlanDto | null> {
+    const client = await this.prisma.client.findFirst({
+      where: { userId: principal.userId, tenantId: principal.tenantId },
+    });
+    if (!client) throw new NotFoundException('Client profile not found for this user');
+    return this.getLatestSafetyPlan(principal, client.id);
   }
 
   /**
@@ -367,6 +471,7 @@ export class RiskService {
       severity: flag.severity as RiskFlagDto['severity'],
       source: flag.source as RiskFlagDto['source'],
       evidence: flag.evidence,
+      evidenceDetail: flag.evidenceDetail ?? null,
       status: flag.status as RiskFlagDto['status'],
       createdAt: flag.createdAt.toISOString(),
     };
@@ -385,6 +490,11 @@ export class RiskService {
       resolvedAt: escalation.resolvedAt ? escalation.resolvedAt.toISOString() : null,
       resolution: escalation.resolution,
       slaBreached: escalation.slaBreached,
+      slaDueAt: escalation.slaDueAt ? escalation.slaDueAt.toISOString() : null,
+      riskLevelAtResolution: (escalation.riskLevelAtResolution as EscalationDto['riskLevelAtResolution']) ?? null,
+      interventionsApplied: escalation.interventionsApplied ?? [],
+      followUpDueAt: escalation.followUpDueAt ? escalation.followUpDueAt.toISOString() : null,
+      followUpCompletedAt: escalation.followUpCompletedAt ? escalation.followUpCompletedAt.toISOString() : null,
     };
   }
 
@@ -397,6 +507,11 @@ export class RiskService {
       supportContacts: (plan.supportContacts as string[] | null) ?? [],
       professionalContacts: (plan.professionalContacts as string[] | null) ?? [],
       environmentSafety: plan.environmentSafety,
+      distractionContacts: (plan.distractionContacts as string[] | null) ?? null,
+      helpContacts: (plan.helpContacts as string[] | null) ?? null,
+      crisisLineInfo: (plan.crisisLineInfo as SafetyPlanDto['crisisLineInfo']) ?? null,
+      meansRestriction: (plan.meansRestriction as SafetyPlanDto['meansRestriction']) ?? null,
+      clientAcknowledgedAt: plan.clientAcknowledgedAt ? plan.clientAcknowledgedAt.toISOString() : null,
       version: plan.version,
       createdAt: plan.createdAt.toISOString(),
     };

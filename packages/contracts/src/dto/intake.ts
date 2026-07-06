@@ -22,13 +22,39 @@ export const functionalImpairmentSchema = z.object({
   selfCare: z.number().int().min(0).max(10),
 });
 
-/** Safety screen — any positive triggers deterministic risk-flag creation. */
+/**
+ * C-SSRS-style behavior history (Posner 2011 Columbia-Suicide Severity Rating
+ * Scale) — any positive here is an imminent-risk signal regardless of the
+ * reported ideation intensity (e.g. a prior attempt with currently "low"
+ * ideation is still SEVERE).
+ */
+export const behaviorHistorySchema = z.object({
+  priorAttempt: z.boolean().default(false),
+  aborted: z.boolean().default(false),
+  preparatory: z.boolean().default(false),
+  recentSelfHarm: z.boolean().default(false),
+});
+export type BehaviorHistoryInput = z.infer<typeof behaviorHistorySchema>;
+
+/**
+ * Safety screen — any positive triggers deterministic risk-flag creation.
+ *
+ * Graduated C-SSRS-style triage (WAVE CR item 1): `ideationSeverity` (0-5,
+ * modeled on the C-SSRS ideation-intensity subscale) and `behaviorHistory`
+ * are OPTIONAL and additive — existing callers that only ever send the two
+ * booleans below are unaffected. When `ideationSeverity` is absent, the
+ * server derives an equivalent level from the booleans
+ * (suicidalIdeation → 2, suicidalPlan → 5) so legacy payloads score
+ * identically to before.
+ */
 export const safetyScreenSchema = z.object({
   suicidalIdeation: z.boolean(),
   suicidalPlan: z.boolean().default(false),
   selfHarm: z.boolean(),
   harmToOthers: z.boolean(),
   recentLoss: z.boolean().default(false),
+  ideationSeverity: z.number().int().min(0).max(5).optional(),
+  behaviorHistory: behaviorHistorySchema.optional(),
 });
 
 export const submitIntakeSchema = z.object({

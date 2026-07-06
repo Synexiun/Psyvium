@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  computeEscalationSlaDueAt,
   questionnaireCutoffsSchema,
   RiskSource,
   RiskStatus,
@@ -147,20 +148,35 @@ export class PsychometricsService {
       // assessment must route to Risk & Crisis just as reliably as intake.
       const raisedFlagIds: string[] = [];
       const raisedEscalations: { escalationId: string; riskFlagId: string }[] = [];
+      let highestSafetySeverity: SeverityBand = SeverityBand.LOW;
       for (const hit of safetyHits) {
+        // Graduated safety-item severity (WAVE CR item 2): the raw endorsed
+        // answer value drives severity instead of flattening every hit to
+        // HIGH — answer 1 stays HIGH (as before), answer >= 2 escalates to
+        // SEVERE.
+        const severity = hit.answer >= 2 ? SeverityBand.SEVERE : SeverityBand.HIGH;
+        if (SEVERITY_RANK[severity] > SEVERITY_RANK[highestSafetySeverity]) highestSafetySeverity = severity;
+
         const rf = await tx.riskFlag.create({
           data: {
             tenantId: principal.tenantId,
             clientId: input.clientId,
             type: hit.category,
-            severity: SeverityBand.HIGH,
+            severity,
             source: RiskSource.SCREENING,
             evidence: `Safety item "${hit.itemId}" answered ${hit.answer} (>= threshold ${hit.minAnswer}) on assessment response`,
+            evidenceDetail: { itemId: hit.itemId, answer: hit.answer, minAnswer: hit.minAnswer, category: hit.category },
             status: RiskStatus.ESCALATED,
           },
         });
+        const openedAt = new Date();
         const escalation = await tx.escalation.create({
-          data: { tenantId: principal.tenantId, riskFlagId: rf.id },
+          data: {
+            tenantId: principal.tenantId,
+            riskFlagId: rf.id,
+            openedAt,
+            slaDueAt: computeEscalationSlaDueAt(severity, openedAt),
+          },
         });
         raisedFlagIds.push(rf.id);
         raisedEscalations.push({ escalationId: escalation.id, riskFlagId: rf.id });
@@ -168,8 +184,8 @@ export class PsychometricsService {
 
       // Reflect elevated risk on the client record — escalate only, never
       // silently downgrade a client already flagged more severely elsewhere.
-      if (raisedFlagIds.length > 0 && SEVERITY_RANK[client.riskLevel] < SEVERITY_RANK[SeverityBand.HIGH]) {
-        await tx.client.update({ where: { id: client.id }, data: { riskLevel: SeverityBand.HIGH } });
+      if (raisedFlagIds.length > 0 && SEVERITY_RANK[client.riskLevel] < SEVERITY_RANK[highestSafetySeverity]) {
+        await tx.client.update({ where: { id: client.id }, data: { riskLevel: highestSafetySeverity } });
       }
 
       return { response, score, raisedFlagIds, raisedEscalations };

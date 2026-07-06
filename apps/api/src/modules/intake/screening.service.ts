@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { RiskSource, RiskType, SeverityBand, type SubmitIntakeInput } from '@vpsy/contracts';
+import {
+  RiskSource,
+  RiskType,
+  SeverityBand,
+  type BehaviorHistoryInput,
+  type SubmitIntakeInput,
+} from '@vpsy/contracts';
 
 export interface ScreeningComputation {
   riskScore: number;
@@ -8,8 +14,26 @@ export interface ScreeningComputation {
   suggestedSpecialty: string;
   virtualCareSuitable: boolean;
   contraindications: string[];
-  riskFlags: Array<{ type: RiskType; severity: SeverityBand; source: RiskSource; evidence: string }>;
+  riskFlags: Array<{
+    type: RiskType;
+    severity: SeverityBand;
+    source: RiskSource;
+    evidence: string;
+    evidenceDetail?: Record<string, unknown>;
+  }>;
 }
+
+/**
+ * Graduated ideation-level → score/urgency contribution (WAVE CR item 1,
+ * C-SSRS Posner 2011). Deliberately calibrated so the two boolean-derived
+ * levels (2 = suicidalIdeation alone, 5 = suicidalPlan) reproduce the exact
+ * pre-graduation numbers (30/45 score, 15/30 urgency) — legacy callers that
+ * only ever send the booleans see byte-identical results.
+ */
+const IDEATION_SCORE_BY_LEVEL: Record<number, number> = { 0: 0, 1: 12, 2: 30, 3: 38, 4: 42, 5: 45 };
+const IDEATION_URGENCY_BY_LEVEL: Record<number, number> = { 0: 0, 1: 5, 2: 15, 3: 20, 4: 25, 5: 30 };
+const BEHAVIOR_HISTORY_SCORE_BONUS = 15;
+const RECENT_LOSS_SCORE_BONUS = 6;
 
 /**
  * Deterministic clinical screening. Safety-critical decisions (risk flags,
@@ -24,12 +48,54 @@ export class ScreeningService {
 
     // ── Safety screen → deterministic risk flags ──
     const s = intake.safety;
-    if (s.suicidalIdeation) {
+
+    // Graduated C-SSRS-style triage (WAVE CR item 1): the effective ideation
+    // level is whichever the caller provided — the 0-5 `ideationSeverity`
+    // takes precedence; legacy boolean-only callers are mapped onto the same
+    // scale (suicidalIdeation → 2, suicidalPlan → 5).
+    const ideationLevel =
+      typeof s.ideationSeverity === 'number'
+        ? s.ideationSeverity
+        : s.suicidalPlan
+          ? 5
+          : s.suicidalIdeation
+            ? 2
+            : 0;
+    const behaviorHistory: BehaviorHistoryInput | undefined = s.behaviorHistory;
+    const behaviorPositive = !!(
+      behaviorHistory &&
+      (behaviorHistory.priorAttempt ||
+        behaviorHistory.aborted ||
+        behaviorHistory.preparatory ||
+        behaviorHistory.recentSelfHarm)
+    );
+
+    // C-SSRS decision logic: level 4-5 or ANY positive behavior history is an
+    // imminent-risk signal → SEVERE; level 3 → HIGH; level 1-2 → MODERATE
+    // (still escalated to a human, just a lower-priority lane); level 0 with
+    // no behavior history → no ideation flag at all.
+    let ideationSeverity: SeverityBand | null = null;
+    if (ideationLevel >= 4 || behaviorPositive) ideationSeverity = SeverityBand.SEVERE;
+    else if (ideationLevel === 3) ideationSeverity = SeverityBand.HIGH;
+    else if (ideationLevel >= 1) ideationSeverity = SeverityBand.MODERATE;
+
+    if (ideationSeverity) {
       riskFlags.push({
         type: RiskType.SUICIDAL_IDEATION,
-        severity: s.suicidalPlan ? SeverityBand.SEVERE : SeverityBand.HIGH,
+        severity: ideationSeverity,
         source: RiskSource.SCREENING,
-        evidence: s.suicidalPlan ? 'Endorsed ideation with a plan' : 'Endorsed suicidal ideation',
+        evidence:
+          ideationLevel >= 4 || behaviorPositive
+            ? 'Active suicidal ideation at a severe/imminent C-SSRS level (intent/plan and/or a positive behavior history)'
+            : ideationLevel === 3
+              ? 'Suicidal ideation with a method, no intent to act disclosed'
+              : 'Passive/nonspecific suicidal ideation endorsed',
+        evidenceDetail: {
+          ideationLevel,
+          behaviorHistory: behaviorHistory ?? null,
+          recentLoss: s.recentLoss,
+          inputSource: typeof s.ideationSeverity === 'number' ? 'graduated' : 'boolean-derived',
+        },
       });
     }
     if (s.selfHarm) {
@@ -63,25 +129,28 @@ export class ScreeningService {
       concentrationBurden * 1.5 +
       (intake.traumaExposure ? 8 : 0);
 
-    // Safety endorsements dominate the score.
-    if (s.suicidalIdeation) riskScore += s.suicidalPlan ? 45 : 30;
+    // Safety endorsements dominate the score. Graduated ideation level
+    // replaces the old plan/no-plan binary; behavior history and the
+    // previously-discarded `recentLoss` now feed the score directly
+    // (docs/10-10-PROGRAM.md WAVE CR item 96: "feed recentLoss in or remove it").
+    riskScore += IDEATION_SCORE_BY_LEVEL[ideationLevel] ?? 0;
+    if (behaviorPositive) riskScore += BEHAVIOR_HISTORY_SCORE_BONUS;
     if (s.selfHarm) riskScore += 18;
     if (s.harmToOthers) riskScore += 22;
+    if (s.recentLoss) riskScore += RECENT_LOSS_SCORE_BONUS;
 
     riskScore = Math.min(100, Math.round(riskScore));
 
-    const severityBand = this.band(riskScore, s.suicidalPlan);
-    const urgencyScore = Math.min(
-      100,
-      Math.round(riskScore * 0.7 + (s.suicidalPlan ? 30 : s.suicidalIdeation ? 15 : 0)),
-    );
+    const criticalOverride = ideationSeverity === SeverityBand.SEVERE;
+    const severityBand = this.band(riskScore, criticalOverride);
+    const urgencyScore = Math.min(100, Math.round(riskScore * 0.7 + (IDEATION_URGENCY_BY_LEVEL[ideationLevel] ?? 0)));
 
     // ── Suitability for virtual care ──
     const contraindications: string[] = [];
     let virtualCareSuitable = true;
-    if (s.suicidalPlan) {
+    if (criticalOverride) {
       virtualCareSuitable = false;
-      contraindications.push('Active suicidal plan — requires immediate in-person/crisis pathway');
+      contraindications.push('Severe/imminent suicide risk — requires immediate in-person/crisis pathway');
     }
     if (s.harmToOthers) {
       contraindications.push('Harm-to-others endorsed — safety and duty-to-warn review required');
@@ -101,8 +170,8 @@ export class ScreeningService {
     };
   }
 
-  private band(score: number, plan: boolean): SeverityBand {
-    if (plan || score >= 70) return SeverityBand.SEVERE;
+  private band(score: number, criticalOverride: boolean): SeverityBand {
+    if (criticalOverride || score >= 70) return SeverityBand.SEVERE;
     if (score >= 45) return SeverityBand.HIGH;
     if (score >= 20) return SeverityBand.MODERATE;
     return SeverityBand.LOW;

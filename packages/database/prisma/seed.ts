@@ -763,7 +763,62 @@ async function main() {
       supportContacts: ['Jordan Chen (sister) +1 555 010 2020'],
       professionalContacts: ['Dr. Elena Rivera (treating psychologist) +1 555 010 3030', 'Crisis line 988'],
       environmentSafety: 'No firearms in the home; medications stored with a trusted family member.',
+      // Stanley-Brown SPI completeness (WAVE CR item 5) — distraction vs help
+      // contacts split, structured means-restriction inventory, crisis-line
+      // info, and a recorded client acknowledgment.
+      distractionContacts: ['Walk the dog around the block', 'Coffee shop on 5th & Main (open until 9pm)'],
+      helpContacts: ['Jordan Chen (sister) +1 555 010 2020', 'Dr. Elena Rivera (treating psychologist) +1 555 010 3030'],
+      crisisLineInfo: { label: '988 Suicide & Crisis Lifeline', phone: '988', text: '988', chatUrl: 'https://988lifeline.org/chat' },
+      meansRestriction: [
+        { means: 'Prescription sleep medication', secured: true, how: 'Stored with sister, dispensed weekly', verifiedBy: 'Dr. Elena Rivera' },
+      ],
+      clientAcknowledgedAt: new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000),
       version: 1,
+    },
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Risk & Crisis (ctx 21) — WAVE CR demo data: a graduated C-SSRS-style
+  // RiskFlag (docs/10-10-PROGRAM.md WAVE CR item 1) paired with an
+  // Escalation whose per-severity SLA target (item 3) is already elapsed and
+  // still unassigned — so the RiskSlaService sweep has a real row to breach
+  // + auto-route to the least-loaded on-call psychologist on first run.
+  // Idempotent (fixed ids).
+  // ─────────────────────────────────────────────────────────────
+  const demoRiskOpenedAt = new Date(now.getTime() - 90 * 60 * 1000); // opened 90 minutes ago
+  const demoRiskFlag = await prisma.riskFlag.upsert({
+    where: { id: 'riskflag_demo_cr_1' },
+    update: {},
+    create: {
+      id: 'riskflag_demo_cr_1',
+      tenantId: tenant.id,
+      clientId: client.id,
+      type: 'SUICIDAL_IDEATION',
+      severity: 'SEVERE',
+      source: 'SCREENING',
+      evidence: 'Graduated C-SSRS triage: ideation level 4 (active ideation with some intent), no plan disclosed',
+      evidenceDetail: {
+        ideationLevel: 4,
+        behaviorHistory: { priorAttempt: false, aborted: false, preparatory: false, recentSelfHarm: false },
+        recentLoss: true,
+        inputSource: 'graduated',
+      },
+      status: 'ESCALATED',
+      createdAt: demoRiskOpenedAt,
+    },
+  });
+  await prisma.escalation.upsert({
+    where: { id: 'escalation_demo_sla_due' },
+    update: {},
+    create: {
+      id: 'escalation_demo_sla_due',
+      tenantId: tenant.id,
+      riskFlagId: demoRiskFlag.id,
+      openedAt: demoRiskOpenedAt,
+      // SEVERE target is 60 minutes — opened 90 minutes ago, so this row is
+      // already overdue and unassigned, exercising both RiskSlaService sweep
+      // behaviors (breach + on-call auto-assign) the first time it runs.
+      slaDueAt: new Date(demoRiskOpenedAt.getTime() + 60 * 60 * 1000),
     },
   });
 
@@ -875,6 +930,7 @@ async function main() {
   console.log('   Scheduling: 3 open AvailabilitySlots on dr.rivera (next 3 days).');
   console.log('   Finance: 5-account chart of accounts, dr.rivera 60% revenue-share contract, 1 OPEN invoice ($180.00).');
   console.log('   National Analytics: 8 PopulationMetric rows across US-NY/US-CA/US-TX/US-VT (2 below k-anonymity floor 5).');
+  console.log('   WAVE CR: Stanley-Brown-complete safety plan; 1 graduated C-SSRS SEVERE RiskFlag + SLA-overdue unassigned Escalation (auto-breach/auto-assign on first sweep).');
 }
 
 main()

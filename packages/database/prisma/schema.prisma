@@ -795,6 +795,10 @@ model RiskFlag {
   severity  SeverityBand
   source    RiskSource
   evidence  String?
+  /// Structured C-SSRS-style triage detail (ideation level, behavior history,
+  /// raw safety-item answer, etc.) — additive alongside the human-readable
+  /// `evidence` string (WAVE CR item 1/2, Posner 2011 C-SSRS).
+  evidenceDetail Json?
   status    RiskStatus   @default(OPEN)
   createdAt DateTime     @default(now())
   deletedAt DateTime?
@@ -815,6 +819,17 @@ model Escalation {
   resolvedAt  DateTime?
   resolution  String?
   slaBreached Boolean   @default(false)
+  /// Per-severity response-time target set at creation (WAVE CR item 3 —
+  /// SEVERE 60min / HIGH 4h / else 24h). Swept by RiskSlaService.
+  slaDueAt    DateTime?
+  /// SAFE-T/Joint Commission NPSG 15.01.01 structured resolution (WAVE CR
+  /// item 4) — the clinician's risk-level snapshot and interventions at close.
+  riskLevelAtResolution SeverityBand?
+  interventionsApplied  String[]      @default([])
+  /// Zero Suicide caring-contact follow-up (WAVE CR item 4) — required for
+  /// HIGH/SEVERE resolutions, enforced in the application layer.
+  followUpDueAt         DateTime?
+  followUpCompletedAt   DateTime?
   deletedAt   DateTime?
 
   @@index([tenantId, resolvedAt])
@@ -830,6 +845,18 @@ model SafetyPlan {
   supportContacts      Json      @default("[]")
   professionalContacts Json      @default("[]")
   environmentSafety    String?
+  /// Stanley-Brown SPI completeness (WAVE CR item 5): distraction contacts
+  /// (people/places for distraction, step 3) split from help contacts (people
+  /// to ask for help, step 5) — `supportContacts` above stays for back-compat.
+  distractionContacts  Json?
+  helpContacts         Json?
+  /// Crisis line info (default: 988 Suicide & Crisis Lifeline entry).
+  crisisLineInfo       Json?
+  /// Structured means-restriction inventory: [{ means, secured, how, verifiedBy? }].
+  meansRestriction     Json?
+  /// Collaborative-artifact requirement — when the client acknowledged this
+  /// plan (verbally in-session or via their own read of it).
+  clientAcknowledgedAt DateTime?
   version              Int       @default(1)
   createdAt            DateTime  @default(now())
   deletedAt            DateTime?

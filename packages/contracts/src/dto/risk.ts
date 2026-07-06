@@ -19,6 +19,8 @@ export const riskFlagSchema = z.object({
   severity: z.nativeEnum(SeverityBand),
   source: z.nativeEnum(RiskSource),
   evidence: z.string().nullable(),
+  /** Structured C-SSRS triage / raw safety-item-answer detail (WAVE CR item 1/2). */
+  evidenceDetail: z.unknown().nullable().optional(),
   status: z.nativeEnum(RiskStatus),
   createdAt: z.string(),
 });
@@ -36,8 +38,38 @@ export const escalationSchema = z.object({
   resolvedAt: z.string().nullable(),
   resolution: z.string().nullable(),
   slaBreached: z.boolean(),
+  /** Real per-severity response-time target (WAVE CR item 3). */
+  slaDueAt: z.string().nullable(),
+  /** SAFE-T/NPSG 15.01.01 structured resolution (WAVE CR item 4). */
+  riskLevelAtResolution: z.nativeEnum(SeverityBand).nullable(),
+  interventionsApplied: z.array(z.string()),
+  /** Zero Suicide caring-contact follow-up (WAVE CR item 4). */
+  followUpDueAt: z.string().nullable(),
+  followUpCompletedAt: z.string().nullable(),
 });
 export type EscalationDto = z.infer<typeof escalationSchema>;
+
+/**
+ * SLA response-time targets per severity band (SAFE-T/Joint Commission NPSG
+ * 15.01.01 — documented, deterministic; never AI-consulted). Lives in
+ * contracts (not a service) because both Intake & Screening and
+ * Psychometrics need it at Escalation-creation time and hexagonal modules
+ * may only share code via `@vpsy/contracts`, never cross-import each other.
+ */
+export const ESCALATION_SLA_MINUTES: Record<SeverityBand, number> = {
+  [SeverityBand.SEVERE]: 60,
+  [SeverityBand.HIGH]: 4 * 60,
+  [SeverityBand.MODERATE]: 24 * 60,
+  [SeverityBand.LOW]: 24 * 60,
+};
+
+/** On-call fallback: an unassigned SEVERE escalation past this age auto-routes. */
+export const ESCALATION_AUTO_ASSIGN_AFTER_MINUTES = 15;
+
+export function computeEscalationSlaDueAt(severity: SeverityBand, openedAt: Date): Date {
+  const minutes = ESCALATION_SLA_MINUTES[severity] ?? ESCALATION_SLA_MINUTES[SeverityBand.LOW];
+  return new Date(openedAt.getTime() + minutes * 60_000);
+}
 
 /**
  * The priority lane view: unresolved escalations sorted SEVERE→LOW then
@@ -55,16 +87,73 @@ export const assignEscalationSchema = z.object({
 });
 export type AssignEscalationInput = z.infer<typeof assignEscalationSchema>;
 
-/** Resolution always requires a licensed human's narrative — never auto-set. */
-export const resolveEscalationSchema = z.object({
-  resolution: z.string().min(5).max(4000),
-});
+/**
+ * Resolution always requires a licensed human's narrative — never auto-set.
+ *
+ * Structured per SAFE-T/Joint Commission NPSG 15.01.01 (WAVE CR item 4):
+ * `riskLevelAtResolution` is the clinician's risk-level snapshot at close,
+ * `interventionsApplied` documents what was done, and `followUpDueAt` is the
+ * Zero Suicide caring-contact date — REQUIRED whenever the resolution-time
+ * risk level is HIGH or SEVERE (reattempt-reduction evidence).
+ */
+export const resolveEscalationSchema = z
+  .object({
+    resolution: z.string().min(5).max(4000),
+    riskLevelAtResolution: z.nativeEnum(SeverityBand),
+    interventionsApplied: z.array(z.string().min(1).max(200)).max(20).default([]),
+    followUpDueAt: z.string().datetime().optional(),
+  })
+  .superRefine((val, ctx) => {
+    const requiresFollowUp =
+      val.riskLevelAtResolution === SeverityBand.HIGH || val.riskLevelAtResolution === SeverityBand.SEVERE;
+    if (requiresFollowUp && !val.followUpDueAt) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'followUpDueAt is required when riskLevelAtResolution is HIGH or SEVERE (Zero Suicide caring-contact follow-up)',
+        path: ['followUpDueAt'],
+      });
+    }
+  });
 export type ResolveEscalationInput = z.infer<typeof resolveEscalationSchema>;
+
+/** Records that the Zero Suicide caring-contact follow-up actually happened. */
+export const completeEscalationFollowUpSchema = z.object({
+  notes: z.string().max(2000).optional(),
+});
+export type CompleteEscalationFollowUpInput = z.infer<typeof completeEscalationFollowUpSchema>;
+
+/** Structured means-restriction inventory item (Stanley-Brown SPI step 6). */
+export const meansRestrictionItemSchema = z.object({
+  means: z.string().min(1).max(200),
+  secured: z.boolean().default(false),
+  how: z.string().max(500).optional(),
+  verifiedBy: z.string().max(200).optional(),
+});
+export type MeansRestrictionItem = z.infer<typeof meansRestrictionItemSchema>;
+
+/** Crisis-line info shown on the plan; defaults to the 988 Lifeline entry. */
+export const crisisLineInfoSchema = z.object({
+  label: z.string().max(200).default('988 Suicide & Crisis Lifeline'),
+  phone: z.string().max(50).default('988'),
+  text: z.string().max(50).optional(),
+  chatUrl: z.string().max(300).optional(),
+});
+export type CrisisLineInfo = z.infer<typeof crisisLineInfoSchema>;
 
 /**
  * A safety plan is append-only: creating a new one for the same client
  * supersedes the prior version but never mutates it (matches the clinical
  * record's tamper-evident, versioned-facts convention).
+ *
+ * Stanley-Brown SPI completeness (WAVE CR item 5) — all new fields are
+ * OPTIONAL/additive so existing callers are unaffected:
+ *  - `distractionContacts` (step 3: people/places for distraction) is split
+ *    from `helpContacts` (step 5: people to ask for help); `supportContacts`
+ *    above stays for back-compat.
+ *  - `crisisLineInfo` defaults to the 988 entry when the service persists it.
+ *  - `meansRestriction` is a structured inventory, not free text.
+ *  - `clientAcknowledgedAt` records the collaborative-artifact acknowledgment.
  */
 export const createSafetyPlanSchema = z.object({
   clientId: z.string(),
@@ -73,6 +162,11 @@ export const createSafetyPlanSchema = z.object({
   supportContacts: z.array(z.string().max(300)).max(20).default([]),
   professionalContacts: z.array(z.string().max(300)).max(20).default([]),
   environmentSafety: z.string().max(2000).optional(),
+  distractionContacts: z.array(z.string().max(300)).max(20).optional(),
+  helpContacts: z.array(z.string().max(300)).max(20).optional(),
+  crisisLineInfo: crisisLineInfoSchema.optional(),
+  meansRestriction: z.array(meansRestrictionItemSchema).max(20).optional(),
+  clientAcknowledgedAt: z.string().datetime().optional(),
 });
 export type CreateSafetyPlanInput = z.infer<typeof createSafetyPlanSchema>;
 
@@ -84,6 +178,11 @@ export const safetyPlanSchema = z.object({
   supportContacts: z.array(z.string()),
   professionalContacts: z.array(z.string()),
   environmentSafety: z.string().nullable(),
+  distractionContacts: z.array(z.string()).nullable(),
+  helpContacts: z.array(z.string()).nullable(),
+  crisisLineInfo: crisisLineInfoSchema.nullable(),
+  meansRestriction: z.array(meansRestrictionItemSchema).nullable(),
+  clientAcknowledgedAt: z.string().nullable(),
   version: z.number().int(),
   createdAt: z.string(),
 });

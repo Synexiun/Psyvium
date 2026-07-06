@@ -4,12 +4,14 @@ import { Throttle } from '@nestjs/throttler';
 import {
   assignEscalationSchema,
   breakGlassSchema,
+  completeEscalationFollowUpSchema,
   createSafetyPlanSchema,
   Permission,
   resolveEscalationSchema,
   type AssignEscalationInput,
   type AuthPrincipal,
   type BreakGlassInput,
+  type CompleteEscalationFollowUpInput,
   type CreateSafetyPlanInput,
   type ResolveEscalationInput,
 } from '@vpsy/contracts';
@@ -64,6 +66,16 @@ export class RiskController {
     return this.risk.resolveEscalation(user, id, body);
   }
 
+  @Patch('escalations/:id/follow-up')
+  @RequirePermissions(Permission.ESCALATION_HANDLE)
+  completeFollowUp(
+    @CurrentUser() user: AuthPrincipal,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(completeEscalationFollowUpSchema)) body: CompleteEscalationFollowUpInput,
+  ) {
+    return this.risk.completeFollowUp(user, id, body);
+  }
+
   @Post('safety-plans')
   @RequirePermissions(Permission.SAFETYPLAN_WRITE)
   createSafetyPlan(
@@ -71,6 +83,16 @@ export class RiskController {
     @Body(new ZodValidationPipe(createSafetyPlanSchema)) body: CreateSafetyPlanInput,
   ) {
     return this.risk.createSafetyPlan(user, body);
+  }
+
+  // Client-facing "own plan" read (Stanley-Brown SPI client-visible-copy
+  // requirement) — declared ahead of the parameterized :clientId route below
+  // for clarity; Nest doesn't need the ordering since the static "me" segment
+  // never collides with a route under "client/:clientId".
+  @Get('safety-plans/me')
+  @RequirePermissions(Permission.CLIENT_READ)
+  getMySafetyPlan(@CurrentUser() user: AuthPrincipal) {
+    return this.risk.getMySafetyPlan(user);
   }
 
   @Get('safety-plans/client/:clientId')

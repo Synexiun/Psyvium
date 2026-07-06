@@ -105,13 +105,13 @@ function makeService(versionOverrides: Record<string, unknown> = {}) {
 }
 
 describe('PsychometricsService.administer — safety-item hook', () => {
-  it('raises a HIGH RiskFlag + Escalation for a positive safety item, and routes it like intake', async () => {
+  it('raises a HIGH RiskFlag + Escalation for a minimal positive safety-item endorsement (answer 1)', async () => {
     const { svc, tx, bus, createdRiskFlags, createdEscalations, clientUpdates } = makeService();
 
     await svc.administer(principal, {
       versionId: 'qv_1',
       clientId: 'client_1',
-      answers: { q1: 1, q2: 1, q9: 2 }, // q9 (safety item) endorsed >= minAnswer(1)
+      answers: { q1: 1, q2: 1, q9: 1 }, // q9 (safety item) endorsed at minAnswer(1) — HIGH, not SEVERE
     });
 
     expect(tx.riskFlag.create).toHaveBeenCalledTimes(1);
@@ -122,9 +122,13 @@ describe('PsychometricsService.administer — safety-item hook', () => {
       source: 'SCREENING',
       status: 'ESCALATED',
     });
+    expect(createdRiskFlags[0].evidenceDetail).toMatchObject({ itemId: 'q9', answer: 1, minAnswer: 1 });
 
     expect(tx.escalation.create).toHaveBeenCalledTimes(1);
     expect(createdEscalations[0]).toMatchObject({ riskFlagId: createdRiskFlags[0].id });
+    expect(createdEscalations[0].slaDueAt).toBeInstanceOf(Date);
+    // HIGH SLA target is 4h.
+    expect(createdEscalations[0].slaDueAt.getTime() - createdEscalations[0].openedAt.getTime()).toBe(4 * 60 * 60 * 1000);
 
     // Client's reflected risk level is escalated (was LOW).
     expect(clientUpdates).toEqual([{ riskLevel: 'HIGH' }]);
@@ -140,6 +144,23 @@ describe('PsychometricsService.administer — safety-item hook', () => {
       'tenant_demo',
       expect.objectContaining({ escalationId: createdEscalations[0].id, riskFlagId: createdRiskFlags[0].id }),
     );
+  });
+
+  it('escalates to SEVERE (not HIGH) when the safety item is endorsed with a raw answer >= 2 (WAVE CR item 2)', async () => {
+    const { svc, tx, createdRiskFlags, createdEscalations, clientUpdates } = makeService();
+
+    await svc.administer(principal, {
+      versionId: 'qv_1',
+      clientId: 'client_1',
+      answers: { q1: 1, q2: 1, q9: 2 }, // q9 answered 2 (>= threshold 1) — graduated to SEVERE
+    });
+
+    expect(tx.riskFlag.create).toHaveBeenCalledTimes(1);
+    expect(createdRiskFlags[0]).toMatchObject({ severity: 'SEVERE' });
+    expect(createdEscalations[0].slaDueAt).toBeInstanceOf(Date);
+    // SEVERE SLA target is 60 minutes.
+    expect(createdEscalations[0].slaDueAt.getTime() - createdEscalations[0].openedAt.getTime()).toBe(60 * 60_000);
+    expect(clientUpdates).toEqual([{ riskLevel: 'SEVERE' }]);
   });
 
   it('never raises a flag when the safety item is answered below the threshold', async () => {
