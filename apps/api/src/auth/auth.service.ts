@@ -103,9 +103,27 @@ export class AuthService {
    * Begins TOTP enrollment: generates and stores a new secret but does NOT
    * enable MFA yet — a user must prove possession via `mfaVerify` first, so a
    * half-scanned QR code can never lock someone out or be silently enforced.
+   *
+   * PROOF OF POSSESSION: if MFA is ALREADY enabled, rotating it requires a valid
+   * current code. Otherwise a session holder who lacks the device (stolen cookie,
+   * unlocked session) could silently re-bind MFA to their own authenticator and
+   * lock out / persist against the real owner. Initial enrollment (mfaEnabled=
+   * false) needs no code — the authenticated session is the only factor yet.
    */
-  async mfaEnroll(userId: string): Promise<MfaEnrollResponse> {
+  async mfaEnroll(userId: string, currentCode?: string): Promise<MfaEnrollResponse> {
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (user.mfaEnabled) {
+      if (!currentCode) {
+        throw new UnauthorizedException({
+          code: MfaErrorCode.MFA_REQUIRED,
+          message: 'MFA is already enabled — provide a valid current code to rotate it.',
+        });
+      }
+      const proof = await verifyTotp({ secret: user.mfaSecret ?? '', token: currentCode, epochTolerance: 30 });
+      if (!proof.valid) {
+        throw new UnauthorizedException({ code: MfaErrorCode.MFA_INVALID, message: 'Invalid current MFA code.' });
+      }
+    }
     const secret = generateTotpSecret();
     await this.prisma.user.update({ where: { id: user.id }, data: { mfaSecret: secret } });
     const otpauthUrl = generateTotpURI({ issuer: TOTP_ISSUER, label: user.email, secret });

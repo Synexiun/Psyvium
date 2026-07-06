@@ -40,8 +40,11 @@ export class AuthController {
   // with `Authorization: Bearer` and MUST keep working). The browser client
   // (apps/web/src/lib/api.ts) ignores those fields and relies solely on the
   // httpOnly cookie set below + the non-sensitive `principal` summary.
+  // 20/min per IP: bounds credential-stuffing floods while not throttling a
+  // whole clinic that shares one public IP behind NAT (5/min was too tight for
+  // multi-staff sites). Stronger per-ACCOUNT lockout is a tracked follow-up.
   @Post('login')
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @UsePipes(new ZodValidationPipe(loginSchema))
   async login(@Body() body: LoginInput, @Res({ passthrough: true }) res: Response) {
     const tokens = await this.auth.login(body);
@@ -63,11 +66,14 @@ export class AuthController {
   // Enrollment only generates + stores the secret; it does NOT enable MFA —
   // see AuthService#mfaEnroll for why (avoids a half-scanned QR locking a
   // user out or silently starting to be enforced).
+  // Body optionally carries a current `code` — REQUIRED to rotate an already-
+  // enabled MFA (proof of possession; see AuthService#mfaEnroll). Ignored for a
+  // first-time enrollment.
   @Post('mfa/enroll')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  mfaEnroll(@CurrentUser() user: AuthPrincipal) {
-    return this.auth.mfaEnroll(user.userId);
+  mfaEnroll(@CurrentUser() user: AuthPrincipal, @Body() body?: { code?: string }) {
+    return this.auth.mfaEnroll(user.userId, body?.code);
   }
 
   @Post('mfa/verify')
