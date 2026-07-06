@@ -961,6 +961,40 @@ model BreakGlassGrant {
   @@index([tenantId, clientId])
 }
 
+/// Post-incident review (Joint Commission NPSG 15.01.01 / TJC sentinel-event
+/// review practice; docs/10-10-PROGRAM.md WAVE CR: "the Journey-4 doc promises
+/// supervisor review that has no code"). Covers two subject kinds — a SEVERE
+/// Escalation resolution, or a BreakGlassGrant — identified by `subjectId`
+/// (the Escalation.id or BreakGlassGrant.id) rather than a typed FK, because
+/// a review can point at either table and Prisma has no polymorphic relation.
+///
+/// Deliberately does NOT block or gate `resolveEscalation`/`breakGlass` —
+/// resolution must stay fast in a crisis (see RiskService doc comment). The
+/// enforcement mechanism is `RiskService.listPendingIncidentReviews` (every
+/// SEVERE resolution / break-glass grant without a review row surfaces there
+/// so it can never silently age out) plus board visibility, not a write-path
+/// gate.
+model IncidentReview {
+  id          String    @id @default(cuid())
+  tenantId    String
+  /// 'ESCALATION_RESOLUTION' | 'BREAK_GLASS' — validated at the DTO layer
+  /// (packages/contracts/src/dto/risk.ts `IncidentReviewKind`); kept a plain
+  /// String column so a future subject kind never needs a migration.
+  kind        String
+  subjectId   String
+  reviewerId  String
+  findings    String
+  actionItems Json?
+  cosignedBy  String?
+  reviewedAt  DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([tenantId])
+  @@index([subjectId])
+}
+
 // ─────────────────────────────────────────────────────────────
 // Group E — Psychometrics
 // ─────────────────────────────────────────────────────────────
@@ -1012,9 +1046,9 @@ model Item {
 /// marker for any `"draft"` row (or any locale with no row at all) instead of
 /// silently presenting an unvalidated translation as clinically equivalent.
 model ItemTranslation {
-  id     String @id @default(cuid())
-  itemId String
-  item   Item   @relation(fields: [itemId], references: [id])
+  id              String   @id @default(cuid())
+  itemId          String
+  item            Item     @relation(fields: [itemId], references: [id])
   /// BCP-47-style locale tag, e.g. "es", "es-MX".
   locale          String
   stem            String
@@ -1023,8 +1057,8 @@ model ItemTranslation {
   ///   cognitiveInterviewN?, status: "draft" | "validated" }` (COSMIN /
   /// AERA-APA-NCME Standards Ch.3 — translation is its own validation study,
   /// not a copy-edit).
-  provenance Json     @default("{}")
-  createdAt  DateTime @default(now())
+  provenance      Json     @default("{}")
+  createdAt       DateTime @default(now())
 
   @@unique([itemId, locale])
   @@index([itemId])

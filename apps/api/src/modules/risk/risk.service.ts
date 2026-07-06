@@ -1,13 +1,18 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { SeverityBand, RiskStatus } from '@vpsy/contracts';
+import { IncidentReviewKind, SeverityBand, RiskStatus } from '@vpsy/contracts';
 import type {
   AssignEscalationInput,
   AuthPrincipal,
   BreakGlassInput,
   BreakGlassResultDto,
   CompleteEscalationFollowUpInput,
+  CreateIncidentReviewInput,
   CreateSafetyPlanInput,
+  CrisisResourcesDto,
   EscalationDto,
+  IncidentReviewDto,
+  PendingIncidentReviewItem,
+  PendingIncidentReviewsDto,
   ResolveEscalationInput,
   RiskBoardDto,
   RiskFlagDto,
@@ -16,6 +21,7 @@ import type {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
+import { CRISIS_LINE_FALLBACK, resolveCrisisResource } from './crisis-lines';
 
 /** 1 hour, matching the roadmap's break-glass time-box (06-security-and-rbac.md §2.2). */
 const BREAK_GLASS_TTL_MS = 60 * 60 * 1000;
@@ -79,6 +85,18 @@ type SafetyPlanRow = {
 
 /** Default crisis-line entry persisted when a safety plan doesn't specify one. */
 const DEFAULT_CRISIS_LINE_INFO = { label: '988 Suicide & Crisis Lifeline', phone: '988' };
+
+type IncidentReviewRow = {
+  id: string;
+  kind: string;
+  subjectId: string;
+  reviewerId: string;
+  findings: string;
+  actionItems: unknown;
+  cosignedBy: string | null;
+  reviewedAt: Date;
+  createdAt: Date;
+};
 
 /**
  * Risk & Crisis (context 21, Phase 4). Owns the human escalation workflow,
@@ -468,6 +486,188 @@ export class RiskService {
       reason: grant.reason,
       grantedAt: grant.grantedAt.toISOString(),
       expiresAt: grant.expiresAt.toISOString(),
+    };
+  }
+
+  /**
+   * Post-incident review (Joint Commission NPSG 15.01.01 / TJC sentinel-event
+   * review practice — WAVE CR). Deliberately NOT a gate: `resolveEscalation`
+   * and `breakGlass` already completed by the time a review is authored —
+   * resolution must stay fast in a crisis, so this is the after-the-fact
+   * supervisory record, not a blocking step. `listPendingIncidentReviews` is
+   * the enforcement mechanism (a required review can never silently age out
+   * because it's a hidden write nobody has to remember to check for).
+   */
+  async createIncidentReview(
+    principal: AuthPrincipal,
+    input: CreateIncidentReviewInput,
+  ): Promise<IncidentReviewDto> {
+    await this.assertReviewSubjectExists(principal, input.kind, input.subjectId);
+
+    const review = await this.prisma.incidentReview.create({
+      data: {
+        tenantId: principal.tenantId,
+        kind: input.kind,
+        subjectId: input.subjectId,
+        reviewerId: principal.userId,
+        findings: input.findings,
+        actionItems: input.actionItems ?? undefined,
+        cosignedBy: input.cosignedBy,
+      },
+    });
+
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'incidentreview.created',
+      entityType: 'IncidentReview',
+      entityId: review.id,
+      after: {
+        kind: review.kind,
+        subjectId: review.subjectId,
+        cosignedBy: review.cosignedBy ?? null,
+      },
+      // Part of the tamper-evident safety record (docs/10-10-PROGRAM.md WAVE
+      // CR): a post-incident review must never silently succeed without its
+      // own audit trail.
+      critical: true,
+    });
+
+    return this.toIncidentReviewDto(review as IncidentReviewRow);
+  }
+
+  /** A review's subject is either an Escalation or a BreakGlassGrant — verify it exists in this tenant before writing. */
+  private async assertReviewSubjectExists(
+    principal: AuthPrincipal,
+    kind: string,
+    subjectId: string,
+  ): Promise<void> {
+    if (kind === IncidentReviewKind.BREAK_GLASS) {
+      const grant = await this.prisma.breakGlassGrant.findFirst({
+        where: { id: subjectId, tenantId: principal.tenantId },
+      });
+      if (!grant) throw new NotFoundException('Break-glass grant not found');
+      return;
+    }
+    const escalation = await this.prisma.escalation.findFirst({
+      where: { id: subjectId, tenantId: principal.tenantId },
+    });
+    if (!escalation) throw new NotFoundException('Escalation not found');
+  }
+
+  /**
+   * The "never ages silently" list (TJC sentinel-event practice): every
+   * SEVERE escalation resolution and every break-glass grant that has no
+   * IncidentReview row yet, oldest/longest-waiting first. This — not a
+   * write-path gate on resolution — is the enforcement mechanism.
+   */
+  async listPendingIncidentReviews(principal: AuthPrincipal): Promise<PendingIncidentReviewsDto> {
+    const [severeResolved, reviewedEscalations, grants, reviewedGrants] = await Promise.all([
+      this.prisma.escalation.findMany({
+        where: {
+          tenantId: principal.tenantId,
+          resolvedAt: { not: null },
+          riskFlag: { severity: SeverityBand.SEVERE },
+        },
+        include: { riskFlag: { include: { client: { include: { user: true } } } } },
+      }),
+      this.prisma.incidentReview.findMany({
+        where: { tenantId: principal.tenantId, kind: IncidentReviewKind.ESCALATION_RESOLUTION },
+        select: { subjectId: true },
+      }),
+      this.prisma.breakGlassGrant.findMany({
+        where: { tenantId: principal.tenantId },
+        include: { client: { include: { user: true } } },
+      }),
+      this.prisma.incidentReview.findMany({
+        where: { tenantId: principal.tenantId, kind: IncidentReviewKind.BREAK_GLASS },
+        select: { subjectId: true },
+      }),
+    ]);
+
+    const reviewedEscalationIds = new Set(reviewedEscalations.map((r) => r.subjectId));
+    const reviewedGrantIds = new Set(reviewedGrants.map((r) => r.subjectId));
+    const now = Date.now();
+    const ageHours = (since: Date) => Math.round(((now - since.getTime()) / 3_600_000) * 10) / 10;
+
+    const items: PendingIncidentReviewItem[] = [];
+
+    for (const esc of severeResolved as (EscalationRow & { resolvedAt: Date })[]) {
+      if (reviewedEscalationIds.has(esc.id)) continue;
+      items.push({
+        kind: IncidentReviewKind.ESCALATION_RESOLUTION,
+        subjectId: esc.id,
+        clientId: esc.riskFlag.clientId,
+        clientName: esc.riskFlag.client.user.fullName,
+        occurredAt: esc.resolvedAt.toISOString(),
+        ageHours: ageHours(esc.resolvedAt),
+        summary: esc.resolution ?? '(no resolution narrative on file)',
+      });
+    }
+
+    for (const grant of grants as {
+      id: string;
+      clientId: string;
+      reason: string;
+      grantedAt: Date;
+      client: { user: { fullName: string } };
+    }[]) {
+      if (reviewedGrantIds.has(grant.id)) continue;
+      items.push({
+        kind: IncidentReviewKind.BREAK_GLASS,
+        subjectId: grant.id,
+        clientId: grant.clientId,
+        clientName: grant.client.user.fullName,
+        occurredAt: grant.grantedAt.toISOString(),
+        ageHours: ageHours(grant.grantedAt),
+        summary: grant.reason,
+      });
+    }
+
+    items.sort((a, b) => b.ageHours - a.ageHours);
+    return { items };
+  }
+
+  /** All reviews recorded against one subject (an Escalation or a BreakGlassGrant), newest first. */
+  async getIncidentReviewsForSubject(principal: AuthPrincipal, subjectId: string): Promise<IncidentReviewDto[]> {
+    const reviews = await this.prisma.incidentReview.findMany({
+      where: { tenantId: principal.tenantId, subjectId, deletedAt: null },
+      orderBy: { reviewedAt: 'desc' },
+    });
+    return reviews.map((r) => this.toIncidentReviewDto(r as IncidentReviewRow));
+  }
+
+  /**
+   * Jurisdiction-aware emergency resources (APA telepsychology guidance —
+   * WAVE CR: "988 is US-only"). Resolves the caller's tenant countryCode and
+   * returns the matching crisis-line entry alongside the generic fallback —
+   * never a wrong/dead number, never PHI.
+   */
+  async getCrisisResources(principal: AuthPrincipal): Promise<CrisisResourcesDto> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: principal.tenantId },
+      select: { countryCode: true },
+    });
+    const { resolved, isFallback } = resolveCrisisResource(tenant?.countryCode ?? null);
+    return {
+      countryCode: tenant?.countryCode ?? null,
+      isFallback,
+      resolved,
+      fallback: CRISIS_LINE_FALLBACK,
+    };
+  }
+
+  private toIncidentReviewDto(review: IncidentReviewRow): IncidentReviewDto {
+    return {
+      id: review.id,
+      kind: review.kind as IncidentReviewDto['kind'],
+      subjectId: review.subjectId,
+      reviewerId: review.reviewerId,
+      findings: review.findings,
+      actionItems: (review.actionItems as string[] | null) ?? null,
+      cosignedBy: review.cosignedBy,
+      reviewedAt: review.reviewedAt.toISOString(),
+      createdAt: review.createdAt.toISOString(),
     };
   }
 

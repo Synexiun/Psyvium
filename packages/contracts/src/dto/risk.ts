@@ -208,3 +208,98 @@ export const breakGlassResultSchema = z.object({
   expiresAt: z.string(),
 });
 export type BreakGlassResultDto = z.infer<typeof breakGlassResultSchema>;
+
+/**
+ * Post-incident review (Joint Commission NPSG 15.01.01 / TJC sentinel-event
+ * review practice — WAVE CR: "the Journey-4 doc promises supervisor review
+ * that has no code"). A review's subject is either a SEVERE Escalation
+ * resolution or a BreakGlassGrant, identified by `subjectId` — kept a plain
+ * string (DTO-validated against this enum) rather than a Prisma enum column,
+ * so a future subject kind never needs a migration.
+ */
+export const IncidentReviewKind = {
+  ESCALATION_RESOLUTION: 'ESCALATION_RESOLUTION',
+  BREAK_GLASS: 'BREAK_GLASS',
+} as const;
+export type IncidentReviewKind = (typeof IncidentReviewKind)[keyof typeof IncidentReviewKind];
+
+/**
+ * Creates a post-incident review. Deliberately NOT a gate on resolution —
+ * `resolveEscalation`/`breakGlass` must stay fast in a crisis; this is the
+ * after-the-fact supervisory record, surfaced by the `pending` list below so
+ * a required review can never silently age out.
+ */
+export const createIncidentReviewSchema = z.object({
+  kind: z.nativeEnum(IncidentReviewKind),
+  subjectId: z.string(),
+  findings: z.string().min(20).max(4000),
+  actionItems: z.array(z.string().min(1).max(300)).max(20).optional(),
+  /** A second reviewer's sign-off (e.g. clinical director co-sign on a sentinel event). */
+  cosignedBy: z.string().max(200).optional(),
+});
+export type CreateIncidentReviewInput = z.infer<typeof createIncidentReviewSchema>;
+
+export const incidentReviewSchema = z.object({
+  id: z.string(),
+  kind: z.nativeEnum(IncidentReviewKind),
+  subjectId: z.string(),
+  reviewerId: z.string(),
+  findings: z.string(),
+  actionItems: z.array(z.string()).nullable(),
+  cosignedBy: z.string().nullable(),
+  reviewedAt: z.string(),
+  createdAt: z.string(),
+});
+export type IncidentReviewDto = z.infer<typeof incidentReviewSchema>;
+
+/**
+ * One item on the "never ages silently" pending-review list: a SEVERE
+ * escalation resolved with no IncidentReview row yet, or a BreakGlassGrant
+ * with none. `ageHours` is how long it has been waiting, since the whole
+ * point of this list is that nothing should sit unreviewed indefinitely.
+ */
+export const pendingIncidentReviewItemSchema = z.object({
+  kind: z.nativeEnum(IncidentReviewKind),
+  subjectId: z.string(),
+  clientId: z.string(),
+  clientName: z.string(),
+  occurredAt: z.string(),
+  ageHours: z.number(),
+  summary: z.string(),
+});
+export type PendingIncidentReviewItem = z.infer<typeof pendingIncidentReviewItemSchema>;
+
+export const pendingIncidentReviewsSchema = z.object({
+  items: z.array(pendingIncidentReviewItemSchema),
+});
+export type PendingIncidentReviewsDto = z.infer<typeof pendingIncidentReviewsSchema>;
+
+/**
+ * Jurisdiction-aware emergency resources (APA telepsychology guidance —
+ * WAVE CR: "988 is US-only" — the patient home card must show the caller's
+ * own country's crisis line, not a hardcoded US number). The registry itself
+ * (country code → entry) lives in the risk module as a code constant
+ * (`crisis-lines.ts`); this contract is just the shape of what the API
+ * returns — the resolved entry for the tenant's country plus the generic
+ * fallback, so the client can render an honest "we don't have a specific
+ * number for your country yet" state instead of ever showing a wrong one.
+ */
+export const crisisResourceEntrySchema = z.object({
+  countryCode: z.string(),
+  label: z.string(),
+  phone: z.string(),
+  smsNumber: z.string().optional(),
+  chatUrl: z.string().optional(),
+  notes: z.string().optional(),
+});
+export type CrisisResourceEntry = z.infer<typeof crisisResourceEntrySchema>;
+
+export const crisisResourcesSchema = z.object({
+  /** The tenant's resolved country code, or null if the tenant lookup failed. */
+  countryCode: z.string().nullable(),
+  /** True when `resolved` IS the generic fallback (no country-specific entry). */
+  isFallback: z.boolean(),
+  resolved: crisisResourceEntrySchema,
+  fallback: crisisResourceEntrySchema,
+});
+export type CrisisResourcesDto = z.infer<typeof crisisResourcesSchema>;

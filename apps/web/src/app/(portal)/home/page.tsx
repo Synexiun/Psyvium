@@ -24,7 +24,7 @@ import { useRouter } from 'next/navigation';
 import { useI18n } from '@/i18n';
 import { api, getToken, ApiError } from '@/lib/api';
 import type { ClinicalSummary, OutcomePoint, TrendDirection } from '@/lib/clinical-types';
-import type { SafetyPlanDto } from '@/lib/risk-types';
+import type { CrisisResourcesDto, SafetyPlanDto } from '@/lib/risk-types';
 import { Sparkline } from '@/components/Sparkline';
 import { useResource } from '@/lib/use-resource';
 import { ContextPanel } from '@/components/ContextPanel';
@@ -336,37 +336,8 @@ export default function PatientHomePage() {
 
         {/* Emergency help — calm, always reachable, unmistakable. Stays in the
             main flow (never the collapsible panel) and uses the reserved
-            risk/critical accent. */}
-        <section className="rounded-md border border-signal/40 bg-signal/[0.06] p-5">
-          <p className="eyebrow text-signal">{t('patient.helpEyebrow')}</p>
-          <h2 className="mt-1.5 font-display text-lg font-medium text-mist">{t('patient.helpTitle')}</h2>
-          <p className="mt-2 max-w-xl text-sm leading-relaxed text-mist/60">{t('patient.helpBody')}</p>
-          <div className="mt-4 flex flex-wrap gap-3">
-            <a
-              href="tel:988"
-              className="inline-flex items-center gap-2 rounded bg-signal px-4 py-2 text-sm font-medium text-ink transition hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal"
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
-                <path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 2 .7 2.9a2 2 0 01-.5 2.1L8 10a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.5c.9.3 1.9.6 2.9.7a2 2 0 011.7 2z" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              {t('patient.helpCall')}
-            </a>
-            {/* REAL crisis channel (clinical audit 2026-07-06, P0): this was a dead
-                <button> with no handler — a visible but non-functional crisis
-                control is a patient-safety hazard. Now links to the 988 Suicide &
-                Crisis Lifeline's actual chat service. US-only; jurisdiction-aware
-                localized crisis resources are the tracked follow-up. */}
-            <a
-              href="https://988lifeline.org/chat"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 rounded border border-signal/50 px-4 py-2 text-sm font-medium text-signal transition hover:bg-signal/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal"
-            >
-              {t('patient.helpChat')}
-            </a>
-          </div>
-          <p className="mt-4 text-xs text-mist/50">{t('patient.helpEmergency')}</p>
-        </section>
+            risk/critical accent. Jurisdiction-aware — see EmergencyCard below. */}
+        <EmergencyCard />
       </div>
 
       {/* ── Context panel: wearable rollup + quick links ── */}
@@ -599,6 +570,106 @@ function MySafetyPlanCard() {
           </p>
         )}
       </div>
+    </section>
+  );
+}
+
+/**
+ * Emergency help — jurisdiction-aware crisis resources (APA telepsychology
+ * guidance: 988 is US-only, and this is a multi-country product). Resolves
+ * GET /risk/crisis-resources (tenant countryCode → real national crisis
+ * line) and renders the caller's own resolved entry.
+ *
+ * The previously-fixed 988 tel/chat links render ONLY when the API confirms
+ * a US tenant, or when the lookup itself hasn't resolved yet (still
+ * loading) or failed — a safe, never-blank last-resort default. A resolved
+ * non-US country renders its OWN real number/links; an unregistered country
+ * gets the API's honest generic fallback (local emergency number +
+ * befrienders.org) — this card never shows a wrong or dead number.
+ */
+function EmergencyCard() {
+  const { t } = useI18n();
+  const { data: crisis } = useResource<CrisisResourcesDto | null>(
+    // No session on file — the page-level effect is redirecting to /login; skip the call.
+    () => (getToken() ? api.riskCrisisResources() : Promise.resolve(null)),
+    [],
+  );
+
+  // `crisis` is null while loading (or if there's no session) and stays null
+  // on a failed call — all three collapse to the same safe US default below,
+  // exactly matching the "US or the call fails" rule.
+  const entry = crisis && crisis.resolved.countryCode !== 'US' ? crisis.resolved : null;
+  const telHref = entry ? `tel:${entry.phone.replace(/[^\d+]/g, '')}` : null;
+  const smsHref = entry?.smsNumber ? `sms:${entry.smsNumber.replace(/[^\d+]/g, '')}` : null;
+
+  return (
+    <section className="rounded-md border border-signal/40 bg-signal/[0.06] p-5">
+      <p className="eyebrow text-signal">{t('patient.helpEyebrow')}</p>
+      <h2 className="mt-1.5 font-display text-lg font-medium text-mist">{t('patient.helpTitle')}</h2>
+      <p className="mt-2 max-w-xl text-sm leading-relaxed text-mist/60">{t('patient.helpBody')}</p>
+
+      {entry ? (
+        <>
+          <p className="mt-4 text-sm font-medium text-mist/80">{entry.label}</p>
+          <div className="mt-3 flex flex-wrap gap-3">
+            {telHref && (
+              <a
+                href={telHref}
+                className="inline-flex items-center gap-2 rounded bg-signal px-4 py-2 text-sm font-medium text-ink transition hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal"
+              >
+                {t('patient.spCrisisCall', { phone: entry.phone })}
+              </a>
+            )}
+            {smsHref && (
+              <a
+                href={smsHref}
+                className="inline-flex items-center gap-2 rounded border border-signal/50 px-4 py-2 text-sm font-medium text-signal transition hover:bg-signal/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal"
+              >
+                {t('patient.spCrisisText', { number: entry.smsNumber! })}
+              </a>
+            )}
+            {entry.chatUrl && (
+              <a
+                href={entry.chatUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded border border-signal/50 px-4 py-2 text-sm font-medium text-signal transition hover:bg-signal/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal"
+              >
+                {t('patient.helpChat')}
+              </a>
+            )}
+          </div>
+          {entry.notes && <p className="mt-3 text-xs leading-relaxed text-mist/50">{entry.notes}</p>}
+        </>
+      ) : (
+        <div className="mt-4 flex flex-wrap gap-3">
+          <a
+            href="tel:988"
+            className="inline-flex items-center gap-2 rounded bg-signal px-4 py-2 text-sm font-medium text-ink transition hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+              <path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 2 .7 2.9a2 2 0 01-.5 2.1L8 10a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.5c.9.3 1.9.6 2.9.7a2 2 0 011.7 2z" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {t('patient.helpCall')}
+          </a>
+          {/* REAL crisis channel (clinical audit 2026-07-06, P0): this was a dead
+              <button> with no handler — a visible but non-functional crisis
+              control is a patient-safety hazard. Links to the 988 Suicide &
+              Crisis Lifeline's actual chat service — the US/loading/error
+              default; a resolved non-US jurisdiction renders its own link
+              above instead. */}
+          <a
+            href="https://988lifeline.org/chat"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded border border-signal/50 px-4 py-2 text-sm font-medium text-signal transition hover:bg-signal/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal"
+          >
+            {t('patient.helpChat')}
+          </a>
+        </div>
+      )}
+
+      <p className="mt-4 text-xs text-mist/50">{t('patient.helpEmergency')}</p>
     </section>
   );
 }

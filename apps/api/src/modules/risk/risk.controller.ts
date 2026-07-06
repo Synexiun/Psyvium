@@ -5,6 +5,7 @@ import {
   assignEscalationSchema,
   breakGlassSchema,
   completeEscalationFollowUpSchema,
+  createIncidentReviewSchema,
   createSafetyPlanSchema,
   Permission,
   resolveEscalationSchema,
@@ -12,6 +13,7 @@ import {
   type AuthPrincipal,
   type BreakGlassInput,
   type CompleteEscalationFollowUpInput,
+  type CreateIncidentReviewInput,
   type CreateSafetyPlanInput,
   type ResolveEscalationInput,
 } from '@vpsy/contracts';
@@ -112,5 +114,49 @@ export class RiskController {
     @Body(new ZodValidationPipe(breakGlassSchema)) body: BreakGlassInput,
   ) {
     return this.risk.breakGlass(user, body);
+  }
+
+  // Post-incident review (Joint Commission NPSG 15.01.01 / TJC sentinel-event
+  // review practice, WAVE CR). Gated on ESCALATION_HANDLE — the same
+  // permission that gates assign/resolve/follow-up — because sentinel-event
+  // review is the same escalation-handling authority extended to its
+  // post-hoc step, and ESCALATION_HANDLE is exactly the set of roles (
+  // PSYCHOLOGIST/MANAGER/SUPERVISOR) who can plausibly author one; adding a
+  // brand-new permission key for this would just duplicate that grant list.
+  // Deliberately NOT a gate on resolveEscalation/breakGlass — see
+  // RiskService doc comments; the pending list below is the enforcement.
+  @Post('incident-reviews')
+  @RequirePermissions(Permission.ESCALATION_HANDLE)
+  createIncidentReview(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(createIncidentReviewSchema)) body: CreateIncidentReviewInput,
+  ) {
+    return this.risk.createIncidentReview(user, body);
+  }
+
+  // "Never ages silently": every SEVERE escalation resolution and
+  // break-glass grant with no review row yet. Declared ahead of the
+  // parameterized `subject/:subjectId` route below for clarity (no actual
+  // collision — "pending" and "subject/:id" are distinct static segments).
+  @Get('incident-reviews/pending')
+  @RequirePermissions(Permission.RISK_READ)
+  listPendingIncidentReviews(@CurrentUser() user: AuthPrincipal) {
+    return this.risk.listPendingIncidentReviews(user);
+  }
+
+  @Get('incident-reviews/subject/:subjectId')
+  @RequirePermissions(Permission.RISK_READ)
+  getIncidentReviewsForSubject(@CurrentUser() user: AuthPrincipal, @Param('subjectId') subjectId: string) {
+    return this.risk.getIncidentReviewsForSubject(user, subjectId);
+  }
+
+  // Jurisdiction-aware emergency resources (APA telepsychology guidance —
+  // WAVE CR: "988 is US-only"). No PHI involved; gated the same as the
+  // client's own safety-plan read (CLIENT_READ) since the patient home card
+  // is the primary caller, alongside any clinician role that also holds it.
+  @Get('crisis-resources')
+  @RequirePermissions(Permission.CLIENT_READ)
+  getCrisisResources(@CurrentUser() user: AuthPrincipal) {
+    return this.risk.getCrisisResources(user);
   }
 }

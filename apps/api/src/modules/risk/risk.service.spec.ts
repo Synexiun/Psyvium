@@ -41,6 +41,7 @@ function makeService(overrides: Partial<Record<string, unknown>> = {}) {
   const prisma = {
     escalation: {
       findFirst: jest.fn().mockResolvedValue(escalationRow),
+      findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn(),
     },
     riskFlag: {
@@ -55,6 +56,15 @@ function makeService(overrides: Partial<Record<string, unknown>> = {}) {
     },
     breakGlassGrant: {
       create: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    incidentReview: {
+      create: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    tenant: {
+      findUnique: jest.fn().mockResolvedValue({ countryCode: 'US' }),
     },
     $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(prismaTx)),
     ...overrides,
@@ -278,6 +288,166 @@ describe('RiskService.breakGlass', () => {
     await expect(
       svc.breakGlass(principal, { clientId: 'nope', reason: 'A' + 'x'.repeat(20) }),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('RiskService.listPendingIncidentReviews', () => {
+  it('surfaces an unreviewed SEVERE escalation resolution and an unreviewed break-glass grant — "never ages silently"', async () => {
+    const resolvedSevereEscalation = {
+      id: 'esc_severe_1',
+      resolvedAt: new Date('2026-01-01T00:00:00Z'),
+      resolution: 'Client stabilized after welfare check.',
+      riskFlag: {
+        clientId: 'client_1',
+        severity: 'SEVERE',
+        client: { user: { fullName: 'Alex Chen' } },
+      },
+    };
+    const unreviewedGrant = {
+      id: 'grant_1',
+      clientId: 'client_2',
+      reason: 'Client unreachable after a SEVERE risk flag; welfare check required immediately.',
+      grantedAt: new Date('2026-01-02T00:00:00Z'),
+      client: { user: { fullName: 'Jordan Lee' } },
+    };
+    const { svc, prisma } = makeService({
+      escalation: {
+        findFirst: jest.fn().mockResolvedValue(escalationRow),
+        findMany: jest.fn().mockResolvedValue([resolvedSevereEscalation]),
+        update: jest.fn(),
+      },
+      incidentReview: {
+        create: jest.fn(),
+        // Neither review lookup (escalation-kind or break-glass-kind) has an
+        // existing row yet, so both subjects below must surface as pending.
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      breakGlassGrant: {
+        create: jest.fn(),
+        findFirst: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([unreviewedGrant]),
+      },
+    });
+
+    const result = await svc.listPendingIncidentReviews(principal);
+
+    expect(prisma.escalation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 'tenant_demo',
+          resolvedAt: { not: null },
+          riskFlag: { severity: 'SEVERE' },
+        }),
+      }),
+    );
+    expect(result.items).toHaveLength(2);
+    expect(result.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'ESCALATION_RESOLUTION', subjectId: 'esc_severe_1', clientName: 'Alex Chen' }),
+        expect.objectContaining({ kind: 'BREAK_GLASS', subjectId: 'grant_1', clientName: 'Jordan Lee' }),
+      ]),
+    );
+  });
+
+  it('omits a SEVERE resolution and a break-glass grant once each has an IncidentReview row', async () => {
+    const resolvedSevereEscalation = {
+      id: 'esc_severe_1',
+      resolvedAt: new Date('2026-01-01T00:00:00Z'),
+      resolution: 'Client stabilized.',
+      riskFlag: { clientId: 'client_1', severity: 'SEVERE', client: { user: { fullName: 'Alex Chen' } } },
+    };
+    const reviewedGrant = {
+      id: 'grant_1',
+      clientId: 'client_2',
+      reason: 'Welfare check.',
+      grantedAt: new Date('2026-01-02T00:00:00Z'),
+      client: { user: { fullName: 'Jordan Lee' } },
+    };
+    const { svc } = makeService({
+      escalation: { findFirst: jest.fn(), findMany: jest.fn().mockResolvedValue([resolvedSevereEscalation]), update: jest.fn() },
+      incidentReview: {
+        create: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([{ subjectId: 'esc_severe_1' }, { subjectId: 'grant_1' }]),
+      },
+      breakGlassGrant: { create: jest.fn(), findFirst: jest.fn(), findMany: jest.fn().mockResolvedValue([reviewedGrant]) },
+    });
+
+    const result = await svc.listPendingIncidentReviews(principal);
+    expect(result.items).toHaveLength(0);
+  });
+});
+
+describe('RiskService.createIncidentReview', () => {
+  it('records a critical, tamper-evident audit event on creation (post-incident review is part of the safety record)', async () => {
+    const { svc, prisma, audit } = makeService({
+      breakGlassGrant: {
+        create: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue({ id: 'grant_1', tenantId: 'tenant_demo' }),
+        findMany: jest.fn(),
+      },
+      incidentReview: {
+        create: jest.fn().mockImplementation(({ data }: any) => ({
+          ...data,
+          id: 'review_1',
+          reviewedAt: new Date('2026-01-03T00:00:00Z'),
+          createdAt: new Date('2026-01-03T00:00:00Z'),
+        })),
+        findMany: jest.fn(),
+      },
+    });
+
+    const result = await svc.createIncidentReview(principal, {
+      kind: 'BREAK_GLASS',
+      subjectId: 'grant_1',
+      findings: 'Access was clinically justified; client welfare confirmed within the hour.',
+      actionItems: ['Document outcome in chart'],
+      cosignedBy: 'user_supervisor_a',
+    });
+
+    expect(result.id).toBe('review_1');
+    expect(prisma.breakGlassGrant.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'grant_1', tenantId: 'tenant_demo' } }),
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'incidentreview.created',
+        actorId: 'user_psy_a',
+        entityType: 'IncidentReview',
+        entityId: 'review_1',
+        critical: true,
+      }),
+    );
+  });
+
+  it('rejects a review of a break-glass grant that does not exist in this tenant', async () => {
+    const { svc } = makeService({
+      breakGlassGrant: { create: jest.fn(), findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn() },
+    });
+    await expect(
+      svc.createIncidentReview(principal, {
+        kind: 'BREAK_GLASS',
+        subjectId: 'grant_missing',
+        findings: 'x'.repeat(25),
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('RiskService.getCrisisResources', () => {
+  it('returns the US 988 entry for the demo tenant (countryCode "US")', async () => {
+    const { svc } = makeService({ tenant: { findUnique: jest.fn().mockResolvedValue({ countryCode: 'US' }) } });
+    const result = await svc.getCrisisResources(principal);
+    expect(result.isFallback).toBe(false);
+    expect(result.countryCode).toBe('US');
+    expect(result.resolved).toEqual(expect.objectContaining({ countryCode: 'US', phone: '988' }));
+  });
+
+  it('returns the generic fallback (never a wrong/dead number) for an unregistered country code', async () => {
+    const { svc } = makeService({ tenant: { findUnique: jest.fn().mockResolvedValue({ countryCode: 'ZZ' }) } });
+    const result = await svc.getCrisisResources(principal);
+    expect(result.isFallback).toBe(true);
+    expect(result.resolved).toEqual(result.fallback);
+    expect(result.resolved.phone).toBe('112');
   });
 });
 

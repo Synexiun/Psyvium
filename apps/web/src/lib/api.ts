@@ -41,8 +41,12 @@ import type {
 import type {
   BreakGlassResultDto,
   CompleteEscalationFollowUpInput,
+  CreateIncidentReviewInput,
   CreateSafetyPlanInput,
+  CrisisResourcesDto,
   EscalationDto,
+  IncidentReviewDto,
+  PendingIncidentReviewsDto,
   ResolveEscalationInput,
   RiskBoardDto,
   RiskFlagDto,
@@ -298,6 +302,15 @@ export const api = {
   riskMySafetyPlan: () => request<SafetyPlanDto | null>('/risk/safety-plans/me'),
   riskBreakGlass: (clientId: string, reason: string) =>
     request<BreakGlassResultDto>('/risk/break-glass', { method: 'POST', body: JSON.stringify({ clientId, reason }) }),
+  /** Post-incident review (TJC sentinel-event review practice) — never gates resolution. */
+  riskCreateIncidentReview: (payload: CreateIncidentReviewInput) =>
+    request<IncidentReviewDto>('/risk/incident-reviews', { method: 'POST', body: JSON.stringify(payload) }),
+  /** "Never ages silently": SEVERE resolutions + break-glass grants with no review yet. */
+  riskPendingIncidentReviews: () => request<PendingIncidentReviewsDto>('/risk/incident-reviews/pending'),
+  riskIncidentReviewsForSubject: (subjectId: string) =>
+    request<IncidentReviewDto[]>(`/risk/incident-reviews/subject/${subjectId}`),
+  /** Jurisdiction-aware emergency resources (APA telepsychology guidance — 988 is US-only). */
+  riskCrisisResources: () => request<CrisisResourcesDto>('/risk/crisis-resources'),
 
   // ── Scheduling (context 9 — types mirror the shared contract, see scheduling-types.ts) ──
   schedAgenda: () => request<AppointmentDto[]>('/scheduling/appointments'),
