@@ -8,14 +8,22 @@ export const loginSchema = z.object({
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
-export const registerSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8).max(200),
-  fullName: z.string().min(2).max(120),
-  role: z.nativeEnum(Role).default(Role.CLIENT),
-  locale: z.string().default('en'),
-  timezone: z.string().default('UTC'),
-});
+/**
+ * Public self-registration. There is deliberately NO `role` field: a caller must
+ * never be able to choose their own role (that would be privilege escalation).
+ * Self-registration always yields a CLIENT; elevated roles (clinician, manager,
+ * admin, executive) are provisioned by an authorized admin through a separate,
+ * authenticated flow.
+ */
+export const registerSchema = z
+  .object({
+    email: z.string().email(),
+    password: z.string().min(8).max(200),
+    fullName: z.string().min(2).max(120),
+    locale: z.string().default('en'),
+    timezone: z.string().default('UTC'),
+  })
+  .strict(); // reject unknown keys (e.g. a smuggled `role`) rather than silently drop them
 export type RegisterInput = z.infer<typeof registerSchema>;
 
 export const authTokensSchema = z.object({

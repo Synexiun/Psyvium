@@ -36,6 +36,11 @@ MGR=$(login manager@vpsy.health); PSY=$(login dr.rivera@vpsy.health); CLI=$(logi
 [ -n "$MGR" ] && [ -n "$PSY" ] && [ -n "$CLI" ] && { echo "  PASS  auth: manager/psychologist/client tokens"; PASS=$((PASS+1)); } || { echo "  FAIL  auth"; FAIL=$((FAIL+1)); }
 AH="Authorization: Bearer"
 
+# ── Auth hardening — public self-registration cannot self-assign an elevated role ──
+RE="reg+$RANDOM$$@example.com"
+check "register rejects smuggled elevated role (no privilege escalation)" "400" "$(code -X POST "$BASE/auth/register" -H 'Content-Type: application/json' -d "{\"email\":\"$RE\",\"password\":\"Vpsy!2026\",\"fullName\":\"Reg Test\",\"role\":\"ADMIN\"}")"
+check "register (client) succeeds without role" "201" "$(code -X POST "$BASE/auth/register" -H 'Content-Type: application/json' -d "{\"email\":\"$RE\",\"password\":\"Vpsy!2026\",\"fullName\":\"Reg Test\"}")"
+
 # ── Intake & screening (consent-gated) + risk ──
 SEV=$(curl -s -X POST "$BASE/intake" -H "$AH $CLI" -H 'Content-Type: application/json' -d '{"presentingProblem":"Persistent anxiety with panic and poor sleep.","sleepQuality":3,"appetiteChange":0,"energyLevel":4,"concentration":4,"substanceUse":{"alcohol":"none","tobacco":"none","cannabis":"none"},"functionalImpairment":{"work":6,"family":4,"social":6,"selfCare":3},"safety":{"suicidalIdeation":false,"suicidalPlan":false,"selfHarm":false,"harmToOthers":false,"recentLoss":false},"goals":[],"preferredLanguage":"en","therapyFormat":"INDIVIDUAL","preferredTherapistGender":"any","traumaExposure":false,"previousTherapy":false}' | py "import sys,json;print(json.load(sys.stdin).get('severityBand','ERR'))")
 [ "$SEV" != "ERR" ] && { echo "  PASS  intake→screening (severity=$SEV, consent gate open)"; PASS=$((PASS+1)); } || { echo "  FAIL  intake"; FAIL=$((FAIL+1)); }

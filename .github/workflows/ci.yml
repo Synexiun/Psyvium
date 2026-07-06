@@ -32,8 +32,9 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://vpsy:vpsy@localhost:5432/vpsy?schema=public
-      JWT_ACCESS_SECRET: ci-access-secret
-      JWT_REFRESH_SECRET: ci-refresh-secret
+      # CI-only throwaway secrets (must be >=16 chars — the API refuses to boot without them).
+      JWT_ACCESS_SECRET: ci-only-access-secret-not-for-production
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-not-for-production
       NODE_OPTIONS: --max-old-space-size=4096
 
     steps:

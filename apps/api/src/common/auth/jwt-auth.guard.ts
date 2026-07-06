@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { AuthPrincipal } from '@vpsy/contracts';
+import { jwtAccessSecret } from '../config/jwt-secrets';
 
 /**
  * Verifies the bearer access token and attaches the AuthPrincipal (userId,
@@ -20,7 +21,7 @@ export class JwtAuthGuard implements CanActivate {
     const token = header.slice(7);
     try {
       const payload = await this.jwt.verifyAsync(token, {
-        secret: process.env.JWT_ACCESS_SECRET ?? 'dev-access-secret-change-me',
+        secret: jwtAccessSecret(),
       });
       const principal: AuthPrincipal = {
         userId: payload.sub,

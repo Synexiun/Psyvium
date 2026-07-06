@@ -3,10 +3,16 @@ import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { assertJwtSecretsPresent } from './common/config/jwt-secrets';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: false });
   const logger = new Logger('Bootstrap');
+
+  // Fail fast (before listening) if signing secrets are unset — never serve with
+  // an insecure default (which would let anyone forge tokens for any user/role).
+  // Runs after create() so ConfigModule has populated process.env from .env.
+  assertJwtSecretsPresent();
 
   app.setGlobalPrefix('api/v1');
   app.enableCors({ origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000', credentials: true });
