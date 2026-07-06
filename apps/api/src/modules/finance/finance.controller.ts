@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   computePayoutSchema,
@@ -15,6 +15,7 @@ import { PermissionsGuard } from '../../common/auth/permissions.guard';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
+import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 import { AccountingService } from './accounting.service';
 import { PaymentsService } from './payments.service';
 import { PayoutsService } from './payouts.service';
@@ -51,8 +52,12 @@ export class FinanceController {
     return this.payments.listInvoices(user);
   }
 
+  // Money-moving mutation (doc 04-api-design.md §8): requires Idempotency-Key
+  // and replays the original response on a duplicate submit, so a double-tap
+  // / client retry never captures the payment twice.
   @Post('invoices/:id/pay')
   @RequirePermissions(Permission.FINANCE_MANAGE)
+  @UseInterceptors(IdempotencyInterceptor)
   payInvoice(
     @CurrentUser() user: AuthPrincipal,
     @Param('id') id: string,

@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import {
   assignEscalationSchema,
   breakGlassSchema,
@@ -78,7 +79,11 @@ export class RiskController {
     return this.risk.getLatestSafetyPlan(user, clientId);
   }
 
+  // Emergency-access escape hatch (doc 06-security-and-rbac.md: break-glass
+  // always emits a high-severity audit event) — the tightest limit in the
+  // API, well below the global default, keyed by principal.
   @Post('break-glass')
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
   @RequirePermissions(Permission.BREAKGLASS_INVOKE)
   breakGlass(
     @CurrentUser() user: AuthPrincipal,

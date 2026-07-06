@@ -4,6 +4,8 @@ import { PrismaModule } from './common/prisma/prisma.module';
 import { EventsModule } from './common/events/events.module';
 import { AuditModule } from './common/audit/audit.module';
 import { RealtimeModule } from './common/realtime/realtime.module';
+import { RateLimitModule } from './common/rate-limit/rate-limit.module';
+import { IdempotencyModule } from './common/idempotency/idempotency.module';
 import { AiGatewayModule } from './modules/ai-gateway/ai-gateway.module';
 import { AuthModule } from './auth/auth.module';
 import { CredentialingModule } from './modules/credentialing/credentialing.module';
@@ -43,6 +45,12 @@ import { HealthModule } from './health/health.module';
     AuditModule,
     RealtimeModule,
     AiGatewayModule,
+    // Cross-cutting API security (doc 04-api-design.md §8 Idempotency, §9 Rate
+    // limiting; 06-security-and-rbac.md). Global — every route gets the
+    // default rate limit; individual routes tighten it or add idempotent
+    // replay via decorators/interceptors (see the controllers themselves).
+    RateLimitModule,
+    IdempotencyModule,
     // Bounded contexts (Phase 1)
     AuthModule,
     // Bounded contexts (Phase 2)
