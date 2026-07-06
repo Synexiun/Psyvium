@@ -17,6 +17,8 @@ import { useRouter } from 'next/navigation';
 import { useI18n } from '@/i18n';
 import type { MessageKey } from '@/i18n';
 import { applyThemePref, getThemePref, resolveDark } from '@/lib/theme';
+import { PORTAL_NAV } from '@/components/CommandRail';
+import { getPrincipal } from '@/lib/api';
 
 interface Command {
   id: string;
@@ -27,19 +29,39 @@ interface Command {
   run?: () => void;
   /** Untranslated synonyms so power users can type the route slug. */
   keywords?: string;
+  /** Hide unless the principal holds any of these (mirrors CommandRail/middleware). */
+  anyOf?: string[];
 }
 
+/** Untranslated power-user synonyms per route (labels come from the nav catalog). */
+const ROUTE_KEYWORDS: Record<string, string> = {
+  '/home': 'home patient',
+  '/intake': 'intake screening',
+  '/session': 'session workspace clinician',
+  '/manager': 'manager triage assignment',
+  '/crm': 'crm clients',
+  '/comms': 'comms telephony calls sms',
+  '/messages': 'messages chat secure thread conversation',
+  '/telehealth': 'telehealth video visit waiting room',
+  '/assessments': 'assessments adaptive cat questionnaire',
+  '/risk': 'risk safety alerts',
+  '/schedule': 'schedule calendar appointments',
+  '/finance': 'finance billing payments',
+  '/reports': 'reports analytics',
+  '/admin': 'admin tenant clinics feature flags registry settings',
+};
+
+/** Route commands derive from the single nav catalog (CommandRail), so the
+ * palette and rail can never drift — same destinations, same permission gates. */
 const ROUTE_COMMANDS: Command[] = [
-  { id: 'nav-home', labelKey: 'nav.home', group: 'navigate', href: '/home', keywords: 'home patient' },
-  { id: 'nav-intake', labelKey: 'nav.intake', group: 'navigate', href: '/intake', keywords: 'intake screening' },
-  { id: 'nav-session', labelKey: 'nav.workspace', group: 'navigate', href: '/session', keywords: 'session workspace clinician' },
-  { id: 'nav-manager', labelKey: 'nav.triage', group: 'navigate', href: '/manager', keywords: 'manager triage assignment' },
-  { id: 'nav-crm', labelKey: 'nav.crm', group: 'navigate', href: '/crm', keywords: 'crm clients' },
-  { id: 'nav-comms', labelKey: 'nav.comms', group: 'navigate', href: '/comms', keywords: 'comms messages calls' },
-  { id: 'nav-risk', labelKey: 'nav.risk', group: 'navigate', href: '/risk', keywords: 'risk safety alerts' },
-  { id: 'nav-schedule', labelKey: 'nav.schedule', group: 'navigate', href: '/schedule', keywords: 'schedule calendar appointments' },
-  { id: 'nav-finance', labelKey: 'nav.finance', group: 'navigate', href: '/finance', keywords: 'finance billing payments' },
-  { id: 'nav-reports', labelKey: 'nav.reports', group: 'navigate', href: '/reports', keywords: 'reports analytics' },
+  ...PORTAL_NAV.map((n) => ({
+    id: `nav-${n.href.slice(1)}`,
+    labelKey: n.key,
+    group: 'navigate' as const,
+    href: n.href,
+    keywords: ROUTE_KEYWORDS[n.href],
+    anyOf: n.anyOf,
+  })),
   { id: 'nav-login', labelKey: 'common.signIn', group: 'navigate', href: '/login', keywords: 'login sign in auth' },
 ];
 
@@ -105,9 +127,17 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const restoreRef = useRef<HTMLElement | null>(null);
   const listboxId = 'vpsy-palette-listbox';
 
-  const commands = useMemo<Command[]>(
-    () => [
-      ...ROUTE_COMMANDS,
+  const commands = useMemo<Command[]>(() => {
+    // Permission-gate route commands per open (mirrors useVisibleNav — UI
+    // courtesy only; middleware + API remain the boundary). Signed out (or
+    // during SSR, where the palette is never open) the full list stands.
+    const principal = getPrincipal();
+    const granted = principal ? new Set(principal.permissions) : null;
+    const routes = granted
+      ? ROUTE_COMMANDS.filter((c) => !c.anyOf || c.anyOf.some((p) => granted.has(p)))
+      : ROUTE_COMMANDS;
+    return [
+      ...routes,
       {
         id: 'act-theme',
         labelKey: 'palette.actionTheme',
@@ -154,9 +184,10 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         href: '/finance',
         keywords: 'invoice billing new finance draft payment',
       },
-    ],
-    [],
-  );
+    ];
+    // Re-evaluated on every open so a sign-in/out in this tab is reflected.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const results = useMemo(() => {
     const scored = commands

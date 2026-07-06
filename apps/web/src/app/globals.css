@@ -28,10 +28,31 @@
   --vc-steel: 62 80 104;            /* #3E5068 interactive steel        */
   --vc-steel-soft: 44 58 78;        /* #2C3A4E steel text/labels        */
   --vc-steel-deep: 130 145 164;     /* #8291A4                          */
-  --vc-signal: 158 98 12;           /* #9E620C attention amber (text-safe) */
+  /* a11y P0: #9E620C only measured 4.16–4.37:1 on its own amber-tinted
+     panels (bg-signal/[0.07] over paper ≈ #EDEAE7); #8A5407 clears 4.5:1
+     with margin on every signal tint — including at the /90 alpha the home
+     crisis card uses — while staying unmistakably "attention amber". */
+  --vc-signal: 138 84 7;            /* #8A5407 attention amber (text-safe on tints) */
   --vc-signal-soft: 128 78 8;       /* #804E08 amber text on tint       */
   --vc-signal-deep: 209 141 43;     /* #D18D2B amber fill               */
   --vc-risk: 179 38 48;             /* #B32630 critical red             */
+
+  /* A11y alpha floors (see tailwind.config.ts `inkWithFloor`): on light
+     paper, opacity-modified ink utilities (text-mist/40 etc.) are clamped so
+     secondary/tertiary text never drops below WCAG AA 4.5:1 on any light
+     surface text actually sits on (white cards, #F3F4F7 page, #EEF0F4
+     insets, #E2E6EB deep). --vc-ink at 0.68 over the darkest of those
+     (#E2E6EB) measures ≈5.2:1; --vc-ink-2 (#5A6370) passes only unmodified
+     (≈5.3:1 solid, <4.5 at any alpha <0.9), so its floor is 1 — every
+     text-haze/NN renders as solid secondary ink in light mode. */
+  --vc-ink-floor: 0.68;
+  --vc-ink-2-floor: 1;
+  /* Text-role accent inks: steel-soft (#2C3A4E) needs ≥0.8 alpha to clear
+     4.5:1 on the light insets it labels; signal-soft (#804E08) needs ≥0.9.
+     (bg- uses of these tokens are full-alpha dots/bars — unaffected or
+     harmlessly darkened.) */
+  --vc-steel-soft-floor: 0.8;
+  --vc-signal-soft-floor: 0.9;
 
   --font-display: Bahnschrift, 'Avenir Next', 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
   --font-body: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, system-ui, sans-serif;
@@ -60,6 +81,13 @@
   --vc-signal-soft: 240 194 118;    /* #F0C276 amber text on tint       */
   --vc-signal-deep: 154 106 26;     /* #9A6A1A                          */
   --vc-risk: 230 95 100;            /* #E65F64 critical red             */
+
+  /* Dark stays as-designed: floors off, every opacity modifier renders at
+     its authored alpha (light ink over graphite already clears AA). */
+  --vc-ink-floor: 0;
+  --vc-ink-2-floor: 0;
+  --vc-steel-soft-floor: 0;
+  --vc-signal-soft-floor: 0;
 
   color-scheme: dark;
 }

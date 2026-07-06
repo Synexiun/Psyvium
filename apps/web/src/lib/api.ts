@@ -17,7 +17,36 @@
  * token on every request, so a tampered or stale hint can misroute the UI at
  * worst, never grant access.
  */
-import type { AuthTokens } from '@vpsy/contracts';
+import type {
+  AuthTokens,
+  // Messaging (context 14)
+  CreateThreadInput,
+  MessageDto,
+  PaginatedMessagesDto,
+  ThreadDto,
+  // Telehealth (context 12)
+  TeleSessionDto,
+  TeleSessionJoinResult,
+  // Admin Configuration (contexts 2/27)
+  ClinicDto,
+  CreateClinicInput,
+  FeatureFlagDto,
+  PatchClinicInput,
+  PatchTenantInput,
+  TenantDto,
+  UpsertFeatureFlagInput,
+  // Registry (contexts 3/4)
+  ClientRegistryListDto,
+  ClientRegistryDto,
+  CreateClientRegistryInput,
+  CreatePsychologistRegistryInput,
+  PatchClientRegistryInput,
+  PatchPsychologistRegistryInput,
+  PsychologistRegistryDto,
+  PsychologistRegistryListDto,
+  // Computerized Adaptive Testing (psychometrics §6)
+  CatSessionStateDto,
+} from '@vpsy/contracts';
 import type { CaseloadEntry, ClinicalSummary, WearableRollup } from './clinical-types';
 import type {
   CreateEngagementInput,
@@ -341,4 +370,80 @@ export const api = {
   reportExecutive: () => request<ExecutiveReportDto>('/reports/executive'),
   reportManager: () => request<ManagerReportDto>('/reports/manager'),
   nationalAnalytics: () => request<NationalAnalyticsDto>('/analytics/national'),
+
+  // ── Messaging (context 14 — secure client↔clinician text threads) ──
+  msgThreads: () => request<ThreadDto[]>('/messaging/threads'),
+  msgCreateThread: (payload: CreateThreadInput = {}) =>
+    request<ThreadDto>('/messaging/threads', { method: 'POST', body: JSON.stringify(payload) }),
+  msgMessages: (threadId: string, cursor?: string, limit = 50) =>
+    request<PaginatedMessagesDto>(
+      `/messaging/threads/${threadId}/messages?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+    ),
+  msgSend: (threadId: string, body: string) =>
+    request<MessageDto>(`/messaging/threads/${threadId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    }),
+  msgMarkRead: (messageId: string) =>
+    request<MessageDto>(`/messaging/messages/${messageId}/read`, { method: 'PATCH' }),
+
+  // ── Telehealth (context 12 — TeleSession lifecycle; waiting room honored server-side) ──
+  teleCreateSession: (appointmentId: string) =>
+    request<TeleSessionDto>('/telehealth/sessions', { method: 'POST', body: JSON.stringify({ appointmentId }) }),
+  teleJoin: (id: string) => request<TeleSessionJoinResult>(`/telehealth/sessions/${id}/join`, { method: 'POST' }),
+  teleAdmit: (id: string) => request<TeleSessionJoinResult>(`/telehealth/sessions/${id}/admit`, { method: 'POST' }),
+  teleEnd: (id: string) => request<TeleSessionDto>(`/telehealth/sessions/${id}/end`, { method: 'POST' }),
+  teleGet: (id: string) => request<TeleSessionDto>(`/telehealth/sessions/${id}`),
+
+  // ── Admin Configuration (contexts 2/27 — ADMIN-only; feature flags = kill-switch seam) ──
+  adminTenant: () => request<TenantDto>('/admin/tenant'),
+  adminPatchTenant: (payload: PatchTenantInput) =>
+    request<TenantDto>('/admin/tenant', { method: 'PATCH', body: JSON.stringify(payload) }),
+  adminClinics: () => request<ClinicDto[]>('/admin/clinics'),
+  adminCreateClinic: (payload: CreateClinicInput) =>
+    request<ClinicDto>('/admin/clinics', { method: 'POST', body: JSON.stringify(payload) }),
+  adminPatchClinic: (id: string, payload: PatchClinicInput) =>
+    request<ClinicDto>(`/admin/clinics/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  adminFeatureFlags: () => request<FeatureFlagDto[]>('/admin/feature-flags'),
+  adminUpsertFeatureFlag: (payload: UpsertFeatureFlagInput) =>
+    request<FeatureFlagDto>('/admin/feature-flags', { method: 'PUT', body: JSON.stringify(payload) }),
+
+  // ── Registry (contexts 3/4 — person master records; cursor-paginated {items,nextCursor}) ──
+  regListClients: (cursor?: string, take = 25) =>
+    request<ClientRegistryListDto>(
+      `/registry/clients?take=${take}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+    ),
+  regCreateClient: (payload: CreateClientRegistryInput) =>
+    request<ClientRegistryDto>('/registry/clients', { method: 'POST', body: JSON.stringify(payload) }),
+  regPatchClient: (id: string, payload: PatchClientRegistryInput) =>
+    request<ClientRegistryDto>(`/registry/clients/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  regDeleteClient: (id: string) =>
+    request<ClientRegistryDto>(`/registry/clients/${id}`, { method: 'DELETE' }),
+  regListPsychologists: (cursor?: string, take = 25) =>
+    request<PsychologistRegistryListDto>(
+      `/registry/psychologists?take=${take}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+    ),
+  regCreatePsychologist: (payload: CreatePsychologistRegistryInput) =>
+    request<PsychologistRegistryDto>('/registry/psychologists', { method: 'POST', body: JSON.stringify(payload) }),
+  regPatchPsychologist: (id: string, payload: PatchPsychologistRegistryInput) =>
+    request<PsychologistRegistryDto>(`/registry/psychologists/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  regDeletePsychologist: (id: string) =>
+    request<PsychologistRegistryDto>(`/registry/psychologists/${id}`, { method: 'DELETE' }),
+
+  // ── Computerized Adaptive Testing (psychometrics §6 — stateful, server-driven) ──
+  // Clinical-record mutations opt into Idempotency-Key replay (doc 04 §8), so
+  // a double-tapped submit can never start or record twice.
+  catStart: (versionId: string, clientId: string) =>
+    request<CatSessionStateDto>('/assessments/cat/start', {
+      method: 'POST',
+      body: JSON.stringify({ versionId, clientId }),
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+    }),
+  catAnswer: (sessionId: string, itemId: string, answer: number) =>
+    request<CatSessionStateDto>(`/assessments/cat/${sessionId}/answer`, {
+      method: 'POST',
+      body: JSON.stringify({ itemId, answer }),
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+    }),
+  catState: (sessionId: string) => request<CatSessionStateDto>(`/assessments/cat/${sessionId}`),
 };

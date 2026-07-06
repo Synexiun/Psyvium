@@ -18,6 +18,25 @@ import type { Config } from 'tailwindcss';
  */
 const rgb = (v: string) => `rgb(var(${v}) / <alpha-value>)`;
 
+/**
+ * Ink tokens with a THEME-CONTROLLED ALPHA FLOOR (a11y P0, WCAG 1.4.3).
+ *
+ * Root cause of the audited 71 serious color-contrast nodes: opacity-modified
+ * text utilities (`text-mist/40`, `text-haze/70`, …) cap out at ~2.5–4.2:1 on
+ * the light theme's paper surfaces — even pure black at 40% alpha over white
+ * is only ~2.9:1, so no amount of darkening the base triplet alone can fix a
+ * low-alpha utility. The fix stays AT THE TOKEN LAYER: the alpha every
+ * `text-mist/NN` utility resolves to is clamped through `max()` against a
+ * per-theme CSS variable (`--vc-ink-floor` / `--vc-ink-2-floor`,
+ * globals.css). Light mode floors secondary ink at an opacity that keeps
+ * ≥4.5:1 on every light surface text sits on; dark mode sets the floors to 0,
+ * so the as-designed dark hierarchy is untouched. No callsite changes, no
+ * per-page branching — the same utility class is now contrast-safe in both
+ * themes.
+ */
+const inkWithFloor = (v: string, floorVar: string) =>
+  `rgb(var(${v}) / max(var(${floorVar}, 0), <alpha-value>))`;
+
 const config: Config = {
   darkMode: 'class',
   content: ['./src/**/*.{ts,tsx}'],
@@ -34,17 +53,20 @@ const config: Config = {
         },
         teal: {
           DEFAULT: rgb('--vc-steel'),
-          soft: rgb('--vc-steel-soft'),
+          // steel-soft/signal-soft are TEXT-ROLE tokens (labels, eyebrows,
+          // status lines) — their opacity-modified utilities get the same
+          // light-theme alpha floor as mist/haze (see inkWithFloor).
+          soft: inkWithFloor('--vc-steel-soft', '--vc-steel-soft-floor'),
           deep: rgb('--vc-steel-deep'),
         },
         signal: {
           DEFAULT: rgb('--vc-signal'),
-          soft: rgb('--vc-signal-soft'),
+          soft: inkWithFloor('--vc-signal-soft', '--vc-signal-soft-floor'),
           deep: rgb('--vc-signal-deep'),
         },
         risk: rgb('--vc-risk'),
-        mist: rgb('--vc-ink'),
-        haze: rgb('--vc-ink-2'),
+        mist: inkWithFloor('--vc-ink', '--vc-ink-floor'),
+        haze: inkWithFloor('--vc-ink-2', '--vc-ink-2-floor'),
         ink: rgb('--vc-ink-inverse'),
         line: rgb('--vc-line'),
       },

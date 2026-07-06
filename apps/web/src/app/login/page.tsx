@@ -19,6 +19,7 @@ const ROLE_ROUTE: Record<string, string> = {
   PSYCHOLOGIST: '/session',
   MANAGER: '/manager',
   EXECUTIVE: '/reports',
+  ADMIN: '/admin',
 };
 
 function destinationForPrincipal(): string {
@@ -28,11 +29,12 @@ function destinationForPrincipal(): string {
 }
 
 /** Demo accounts — real seeded logins, one per role, password is the same demo secret. */
-const DEMO: { email: string; roleKey: 'login.roleManager' | 'login.rolePsychologist' | 'login.roleClient' | 'login.roleExecutive' }[] = [
+const DEMO: { email: string; roleKey: 'login.roleManager' | 'login.rolePsychologist' | 'login.roleClient' | 'login.roleExecutive' | 'login.roleAdmin' }[] = [
   { email: 'alex.client@example.com', roleKey: 'login.roleClient' },
   { email: 'dr.rivera@vpsy.health', roleKey: 'login.rolePsychologist' },
   { email: 'manager@vpsy.health', roleKey: 'login.roleManager' },
   { email: 'exec@vpsy.health', roleKey: 'login.roleExecutive' },
+  { email: 'admin@vpsy.health', roleKey: 'login.roleAdmin' },
 ];
 
 export default function LoginPage() {

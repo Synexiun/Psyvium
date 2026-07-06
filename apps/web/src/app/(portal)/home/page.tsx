@@ -198,7 +198,10 @@ export default function PatientHomePage() {
                 </div>
                 {nextAppt && (
                   <div className="flex shrink-0 flex-col gap-2">
-                    <button className="btn-primary">{t('patient.join')}</button>
+                    {/* Real destination (closing web wave): the telehealth
+                        entry surface, where this appointment's video session
+                        is created/joined with the waiting-room flow. */}
+                    <a href="/telehealth" className="btn-primary">{t('patient.join')}</a>
                     <button className="btn-ghost">{t('patient.reschedule')}</button>
                   </div>
                 )}
@@ -407,24 +410,25 @@ export default function PatientHomePage() {
           )}
         </section>
 
-        {/* Quick links — static navigation, no clinical data */}
+        {/* Quick links — real destinations only (closing web wave wired
+            Assessments + Messages; a link that goes nowhere is a lie). */}
         <section className="card p-4">
           <p className="eyebrow">{t('patient.quickEyebrow')}</p>
-          <div className="mt-3 grid grid-cols-3 gap-2">
+          <div className="mt-3 grid grid-cols-2 gap-2">
             {[
-              [t('patient.assessments'), 'M9 12h6m-6 4h6M7 3h7l5 5v13H7a2 2 0 01-2-2V5a2 2 0 012-2z'],
-              [t('patient.reports'), 'M4 19V5a2 2 0 012-2h12a2 2 0 012 2v14M9 8h6M9 12h6M9 16h4'],
-              [t('patient.messages'), 'M21 11.5a8.38 8.38 0 01-8.5 8.4 8.5 8.5 0 01-3.8-.9L3 21l2-5.7a8.4 8.4 0 116-3.8'],
-            ].map(([label, icon]) => (
-              <button
+              [t('patient.assessments'), '/assessments', 'M9 12h6m-6 4h6M7 3h7l5 5v13H7a2 2 0 01-2-2V5a2 2 0 012-2z'],
+              [t('patient.messages'), '/messages', 'M21 11.5a8.38 8.38 0 01-8.5 8.4 8.5 8.5 0 01-3.8-.9L3 21l2-5.7a8.4 8.4 0 116-3.8'],
+            ].map(([label, href, icon]) => (
+              <a
                 key={label}
+                href={href}
                 className="card-inset flex flex-col items-center gap-2 p-3 text-center transition hover:border-line/35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal"
               >
                 <svg viewBox="0 0 24 24" className="h-4 w-4 text-haze" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
                   <path d={icon} strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
                 <span className="text-[11px] leading-tight text-mist/70">{label}</span>
-              </button>
+              </a>
             ))}
           </div>
         </section>

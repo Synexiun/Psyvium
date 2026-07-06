@@ -8,22 +8,57 @@
  */
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Permission } from '@vpsy/contracts';
 import { useI18n } from '@/i18n';
 import type { MessageKey } from '@/i18n';
+import { getPrincipal } from '@/lib/api';
 
-export const PORTAL_NAV: { href: string; key: MessageKey; icon: string }[] = [
+export interface PortalNavEntry {
+  href: string;
+  key: MessageKey;
+  icon: string;
+  /** Show only when the signed-in principal holds ANY of these permissions —
+   * mirrors `src/middleware.ts` ROUTE_REQUIREMENTS (UI courtesy only; the
+   * middleware + API remain the actual boundary). Omitted = session-only. */
+  anyOf?: string[];
+}
+
+export const PORTAL_NAV: PortalNavEntry[] = [
   { href: '/home', key: 'nav.home', icon: 'M3 11l9-8 9 8M5 10v10h14V10' },
-  { href: '/intake', key: 'nav.intake', icon: 'M12 4v16m8-8H4' },
-  { href: '/session', key: 'nav.workspace', icon: 'M4 19V5a2 2 0 012-2h12a2 2 0 012 2v14M8 7h8M8 11h8M8 15h5' },
-  { href: '/manager', key: 'nav.triage', icon: 'M4 6h16M4 12h16M4 18h10' },
-  { href: '/crm', key: 'nav.crm', icon: 'M3 5h18l-7 8v5l-4 2v-7z' },
-  { href: '/comms', key: 'nav.comms', icon: 'M4 4h16v12H7l-3 3z' },
-  { href: '/risk', key: 'nav.risk', icon: 'M12 3l9 16H3zM12 10v4M12 17v.5' },
-  { href: '/schedule', key: 'nav.schedule', icon: 'M4 5h16v15H4zM4 9h16M8 3v4M16 3v4' },
-  { href: '/finance', key: 'nav.finance', icon: 'M3 6h18v12H3zM3 10h18M7 15h4' },
-  { href: '/reports', key: 'nav.reports', icon: 'M4 20V10M10 20V4M16 20v-7M20 20H3' },
+  { href: '/intake', key: 'nav.intake', icon: 'M12 4v16m8-8H4', anyOf: [Permission.INTAKE_SUBMIT, Permission.INTAKE_READ] },
+  { href: '/session', key: 'nav.workspace', icon: 'M4 19V5a2 2 0 012-2h12a2 2 0 012 2v14M8 7h8M8 11h8M8 15h5', anyOf: [Permission.SESSION_HOST] },
+  { href: '/manager', key: 'nav.triage', icon: 'M4 6h16M4 12h16M4 18h10', anyOf: [Permission.ASSIGNMENT_APPROVE] },
+  { href: '/crm', key: 'nav.crm', icon: 'M3 5h18l-7 8v5l-4 2v-7z', anyOf: [Permission.CRM_READ] },
+  { href: '/comms', key: 'nav.comms', icon: 'M4 4h16v12H7l-3 3z', anyOf: [Permission.COMMS_READ] },
+  { href: '/messages', key: 'nav.messages', icon: 'M4 5h16v12H9l-5 4zM8 9h8M8 13h5', anyOf: [Permission.COMMS_READ] },
+  { href: '/telehealth', key: 'nav.telehealth', icon: 'M3 7h12v10H3zM15 10l6-3v10l-6-3', anyOf: [Permission.SCHEDULING_READ] },
+  { href: '/assessments', key: 'nav.assessments', icon: 'M9 3h6v4H9zM7 5H5v16h14V5h-2M9 12h6M9 16h6', anyOf: [Permission.ASSESSMENT_ADMINISTER] },
+  { href: '/risk', key: 'nav.risk', icon: 'M12 3l9 16H3zM12 10v4M12 17v.5', anyOf: [Permission.RISK_READ] },
+  { href: '/schedule', key: 'nav.schedule', icon: 'M4 5h16v15H4zM4 9h16M8 3v4M16 3v4', anyOf: [Permission.SCHEDULING_READ] },
+  { href: '/finance', key: 'nav.finance', icon: 'M3 6h18v12H3zM3 10h18M7 15h4', anyOf: [Permission.FINANCE_READ, Permission.FINANCE_MANAGE] },
+  { href: '/reports', key: 'nav.reports', icon: 'M4 20V10M10 20V4M16 20v-7M20 20H3', anyOf: [Permission.REPORTS_READ] },
+  { href: '/admin', key: 'nav.admin', icon: 'M4 8h9M17 8h3M13 5v6M4 16h3M11 16h9M7 13v6', anyOf: [Permission.ADMIN_CONFIG] },
 ];
+
+/**
+ * Nav entries visible to the CURRENT principal. Before hydration (or signed
+ * out) this returns the full list — the SSR markup and first client render
+ * match, then the post-mount principal read narrows it. Purely cosmetic
+ * gating: middleware redirects and the API 403s regardless.
+ */
+export function useVisibleNav(): PortalNavEntry[] {
+  const pathname = usePathname();
+  const [perms, setPerms] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    const p = getPrincipal();
+    setPerms(p ? new Set(p.permissions) : null);
+  }, [pathname]);
+  return useMemo(() => {
+    if (!perms) return PORTAL_NAV;
+    return PORTAL_NAV.filter((n) => !n.anyOf || n.anyOf.some((x) => perms.has(x)));
+  }, [perms]);
+}
 
 function RailClock() {
   const { locale, t } = useI18n();
@@ -59,6 +94,7 @@ function RailClock() {
 export function CommandRail() {
   const { t, locale } = useI18n();
   const pathname = usePathname();
+  const nav = useVisibleNav();
 
   return (
     <nav
@@ -83,7 +119,7 @@ export function CommandRail() {
         <li aria-hidden className="hidden px-3 pb-1 pt-2 lg:block">
           <span className="font-mono text-[10px] uppercase tracking-eyebrow text-haze/70">{t('shell.navEyebrow')}</span>
         </li>
-        {PORTAL_NAV.map((n) => {
+        {nav.map((n) => {
           const active = pathname?.startsWith(n.href);
           return (
             <li key={n.href}>

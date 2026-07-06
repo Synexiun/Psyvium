@@ -37,6 +37,12 @@ const ROUTE_REQUIREMENTS: Array<{ prefix: string; anyOf: string[] }> = [
   { prefix: '/comms', anyOf: [Permission.COMMS_READ] },
   { prefix: '/schedule', anyOf: [Permission.SCHEDULING_READ] },
   { prefix: '/intake', anyOf: [Permission.INTAKE_SUBMIT, Permission.INTAKE_READ] },
+  // Closing web wave: Messaging (ctx 14), Telehealth (ctx 12), Admin (ctx 2/27
+  // + registries 3/4), CAT assessments — mirrors the API's controller guards.
+  { prefix: '/messages', anyOf: [Permission.COMMS_READ] },
+  { prefix: '/telehealth', anyOf: [Permission.SCHEDULING_READ] },
+  { prefix: '/admin', anyOf: [Permission.ADMIN_CONFIG] },
+  { prefix: '/assessments', anyOf: [Permission.ASSESSMENT_ADMINISTER] },
 ];
 
 interface DecodedAccessToken {
@@ -137,5 +143,9 @@ export const config = {
     '/finance/:path*',
     '/reports/:path*',
     '/manager/:path*',
+    '/messages/:path*',
+    '/telehealth/:path*',
+    '/admin/:path*',
+    '/assessments/:path*',
   ],
 };

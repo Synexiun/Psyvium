@@ -103,16 +103,19 @@ jobs:
       - name: Test
         run: pnpm test
 
-      # ── E2E (Playwright suite exists; stabilizing) ────────────────────────
-      # The browser journey + axe suite landed, but its verification run was
-      # cut short (one journey — manager approve — still under investigation)
-      # and CI has no browsers/servers wired yet. continue-on-error keeps the
-      # signal visible without blocking merges on an unstabilized suite;
-      # flip to blocking once the suite runs green end-to-end. Tracked in
-      # docs/10-10-PROGRAM.md (Wave D).
-      - name: "E2E (apps/web — Playwright; non-blocking until stabilized)"
-        run: pnpm --filter @vpsy/web run test:e2e --if-present
-        continue-on-error: true
+      # ── E2E (Playwright — BLOCKING) ──────────────────────────────────────
+      # Closing web wave: the full suite (3 auth setups + journeys + the four
+      # axe a11y scans) runs green end-to-end — 14 passed — after the
+      # light-theme contrast token fix (72 serious color-contrast nodes → 0,
+      # measured on the same build with the token floors toggled). Playwright's
+      # webServer config boots the just-built API (`node dist/main.js` from
+      # apps/api) and web (`next start`) against the Postgres service seeded
+      # above, so no extra server wiring is needed here — only browsers.
+      - name: Install Playwright browsers (chromium)
+        run: pnpm --filter @vpsy/web exec playwright install --with-deps chromium
+
+      - name: "E2E (apps/web — Playwright browser journeys + axe a11y; BLOCKING)"
+        run: pnpm --filter @vpsy/web run test:e2e
 
   # ── Secret scan ──────────────────────────────────────────────────────────
   # docs/technical/10-observability-and-devops.md §4.1 / §14: a leaked secret

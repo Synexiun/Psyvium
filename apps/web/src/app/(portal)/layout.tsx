@@ -24,16 +24,17 @@ import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { LiveStatusIndicator } from '@/components/LiveStatusIndicator';
 import { CommandPalette, useCommandPaletteHotkey } from '@/components/CommandPalette';
-import { CommandRail, PORTAL_NAV } from '@/components/CommandRail';
+import { CommandRail, useVisibleNav } from '@/components/CommandRail';
 import { ContextPanelHostProvider } from '@/components/ContextPanel';
 import { LiveEventsProvider } from '@/lib/live-events';
 
 /** Role code (as carried in the access token) → the existing role-label i18n key. */
-const ROLE_LABEL_KEY: Record<string, 'login.roleClient' | 'login.rolePsychologist' | 'login.roleManager' | 'login.roleExecutive'> = {
+const ROLE_LABEL_KEY: Record<string, 'login.roleClient' | 'login.rolePsychologist' | 'login.roleManager' | 'login.roleExecutive' | 'login.roleAdmin'> = {
   CLIENT: 'login.roleClient',
   PSYCHOLOGIST: 'login.rolePsychologist',
   MANAGER: 'login.roleManager',
   EXECUTIVE: 'login.roleExecutive',
+  ADMIN: 'login.roleAdmin',
 };
 
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
@@ -66,7 +67,8 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
 
   const [panelHost, setPanelHost] = useState<HTMLElement | null>(null);
 
-  const current = PORTAL_NAV.find((n) => pathname?.startsWith(n.href));
+  const nav = useVisibleNav();
+  const current = nav.find((n) => pathname?.startsWith(n.href));
 
   return (
     <LiveEventsProvider>
@@ -151,7 +153,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
           className="pb-safe hairline-t fixed inset-x-0 bottom-0 z-40 bg-console-950/95 backdrop-blur-lg md:hidden"
         >
           <div className="flex items-stretch overflow-x-auto px-1 py-1.5">
-            {PORTAL_NAV.map((n) => {
+            {nav.map((n) => {
               const active = pathname?.startsWith(n.href);
               return (
                 <Link
