@@ -1,11 +1,13 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { EventsModule } from './common/events/events.module';
 import { AuditModule } from './common/audit/audit.module';
 import { RealtimeModule } from './common/realtime/realtime.module';
 import { RateLimitModule } from './common/rate-limit/rate-limit.module';
 import { IdempotencyModule } from './common/idempotency/idempotency.module';
+import { TenantContextMiddleware } from './common/tenant-context.interceptor';
 import { AiGatewayModule } from './modules/ai-gateway/ai-gateway.module';
 import { AuthModule } from './auth/auth.module';
 import { CredentialingModule } from './modules/credentialing/credentialing.module';
@@ -39,6 +41,11 @@ import { HealthModule } from './health/health.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // Needed here (not just per-module) so the global TenantContextMiddleware
+    // below can inject JwtService — it independently verifies the access
+    // token to populate tenant context before req.principal exists. See
+    // tenant-context.interceptor.ts for why it can't simply read req.principal.
+    JwtModule.register({}),
     // Global infrastructure
     PrismaModule,
     EventsModule,
@@ -79,4 +86,19 @@ import { HealthModule } from './health/health.module';
     HealthModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  /**
+   * RLS tenant-context wiring (doc 00-architecture-overview.md §4), applied
+   * as MIDDLEWARE (not an interceptor or a guard — two earlier designs were
+   * tried and empirically rejected; see common/tenant-context.interceptor.ts
+   * for the full story) across every route, ahead of Nest's guards ->
+   * interceptors -> pipes -> handler pipeline. It wraps the rest of the
+   * request in `TenantContext.run({tenantId}, () => next())`, which is what
+   * makes the AsyncLocalStorage-bound tenantId reliably reach every guard
+   * (including ClinicalWriteGuard's own DB-querying license check),
+   * interceptor, and — ultimately — the RLS Prisma extension's queries.
+   */
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(TenantContextMiddleware).forRoutes('*');
+  }
+}

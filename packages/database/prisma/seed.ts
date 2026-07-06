@@ -26,6 +26,13 @@ async function main() {
     },
   });
 
+  // If the RLS tenant-isolation backstop migration has been applied, every
+  // strict-table INSERT enforces a WITH CHECK on `app.current_tenant`. This raw
+  // seed client isn't request-scoped, so set the session GUC to the demo tenant
+  // once here — everything below belongs to it. Harmless (a no-op setting) when
+  // RLS isn't enabled. Session-level (false) so it persists across the seed.
+  await prisma.$executeRawUnsafe("SELECT set_config('app.current_tenant', $1, false)", tenant.id);
+
   const clinic = await prisma.clinic.upsert({
     where: { id: 'clinic_demo' },
     update: {},
