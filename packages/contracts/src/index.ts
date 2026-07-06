@@ -19,3 +19,6 @@ export * from './dto/finance';
 export * from './dto/analytics';
 export * from './dto/realtime';
 export * from './dto/ai-assist';
+export * from './dto/intervention';
+export * from './dto/diagnosis';
+export * from './dto/documents';

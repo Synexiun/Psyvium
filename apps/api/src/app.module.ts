@@ -27,6 +27,9 @@ import { RiskModule } from './modules/risk/risk.module';
 import { SchedulingModule } from './modules/scheduling/scheduling.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { InterventionModule } from './modules/intervention/intervention.module';
+import { DiagnosisModule } from './modules/diagnosis/diagnosis.module';
+import { DocumentsModule } from './modules/documents/documents.module';
 import { HealthModule } from './health/health.module';
 
 /**
@@ -83,6 +86,12 @@ import { HealthModule } from './health/health.module';
     FinanceModule,
     // Bounded contexts (Phase 6 — Reports/National Analytics, ctx 27/28)
     AnalyticsModule,
+    // Bounded contexts (Wave C — Intervention Tracking / Diagnosis Support /
+    // Documents, ctx 15 / 13 / 23): Prisma models already existed; this wave
+    // adds the first service/controller code for them.
+    InterventionModule,
+    DiagnosisModule,
+    DocumentsModule,
     HealthModule,
   ],
 })
