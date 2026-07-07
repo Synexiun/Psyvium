@@ -5,7 +5,7 @@
  */
 const en = {
   common: {
-    appName: 'VPSY OS',
+    appName: 'Psyvium OS',
     skipToContent: 'Skip to content',
     language: 'Language',
     signIn: 'Sign in',

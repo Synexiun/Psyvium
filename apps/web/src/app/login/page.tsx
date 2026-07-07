@@ -120,7 +120,7 @@ export default function LoginPage() {
             <span className="h-1.5 w-1.5 rounded-full bg-teal animate-pulseline" />
           </span>
           <span className="font-display text-xl font-semibold text-mist">
-            VPSY<span className="text-haze"> OS</span>
+            Psyvium<span className="text-haze"> OS</span>
           </span>
         </Link>
         <form onSubmit={submit} className="mt-6 card p-6">

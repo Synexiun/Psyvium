@@ -7,10 +7,10 @@ import { ServiceWorkerRegistration } from '@/components/ServiceWorkerRegistratio
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'VPSY OS — Clinical Psychology Operating System',
+  title: 'Psyvium OS - Clinical Command Layer for Psychological Care',
   description:
-    'A country-scale behavioral-health operating system. Intake to national analytics, governed end-to-end. AI assists, licensed clinicians decide.',
-  applicationName: 'VPSY OS',
+    'Psyvium OS is clinical command infrastructure for psychological care, connecting intake, triage, assignment, treatment, outcomes, payments, and risk governance in one auditable lifecycle.',
+  applicationName: 'Psyvium OS',
   // No explicit `manifest` field: `app/manifest.ts` (the dynamic PWA
   // manifest — see docs/technical/11-frontend-architecture.md §5) is served
   // at this same /manifest.webmanifest path and Next injects the <link>
