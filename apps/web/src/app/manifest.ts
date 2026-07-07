@@ -12,9 +12,9 @@ import type { MetadataRoute } from 'next';
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Psyvium OS - Clinical Command Layer for Psychological Care',
-    short_name: 'Psyvium OS',
-    description: 'Clinical command infrastructure for psychological care. AI assists, licensed clinicians decide.',
+    name: 'VPSY OS — Clinical Psychology Operating System',
+    short_name: 'VPSY OS',
+    description: 'Behavioral-health operating system. AI assists, licensed clinicians decide.',
     start_url: '/',
     scope: '/',
     display: 'standalone',

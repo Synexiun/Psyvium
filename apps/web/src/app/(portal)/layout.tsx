@@ -82,7 +82,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
           {/* ── Command strip — thin, persistent, keyboard-first ── */}
           <header className="hairline-b sticky top-0 z-40 flex h-11 items-center gap-3 bg-console-900/90 px-4 backdrop-blur-sm">
             <Link href="/" className="font-display text-sm font-semibold tracking-tight text-mist md:hidden">
-              Psyvium<span className="text-haze"> OS</span>
+              VPSY<span className="text-haze"> OS</span>
             </Link>
             <p className="hidden font-mono text-[11px] uppercase tracking-eyebrow text-haze md:block">
               {current ? t(current.key) : t('common.appName')}

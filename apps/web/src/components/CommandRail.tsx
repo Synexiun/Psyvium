@@ -110,7 +110,7 @@ export function CommandRail() {
           <span className="h-1.5 w-1.5 rounded-full bg-teal animate-pulseline" />
         </span>
         <span className="hidden font-display text-sm font-semibold tracking-tight text-mist lg:inline">
-          Psyvium<span className="text-haze"> OS</span>
+          VPSY<span className="text-haze"> OS</span>
         </span>
       </Link>
 
