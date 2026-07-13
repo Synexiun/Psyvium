@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AuthPrincipal } from '@vpsy/contracts';
@@ -183,6 +183,20 @@ describe('DiagnosisService', () => {
           status: 'PROVISIONAL',
         } as any),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('rejects invalid ICD-10-CM code format before write', async () => {
+      const { svc, prisma } = makeService();
+
+      await expect(
+        svc.createFormulation(clinician, {
+          clientId: 'client_1',
+          icdCode: 'depression maybe',
+          description: 'x',
+          status: 'PROVISIONAL',
+        } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.formulation.create).not.toHaveBeenCalled();
     });
 
     it('rejects a basedOnHypothesisId that does not belong to the client/tenant', async () => {

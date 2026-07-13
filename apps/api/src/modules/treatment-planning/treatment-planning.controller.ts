@@ -59,6 +59,19 @@ export class TreatmentPlanningController {
   }
 
   /**
+   * Measurement-Based Care reassessment schedule for a client's active plan
+   * goals (targetMetrics as constructs) + last outcome measures. Assistive —
+   * never mutates clinical records.
+   */
+  @Get('client/:clientId/mbc-schedule')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'params', key: 'clientId' })
+  @RequirePermissions(Permission.PLAN_READ)
+  mbcSchedule(@CurrentUser() user: AuthPrincipal, @Param('clientId') clientId: string) {
+    return this.plans.mbcSchedule(user, clientId);
+  }
+
+  /**
    * Client collaborative acknowledgment of an active treatment plan.
    * Clients acknowledge their own plan; clinicians/managers may record
    * acknowledgment after a collaborative review session.

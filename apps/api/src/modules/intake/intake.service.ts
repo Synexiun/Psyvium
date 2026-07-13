@@ -4,6 +4,11 @@ import { computeEscalationSlaDueAt, type AuthPrincipal, type ScreeningResult, ty
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
+import {
+  ALGORITHM_VERSIONS,
+  isSeverityEscalation,
+  stampAlgorithm,
+} from '../../common/clinical';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { ConsentService } from '../consent/consent.service';
 import { ScreeningService } from './screening.service';
@@ -137,19 +142,11 @@ export class IntakeService {
 
       // Escalate-only risk reflection — never silently downgrade a prior
       // HIGH/SEVERE level from assessments/prior intakes (matches psychometrics).
-      const SEVERITY_RANK: Record<string, number> = {
-        LOW: 1,
-        MODERATE: 2,
-        HIGH: 3,
-        SEVERE: 4,
-      };
       const current = await tx.client.findFirst({
         where: { id: client.id },
         select: { riskLevel: true },
       });
-      const nextRank = SEVERITY_RANK[computed.severityBand] ?? 0;
-      const prevRank = SEVERITY_RANK[current?.riskLevel ?? ''] ?? 0;
-      if (nextRank > prevRank) {
+      if (isSeverityEscalation(current?.riskLevel, computed.severityBand)) {
         await tx.client.update({
           where: { id: client.id },
           data: { riskLevel: computed.severityBand },
@@ -166,7 +163,15 @@ export class IntakeService {
       action: 'intake.submitted',
       entityType: 'Intake',
       entityId: result.intake.id,
-      after: { severityBand: computed.severityBand, riskScore: computed.riskScore },
+      after: {
+        severityBand: computed.severityBand,
+        riskScore: computed.riskScore,
+        algorithm: stampAlgorithm(
+          'screening.composite',
+          ALGORITHM_VERSIONS.screeningComposite,
+          'Deterministic composite screening + C-SSRS-inspired safety triage (Posner 2011).',
+        ),
+      },
     });
 
     let aiSummary: string | null = null;

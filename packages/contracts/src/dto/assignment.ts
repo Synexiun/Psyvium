@@ -38,3 +38,24 @@ export const approveAssignmentSchema = z.object({
   managerNote: z.string().max(1000).optional(),
 });
 export type ApproveAssignmentInput = z.infer<typeof approveAssignmentSchema>;
+
+/**
+ * Manager rejects a proposed assignment (PROPOSED → CLOSED). There is no
+ * REJECTED enum value — CLOSED is the terminal status for declined proposals.
+ */
+export const rejectAssignmentSchema = z.object({
+  assignmentId: z.string().min(1),
+  reason: z.string().min(1).max(1000),
+});
+export type RejectAssignmentInput = z.infer<typeof rejectAssignmentSchema>;
+
+/**
+ * Manager places a proposed assignment on hold. There is no HOLD enum value —
+ * status remains PROPOSED and the hold is recorded via managerNote + audit
+ * (`status: 'on_hold'` in the audit payload / API response annotation).
+ */
+export const holdAssignmentSchema = z.object({
+  assignmentId: z.string().min(1),
+  reason: z.string().min(1).max(1000),
+});
+export type HoldAssignmentInput = z.infer<typeof holdAssignmentSchema>;

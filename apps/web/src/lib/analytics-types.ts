@@ -41,4 +41,14 @@ export interface NationalAnalyticsDto {
   generatedAt: string;
   kAnonymityFloor: number;
   metrics: NationalMetricDto[];
+  meta: {
+    kAnonymityPolicy: string;
+    kAnonymityFloor: number;
+    algorithm: {
+      family: string;
+      version: string;
+      citation: string;
+      computedAt: string;
+    };
+  };
 }

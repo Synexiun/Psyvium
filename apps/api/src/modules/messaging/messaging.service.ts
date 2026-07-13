@@ -1,4 +1,10 @@
-import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   AssignmentStatus,
   Role,
@@ -30,7 +36,11 @@ type MessageRow = {
   body: string;
   readAt: Date | null;
   createdAt: Date;
+  deletedAt?: Date | null;
 };
+
+/** Soft-retract window: sender may retract within 15 minutes of send. */
+const MESSAGE_RETRACT_WINDOW_MS = 15 * 60 * 1000;
 
 type ClientRow = { id: string; userId: string; tenantId: string };
 type PsychologistRow = { id: string; userId: string; tenantId: string };
@@ -286,6 +296,52 @@ export class MessagingService {
     };
   }
 
+  /**
+   * Soft-retract: sender only, within 15 minutes of `createdAt`. Sets
+   * `Message.deletedAt` (column already on the schema). After the window, the
+   * message is immutable for the clinical record / audit trail.
+   */
+  async retractMessage(principal: AuthPrincipal, messageId: string): Promise<MessageDto> {
+    const existing = (await this.prisma.message.findFirst({
+      where: { id: messageId },
+    })) as MessageRow | null;
+    if (!existing) throw new NotFoundException('Message not found');
+
+    const { thread } = await this.resolveParticipantThread(principal, existing.threadId);
+    if (thread.tenantId !== principal.tenantId) throw new NotFoundException('Message not found');
+
+    if (existing.senderId !== principal.userId) {
+      throw new ForbiddenException('Only the sender may retract a message');
+    }
+    if (existing.deletedAt) {
+      return this.toMessageDto(existing, principal.tenantId);
+    }
+
+    const ageMs = Date.now() - existing.createdAt.getTime();
+    if (ageMs > MESSAGE_RETRACT_WINDOW_MS) {
+      throw new BadRequestException(
+        'Message can only be retracted within 15 minutes of sending',
+      );
+    }
+
+    const updated = (await this.prisma.message.update({
+      where: { id: messageId },
+      data: { deletedAt: new Date() },
+    })) as MessageRow;
+
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'messaging.message.retracted',
+      entityType: 'Message',
+      entityId: messageId,
+      after: { threadId: existing.threadId, deletedAt: updated.deletedAt?.toISOString() },
+      critical: true,
+    });
+
+    return this.toMessageDto(updated, principal.tenantId);
+  }
+
   /** Marks a message read. Only the thread participant who is NOT the sender may mark it read (mirrors `markMediaMessageRead`'s idempotent, one-way `readAt`). */
   async markMessageRead(principal: AuthPrincipal, messageId: string): Promise<MessageDto> {
     const tenantId = principal.tenantId;
@@ -392,8 +448,11 @@ export class MessagingService {
   }
 
   private async toMessageDto(message: MessageRow, tenantId: string): Promise<MessageDto> {
-    const body =
-      (await this.cipher.decryptString(message.body, tenantId)) ?? message.body;
+    // Retracted messages never re-surface plaintext body to clients.
+    const isRetracted = Boolean(message.deletedAt);
+    const body = isRetracted
+      ? ''
+      : (await this.cipher.decryptString(message.body, tenantId)) ?? message.body;
     return {
       id: message.id,
       threadId: message.threadId,
@@ -401,6 +460,7 @@ export class MessagingService {
       body,
       readAt: message.readAt?.toISOString() ?? undefined,
       createdAt: message.createdAt.toISOString(),
+      deletedAt: message.deletedAt ? message.deletedAt.toISOString() : null,
     };
   }
 }

@@ -200,7 +200,19 @@ describe('InterventionService', () => {
     });
 
     expect(result.completionPct).toBe(100);
-    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'homework.completed' }));
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'homework.completed',
+        before: expect.objectContaining({ completionPct: 0 }),
+        after: expect.objectContaining({
+          completionPct: 100,
+          completionHistory: expect.arrayContaining([
+            expect.objectContaining({ completionPct: 0, at: 'before' }),
+            expect.objectContaining({ completionPct: 100, at: 'after' }),
+          ]),
+        }),
+      }),
+    );
   });
 
   it('blocks a CLIENT from completing another client’s homework', async () => {

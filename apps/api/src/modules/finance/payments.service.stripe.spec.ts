@@ -38,7 +38,19 @@ function makeService(provider: Record<string, jest.Mock> | null, overrides: Part
   (StripePaymentAdapter.fromEnv as jest.Mock).mockReturnValue(provider);
 
   const prismaTx = {
-    payment: { create: jest.fn(async ({ data }: any) => ({ id: 'payment_1', ...data })) },
+    payment: {
+      create: jest.fn(async ({ data }: any) => ({ id: 'payment_1', ...data })),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findFirstOrThrow: jest.fn(async () => ({
+        id: 'payment_1',
+        invoiceId: 'invoice_1',
+        amount: new Prisma.Decimal('180.0000'),
+        currency: 'USD',
+        method: 'card',
+        status: 'refunded',
+        capturedAt: new Date('2026-07-01T00:00:00Z'),
+      })),
+    },
     invoice: {
       update: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -49,9 +61,13 @@ function makeService(provider: Record<string, jest.Mock> | null, overrides: Part
   const prisma = {
     invoice: {
       findFirst: jest.fn().mockResolvedValue(openInvoiceRow),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     payment: {
       create: jest.fn(async ({ data }: any) => ({ id: 'payment_attempt_1', ...data })),
+      findFirst: jest.fn(),
+      findFirstOrThrow: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(prismaTx)),
     ...overrides,
@@ -200,5 +216,102 @@ describe('PaymentsService.capturePaymentFromWebhook', () => {
 
     expect(result).toBeNull();
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('PaymentsService.requestRefund — keyed (Stripe configured)', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  const capturedWithPsp = {
+    id: 'payment_1',
+    tenantId: 'tenant_demo',
+    invoiceId: 'invoice_1',
+    amount: new Prisma.Decimal('180.0000'),
+    currency: 'USD',
+    method: 'card',
+    status: 'captured',
+    pspRef: 'pi_ok',
+    capturedAt: new Date('2026-07-01T00:00:00Z'),
+    deletedAt: null,
+  };
+
+  it('fails closed with 501 + critical audit when payment has no pspRef', async () => {
+    const provider = {
+      chargeInvoice: jest.fn(),
+      createCheckoutSession: jest.fn(),
+      refundPayment: jest.fn(),
+    };
+    const { svc, audit, prisma } = makeService(provider, {
+      payment: {
+        findFirst: jest.fn().mockResolvedValue({ ...capturedWithPsp, pspRef: null }),
+        create: jest.fn(),
+        updateMany: jest.fn(),
+        findFirstOrThrow: jest.fn(),
+      },
+    });
+
+    await expect(
+      svc.requestRefund(managerPrincipal, 'payment_1', { reason: 'Duplicate charge' }),
+    ).rejects.toThrow(/no PSP charge reference/);
+
+    expect(provider.refundPayment).not.toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'payment.refund_refused',
+        critical: true,
+        after: expect.objectContaining({ refusedBecause: 'no_psp_ref' }),
+      }),
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('refunds via Stripe, reopens invoice, reverses ledger, and critically audits', async () => {
+    const provider = {
+      chargeInvoice: jest.fn(),
+      createCheckoutSession: jest.fn(),
+      refundPayment: jest.fn().mockResolvedValue({ providerRef: 're_1', status: 'succeeded' }),
+    };
+    const { svc, prismaTx, accounting, audit, bus } = makeService(provider, {
+      payment: {
+        findFirst: jest.fn().mockResolvedValue(capturedWithPsp),
+        create: jest.fn(),
+        updateMany: jest.fn(),
+        findFirstOrThrow: jest.fn(),
+      },
+    });
+
+    const result = await svc.requestRefund(managerPrincipal, 'payment_1', {
+      reason: 'Client cancelled within cooling-off period',
+    });
+
+    expect(provider.refundPayment).toHaveBeenCalledWith(
+      'pi_ok',
+      '180.0000',
+      'USD',
+      'Client cancelled within cooling-off period',
+      expect.objectContaining({ paymentId: 'payment_1', tenantId: 'tenant_demo' }),
+    );
+    expect(result.status).toBe('refunded');
+    expect(prismaTx.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: 'payment_1', tenantId: 'tenant_demo', status: 'captured' },
+      data: { status: 'refunded' },
+    });
+    expect(prismaTx.invoice.updateMany).toHaveBeenCalledWith({
+      where: { id: 'invoice_1', tenantId: 'tenant_demo', status: 'PAID' },
+      data: { status: 'OPEN' },
+    });
+    expect(accounting.postBalancedEntry).toHaveBeenCalledWith(
+      prismaTx,
+      expect.objectContaining({ debitAccountCode: '4000', creditAccountCode: '1000' }),
+    );
+    expect(bus.publishDurable).toHaveBeenCalledWith(
+      prismaTx,
+      'payment.refunded',
+      'tenant_demo',
+      expect.objectContaining({ paymentId: 'payment_1', pspRefundRef: 're_1' }),
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'payment.refunded', critical: true }),
+    );
   });
 });

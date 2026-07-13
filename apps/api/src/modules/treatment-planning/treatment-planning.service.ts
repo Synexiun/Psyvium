@@ -11,6 +11,12 @@ import type {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
+import {
+  ALGORITHM_VERSIONS,
+  type MbcRecommendation,
+  recommendMbcSchedule,
+  stampAlgorithm,
+} from '../../common/clinical';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 
 type GoalRow = {
@@ -147,6 +153,7 @@ export class TreatmentPlanningService {
     return plan ? this.toDto(plan as PlanRow) : null;
   }
 
+
   /**
    * Client collaborative acknowledgment of an active treatment plan
    * (WAVE CR / Joint Commission care-plan partnership). Idempotent: a second
@@ -207,6 +214,70 @@ export class TreatmentPlanningService {
       orderBy: { reviewDate: 'asc' },
     });
     return plans.map((plan) => this.toDto(plan as PlanRow));
+  }
+
+  /**
+   * Measurement-Based Care schedule for a client: pulls constructs from the
+   * active plan's goal targetMetrics, joins last outcome measures, and
+   * returns the recommended reassessment cadence (Lambert; Scott & Lewis).
+   * Assistive only — never mutates the plan or measures.
+   */
+  async mbcSchedule(
+    principal: AuthPrincipal,
+    clientId: string,
+  ): Promise<{ recommendations: MbcRecommendation[]; algorithm: ReturnType<typeof stampAlgorithm> }> {
+    const client = await this.prisma.client.findFirst({
+      where: { id: clientId, tenantId: principal.tenantId },
+    });
+    if (!client) throw new NotFoundException('Client not found');
+
+    const plan = await this.prisma.treatmentPlan.findFirst({
+      where: { tenantId: principal.tenantId, clientId, status: 'active' },
+      include: { goals: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const constructs = [
+      ...new Set(
+        (plan?.goals ?? [])
+          .map((g) => g.targetMetric)
+          .filter((m): m is string => typeof m === 'string' && m.trim().length > 0)
+          .map((m) => m.trim()),
+      ),
+    ];
+
+    const lastMeasuredAtByConstruct: Record<string, string | null> = {};
+    if (constructs.length > 0) {
+      const measures = await this.prisma.outcomeMeasure.findMany({
+        where: {
+          tenantId: principal.tenantId,
+          clientId,
+          construct: { in: constructs },
+        },
+        orderBy: { occurredAt: 'desc' },
+        select: { construct: true, occurredAt: true },
+      });
+      for (const m of measures) {
+        if (!(m.construct in lastMeasuredAtByConstruct)) {
+          lastMeasuredAtByConstruct[m.construct] = m.occurredAt.toISOString();
+        }
+      }
+    }
+
+    const recommendations = recommendMbcSchedule({
+      constructs,
+      sessionFrequency: plan?.sessionFrequency,
+      lastMeasuredAtByConstruct,
+    });
+
+    return {
+      recommendations,
+      algorithm: stampAlgorithm(
+        'mbc.schedule',
+        ALGORITHM_VERSIONS.mbcSchedule,
+        'Routine outcome monitoring cadence (Lambert; Scott & Lewis). Assistive MBC schedule only.',
+      ),
+    };
   }
 
   /**

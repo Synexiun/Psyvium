@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { AuthPrincipal, NationalAnalyticsDto, NationalMetricDto } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { ALGORITHM_VERSIONS, stampAlgorithm } from '../../common/clinical/algorithm-provenance';
 
 type PopulationMetricRow = {
   region: string;
@@ -47,10 +48,27 @@ export class NationalAnalyticsService {
     const metrics: NationalMetricDto[] = rows.map((row) => this.toSuppressedDto(row as PopulationMetricRow, floor));
 
     const generatedAt = new Date();
+    const algorithm = stampAlgorithm(
+      'analytics.k_anonymity',
+      ALGORITHM_VERSIONS.analyticsKAnonymity,
+      'k-anonymity floor suppression (Samarati/Sweeney); EU AI Act Art.13 transparency',
+    );
     const dto: NationalAnalyticsDto = {
       generatedAt: generatedAt.toISOString(),
       kAnonymityFloor: floor,
       metrics,
+      meta: {
+        kAnonymityPolicy:
+          `Cohorts with size < ${floor} have value hard-nulled and suppressed=true. ` +
+          'The underlying aggregate is never serialized — no re-identification path through this API.',
+        kAnonymityFloor: floor,
+        algorithm: {
+          family: algorithm.family,
+          version: algorithm.version,
+          citation: algorithm.citation,
+          computedAt: algorithm.computedAt,
+        },
+      },
     };
 
     const report = await this.prisma.report.create({
@@ -58,7 +76,11 @@ export class NationalAnalyticsService {
         tenantId: principal.tenantId,
         type: 'national_analytics',
         scope: 'national',
-        parameters: { kAnonymityFloor: floor },
+        parameters: {
+          kAnonymityFloor: floor,
+          algorithmFamily: algorithm.family,
+          algorithmVersion: algorithm.version,
+        },
         generatedAt,
       },
     });
@@ -73,7 +95,13 @@ export class NationalAnalyticsService {
         kAnonymityFloor: floor,
         metricCount: metrics.length,
         suppressedCount: metrics.filter((m) => m.suppressed).length,
+        deIdentification: {
+          method: 'k-anonymity',
+          floor,
+          note: 'Cells with cohortSize < floor have value nulled; no row-level re-identification path through this API.',
+        },
       },
+      critical: true,
     });
 
     return dto;

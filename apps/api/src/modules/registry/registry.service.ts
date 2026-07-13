@@ -1,11 +1,18 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { createHash, randomBytes } from 'node:crypto';
 import * as argon2 from 'argon2';
 import { Role } from '@vpsy/contracts';
 import type {
   AuthPrincipal,
   ClientRegistryDto,
   ClientRegistryListDto,
+  CompleteInviteInput,
   CreateClientRegistryInput,
   CreatePsychologistRegistryInput,
   CredentialSummary,
@@ -97,12 +104,10 @@ export class RegistryService {
     const existing = await this.prisma.user.findFirst({ where: { tenantId, email: input.email } });
     if (existing) throw new ConflictException('A user with this email already exists in this tenant');
 
-    const { user, client } = await this.prisma.$transaction(async (tx) => {
-      // No temp-password/invite-email flow in this wave (out of scope per
-      // Wave E brief) — the account is created with an unusable,
-      // never-communicated random password and an honest `INVITED` status
-      // (the existing UserStatus enum value) so it is visibly not yet
-      // activated until a real invite/password-reset flow lands.
+    const { user, client, devInviteToken } = await this.prisma.$transaction(async (tx) => {
+      // Account created INVITED with an unusable random password. Activation
+      // is via completeInvite (PasswordResetToken-backed) — no email provider
+      // is wired yet, so non-production surfaces the token once.
       const hashedPassword = await argon2.hash(randomBytes(32).toString('hex'));
       const createdUser = await tx.user.create({
         data: {
@@ -131,7 +136,8 @@ export class RegistryService {
         },
       });
 
-      return { user: createdUser, client: createdClient };
+      const invite = await this.issueInviteToken(tx, tenantId, createdUser.id);
+      return { user: createdUser, client: createdClient, devInviteToken: invite };
     });
 
     await this.audit.record({
@@ -140,11 +146,14 @@ export class RegistryService {
       action: 'registry.client.created',
       entityType: 'Client',
       entityId: client.id,
-      after: { userId: user.id, email: user.email },
+      after: { userId: user.id, email: user.email, inviteIssued: true },
     });
     await this.bus.publish(CLIENT_REGISTERED, tenantId, { clientId: client.id, userId: user.id });
 
-    return this.toClientDto({ ...client, user } as ClientRow);
+    const dto = this.toClientDto({ ...client, user } as ClientRow);
+    return process.env.NODE_ENV === 'production'
+      ? dto
+      : ({ ...dto, devInviteToken } as ClientRegistryDto & { devInviteToken?: string });
   }
 
   async patchClient(
@@ -251,8 +260,8 @@ export class RegistryService {
     const existing = await this.prisma.user.findFirst({ where: { tenantId, email: input.email } });
     if (existing) throw new ConflictException('A user with this email already exists in this tenant');
 
-    const { user, psychologist } = await this.prisma.$transaction(async (tx) => {
-      // Same honest no-invite-email placeholder as createClient above.
+    const { user, psychologist, devInviteToken } = await this.prisma.$transaction(async (tx) => {
+      // Same invite-token path as createClient above.
       const hashedPassword = await argon2.hash(randomBytes(32).toString('hex'));
       const createdUser = await tx.user.create({
         data: {
@@ -282,7 +291,8 @@ export class RegistryService {
         },
       });
 
-      return { user: createdUser, psychologist: createdPsychologist };
+      const invite = await this.issueInviteToken(tx, tenantId, createdUser.id);
+      return { user: createdUser, psychologist: createdPsychologist, devInviteToken: invite };
     });
 
     await this.audit.record({
@@ -291,11 +301,68 @@ export class RegistryService {
       action: 'registry.psychologist.created',
       entityType: 'Psychologist',
       entityId: psychologist.id,
-      after: { userId: user.id, email: user.email },
+      after: { userId: user.id, email: user.email, inviteIssued: true },
     });
     await this.bus.publish(PSYCHOLOGIST_ONBOARDED, tenantId, { psychologistId: psychologist.id, userId: user.id });
 
-    return this.toPsychologistDto({ ...psychologist, user, credentials: [] } as PsychologistRow);
+    const dto = this.toPsychologistDto({ ...psychologist, user, credentials: [] } as PsychologistRow);
+    return process.env.NODE_ENV === 'production'
+      ? dto
+      : ({ ...dto, devInviteToken } as PsychologistRegistryDto & { devInviteToken?: string });
+  }
+
+  /**
+   * Invite activation for INVITED users. Reuses the `PasswordResetToken`
+   * store (same SHA-256 digest + expiry model as auth password reset).
+   * Public — the raw token is the credential. On success: sets password,
+   * flips User.status INVITED → ACTIVE, consumes the token.
+   *
+   * Email delivery of the invite link is not wired (same honesty as
+   * password-reset SMTP) — non-production create* responses include
+   * `devInviteToken` so local demos can complete the flow.
+   */
+  async completeInvite(input: CompleteInviteInput): Promise<{ ok: true; userId: string }> {
+    const tokenHash = createHash('sha256').update(input.token, 'utf8').digest('hex');
+    const row = await this.prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+      include: { user: true },
+    });
+    if (
+      !row ||
+      row.usedAt ||
+      row.expiresAt.getTime() <= Date.now() ||
+      row.user.deletedAt ||
+      row.user.status !== 'INVITED'
+    ) {
+      throw new UnauthorizedException('Invalid or expired invite token');
+    }
+
+    const hashedPassword = await argon2.hash(input.password);
+    await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.passwordResetToken.updateMany({
+        where: { id: row.id, usedAt: null, expiresAt: { gt: new Date() } },
+        data: { usedAt: new Date() },
+      });
+      if (claimed.count !== 1) {
+        throw new UnauthorizedException('Invalid or expired invite token');
+      }
+      await tx.user.update({
+        where: { id: row.userId },
+        data: { hashedPassword, status: 'ACTIVE' },
+      });
+    });
+
+    await this.audit.record({
+      tenantId: row.tenantId,
+      actorId: row.userId,
+      action: 'registry.invite.completed',
+      entityType: 'User',
+      entityId: row.userId,
+      after: { status: 'ACTIVE' },
+      critical: true,
+    });
+
+    return { ok: true, userId: row.userId };
   }
 
   async patchPsychologist(
@@ -394,6 +461,30 @@ export class RegistryService {
   }
 
   // ─────────────────────────────── Helpers ─────────────────────────────────
+
+  /**
+   * Issues a single-use invite token stored as a PasswordResetToken row
+   * (reuses the existing table — no schema invent). Returns the raw token
+   * for the caller to surface in non-production; production would email it.
+   */
+  private async issueInviteToken(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tx: any,
+    tenantId: string,
+    userId: string,
+  ): Promise<string> {
+    const rawToken = randomBytes(32).toString('base64url');
+    const tokenHash = createHash('sha256').update(rawToken, 'utf8').digest('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    await tx.passwordResetToken.updateMany({
+      where: { userId, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    await tx.passwordResetToken.create({
+      data: { tenantId, userId, tokenHash, expiresAt },
+    });
+    return rawToken;
+  }
 
   /**
    * The registry admin write surface is MANAGER/ADMIN only — see the

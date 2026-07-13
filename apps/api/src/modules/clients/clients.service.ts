@@ -94,6 +94,11 @@ export class ClientsService {
         this.wearables.hasConnectedDevice(tenantId, clientId),
       ]);
 
+    const mbcHints = this.buildMbcHints(
+      activePlan?.reviewDate ?? null,
+      latestResponse?.completedAt ?? null,
+    );
+
     return {
       client: {
         id: client.id,
@@ -141,7 +146,38 @@ export class ClientsService {
         excerpt: this.noteExcerpt(n.content),
       })),
       wearable: hasWearable ? await this.wearables.getRollup(principal, clientId, WEARABLE_WINDOW_DAYS) : null,
+      ...((mbcHints?.length ?? 0) > 0 ? { mbcHints } : {}),
     };
+  }
+
+  /**
+   * Lightweight MBC overdue hints (optional fields on ClinicalSummary).
+   * - plan reviewDate in the past → plan_review_overdue
+   * - latest assessment older than 14 days → assessment_stale
+   * Advisory only — never blocks care.
+   */
+  private buildMbcHints(
+    reviewDate: Date | null | undefined,
+    lastAssessmentAt: Date | null | undefined,
+  ): ClinicalSummary['mbcHints'] {
+    const hints: NonNullable<ClinicalSummary['mbcHints']> = [];
+    const now = Date.now();
+    if (reviewDate && reviewDate.getTime() < now) {
+      hints.push({
+        kind: 'plan_review_overdue',
+        message: 'Active treatment plan review date has passed — schedule a collaborative plan review.',
+        since: reviewDate.toISOString(),
+      });
+    }
+    const STALE_MS = 14 * 24 * 60 * 60 * 1000;
+    if (lastAssessmentAt && now - lastAssessmentAt.getTime() > STALE_MS) {
+      hints.push({
+        kind: 'assessment_stale',
+        message: 'Latest MBC assessment is more than 14 days old — consider re-administering the primary measure.',
+        since: lastAssessmentAt.toISOString(),
+      });
+    }
+    return hints;
   }
 
   private computeOutcomeTrends(

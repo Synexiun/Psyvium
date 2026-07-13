@@ -15,9 +15,9 @@ import { z } from 'zod';
  * protected by transport/at-rest encryption and strict participant ABAC, not
  * by hiding it from itself.
  *
- * Retention: messages are immutable once sent — there is no edit or delete
- * endpoint this pass (`Message.deletedAt` exists in the schema for a future
- * moderation/legal-hold path, but nothing here sets it).
+ * Retention: messages may be soft-retracted by the sender within a short
+ * window (`Message.deletedAt`); after that they are immutable for the clinical
+ * record / audit trail.
  */
 
 // ── Read models ──
@@ -29,6 +29,8 @@ export const messageSchema = z.object({
   body: z.string(),
   readAt: z.string().nullable().optional(),
   createdAt: z.string(),
+  /** ISO timestamp when the sender soft-retracted the message; omitted/null if live. */
+  deletedAt: z.string().nullable().optional(),
 });
 export type MessageDto = z.infer<typeof messageSchema>;
 

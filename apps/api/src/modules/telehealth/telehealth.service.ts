@@ -169,6 +169,8 @@ export class TelehealthService {
   async joinSession(principal: AuthPrincipal, id: string): Promise<TeleSessionJoinResult> {
     const { session, isPsychologist } = await this.resolveParticipantSession(principal, id);
     this.assertNotTerminal(session);
+    // Re-check telepsychology consent at join — consent can be revoked after create.
+    await this.assertTelepsychologyConsent(session.clientId);
 
     if (isPsychologist) {
       const wasLive = session.status === TeleSessionStatus.IN_PROGRESS;
@@ -250,6 +252,9 @@ export class TelehealthService {
     if (session.status !== TeleSessionStatus.WAITING_ROOM) {
       throw new ConflictException('The client is not currently waiting to be admitted');
     }
+
+    // Re-check before minting client media token (consent may have been revoked in waiting room).
+    await this.assertTelepsychologyConsent(session.clientId);
 
     const token = await this.mintTokenOrThrow(client.userId, session.roomName);
     const event: TeleSessionParticipantEvent = {

@@ -24,6 +24,15 @@ export interface CheckoutSessionResult {
   url: string;
 }
 
+export type RefundStatus = 'succeeded' | 'pending' | 'failed';
+
+export interface RefundResult {
+  /** PSP-side refund id (e.g. Stripe `re_…`). */
+  providerRef: string;
+  status: RefundStatus;
+  failureReason?: string;
+}
+
 export interface PaymentProvider {
   /**
    * Attempts to charge `amount` (an exact decimal STRING, e.g. `"180.0000"`
@@ -48,4 +57,18 @@ export interface PaymentProvider {
     cancelUrl: string,
     metadata: Record<string, string>,
   ): Promise<CheckoutSessionResult>;
+
+  /**
+   * Refunds a previously captured charge identified by `providerChargeRef`
+   * (Stripe PaymentIntent id stored as `Payment.pspRef`). Optional `amount`
+   * is a decimal string for partial refunds; omit for full refund.
+   * Never fabricates success — hard PSP errors map to `failed`.
+   */
+  refundPayment(
+    providerChargeRef: string,
+    amount: string | null,
+    currency: string,
+    reason: string,
+    metadata: Record<string, string>,
+  ): Promise<RefundResult>;
 }

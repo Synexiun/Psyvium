@@ -236,6 +236,11 @@ export class CrmService {
     }
 
     const contact = (lead.contact ?? {}) as CrmContact;
+    if (contact.doNotContact === true) {
+      throw new BadRequestException(
+        'Lead is marked doNotContact — conversion/outreach blocked. Clear the flag only with documented consent.',
+      );
+    }
     const email = input.email ?? contact.email;
     if (!email) {
       throw new BadRequestException('Lead has no email on file — provide one to convert');
@@ -273,13 +278,38 @@ export class CrmService {
       return { user, client, lead: updatedLead };
     });
 
+    // Schema note: `Lead` has no dedicated `doNotContact` column (contact is a
+    // JSON blob). Care-side consent (TELEPSYCHOLOGY / DATA_PROCESSING / etc.)
+    // is NOT granted by conversion — Intake & Consent contexts own that. We
+    // record an explicit engagement note so operators never assume marketing
+    // capture implies clinical consent.
+    await this.prisma.engagementActivity.create({
+      data: {
+        tenantId,
+        subjectType: 'Lead',
+        subjectId: leadId,
+        kind: 'NOTE',
+        // EngagementDirection only has INBOUND|OUTBOUND (no INTERNAL) — schema-honest.
+        direction: 'OUTBOUND',
+        summary:
+          'Converted to Client — care-side consent (TELEPSYCHOLOGY / DATA_PROCESSING / CRISIS_POLICY) ' +
+          'is still required before clinical work; CRM capture is not clinical consent.',
+        actorId: principal.userId,
+      },
+    });
+
     await this.audit.record({
       tenantId,
       actorId: principal.userId,
       action: 'lead.converted',
       entityType: 'Lead',
       entityId: leadId,
-      after: { clientId: result.client.id, userId: result.user.id, referrerId: lead.referrerId },
+      after: {
+        clientId: result.client.id,
+        userId: result.user.id,
+        referrerId: lead.referrerId,
+        consentNote: 'care_consent_still_required',
+      },
     });
 
     await this.bus.publish(Events.LeadConverted, tenantId, {
@@ -464,6 +494,21 @@ export class CrmService {
 
   async logEngagement(principal: AuthPrincipal, input: LogEngagementInput): Promise<EngagementDto> {
     const tenantId = principal.tenantId;
+
+    // Lead model has no dedicated doNotContact column — honor the optional
+    // flag inside the contact JSON when present, for OUTBOUND outreach only.
+    if (input.subjectType === 'Lead' && input.direction === 'OUTBOUND') {
+      const lead = await this.prisma.lead.findFirst({ where: { id: input.subjectId, tenantId } });
+      if (lead) {
+        const contact = (lead.contact ?? {}) as CrmContact;
+        if (contact.doNotContact === true) {
+          throw new BadRequestException(
+            'Lead is marked doNotContact — outbound engagement is blocked.',
+          );
+        }
+      }
+    }
+
     const activity = await this.prisma.engagementActivity.create({
       data: {
         tenantId,

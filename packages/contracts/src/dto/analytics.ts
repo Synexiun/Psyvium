@@ -84,9 +84,33 @@ export const nationalMetricSchema = z.object({
 });
 export type NationalMetricDto = z.infer<typeof nationalMetricSchema>;
 
+/**
+ * Response envelope meta for national analytics. Documents the k-anonymity
+ * enforcement policy so API consumers (and auditors) never have to reverse-
+ * engineer why a value is null — and stamps the algorithm that produced the
+ * suppression decision (EU AI Act / healthcare CDS transparency).
+ */
+export const nationalAnalyticsMetaSchema = z.object({
+  /**
+   * Human-readable policy: cohorts smaller than `kAnonymityFloor` have
+   * `value` hard-nulled and `suppressed: true`. The underlying aggregate is
+   * never serialized — there is no re-identification path through this API.
+   */
+  kAnonymityPolicy: z.string(),
+  kAnonymityFloor: z.number(),
+  algorithm: z.object({
+    family: z.string(),
+    version: z.string(),
+    citation: z.string(),
+    computedAt: z.string(),
+  }),
+});
+export type NationalAnalyticsMeta = z.infer<typeof nationalAnalyticsMetaSchema>;
+
 export const nationalAnalyticsSchema = z.object({
   generatedAt: z.string(),
   kAnonymityFloor: z.number(),
   metrics: z.array(nationalMetricSchema),
+  meta: nationalAnalyticsMetaSchema,
 });
 export type NationalAnalyticsDto = z.infer<typeof nationalAnalyticsSchema>;

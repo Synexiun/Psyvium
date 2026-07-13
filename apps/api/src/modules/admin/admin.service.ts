@@ -12,6 +12,7 @@ import type {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus } from '../../common/events/event-bus.service';
+import { FeatureFlagsService } from '../../common/feature-flags/feature-flags.service';
 
 /**
  * Admin Configuration (context 27, and context 2 — Tenant / Clinic Network —
@@ -43,19 +44,13 @@ type ClinicRow = {
   updatedAt: Date;
 };
 
-type FeatureFlagRow = {
-  id: string;
-  key: string;
-  enabled: boolean;
-  updatedAt: Date;
-};
-
 @Injectable()
 export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly bus: EventBus,
+    private readonly flags: FeatureFlagsService,
   ) {}
 
   // ─────────────────────────────── Tenant (ctx 2) ───────────────────────────
@@ -149,12 +144,9 @@ export class AdminService {
 
   // ───────────────────── Feature flags (ctx 27 — kill-switch seam) ─────────
 
+  /** GET admin/feature-flags — lists all tenant-scoped flags via FeatureFlagsService. */
   async listFeatureFlags(principal: AuthPrincipal): Promise<FeatureFlagDto[]> {
-    const flags = await this.prisma.featureFlag.findMany({
-      where: { tenantId: principal.tenantId },
-      orderBy: { key: 'asc' },
-    });
-    return flags.map((f) => this.toFlagDto(f as FeatureFlagRow));
+    return this.flags.listForTenant(principal.tenantId);
   }
 
   async upsertFeatureFlag(principal: AuthPrincipal, input: UpsertFeatureFlagInput): Promise<FeatureFlagDto> {
@@ -182,7 +174,12 @@ export class AdminService {
     });
     await this.bus.publish(CONFIG_CHANGED, tenantId, { entity: 'FeatureFlag', key: flag.key, enabled: flag.enabled });
 
-    return this.toFlagDto(flag as FeatureFlagRow);
+    return {
+      id: flag.id,
+      key: flag.key,
+      enabled: flag.enabled,
+      updatedAt: flag.updatedAt.toISOString(),
+    };
   }
 
   // ─────────────────────────────── Helpers ─────────────────────────────────
@@ -208,15 +205,6 @@ export class AdminService {
       timezone: c.timezone,
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),
-    };
-  }
-
-  private toFlagDto(f: FeatureFlagRow): FeatureFlagDto {
-    return {
-      id: f.id,
-      key: f.key,
-      enabled: f.enabled,
-      updatedAt: f.updatedAt.toISOString(),
     };
   }
 }

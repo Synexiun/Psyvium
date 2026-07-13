@@ -30,6 +30,16 @@ export class PsychometricsController {
   ) {}
 
   /**
+   * License-aware instrument catalog (professional psychometrics inventory).
+   * PUBLIC_DOMAIN always administerable; LICENSED/PROPRIETARY need active grant.
+   */
+  @Get('catalog')
+  @RequirePermissions(Permission.ASSESSMENT_ADMINISTER)
+  listCatalog(@CurrentUser() user: AuthPrincipal) {
+    return this.psychometrics.listCatalog(user);
+  }
+
+  /**
    * Administers a response against a published QuestionnaireVersion and scores
    * it atomically. NOT license-gated: assessments are commonly self-report
    * (a CLIENT administers their own screening from the patient app), so the

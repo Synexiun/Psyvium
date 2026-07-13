@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, Res, UnauthorizedException, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, Res, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
@@ -144,6 +144,31 @@ export class AuthController {
     });
     this.setSessionCookies(res, tokens);
     return tokens;
+  }
+
+  /** Active refresh sessions for the signed-in user (device inventory). */
+  @Get('sessions')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  listSessions(@CurrentUser() user: AuthPrincipal) {
+    return this.auth.listSessions(user);
+  }
+
+  /**
+   * Revoke all refresh sessions for the current user (sign out everywhere).
+   * Clears cookies on this browser; other devices fail at next access check.
+   */
+  @Post('sessions/revoke-all')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  async revokeAllSessions(
+    @CurrentUser() user: AuthPrincipal,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.auth.revokeAllSessions(user);
+    res.clearCookie(ACCESS_TOKEN_COOKIE, { path: '/' });
+    res.clearCookie(REFRESH_TOKEN_COOKIE, { path: '/' });
+    return result;
   }
 
   private setSessionCookies(res: Response, tokens: AuthTokens) {

@@ -8,12 +8,17 @@ import {
   type OutcomeAiAssistInput,
   type OutcomeAiAssistResult,
   type OutcomeMeasureDto,
-  type OutcomeTrend,
   type RecordOutcomeMeasureInput,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
+import {
+  ALGORITHM_VERSIONS,
+  computeReliableChangeIndex,
+  isSeverityEscalation,
+  stampAlgorithm,
+} from '../../common/clinical';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 
 type MeasureRow = {
@@ -26,94 +31,10 @@ type MeasureRow = {
 };
 
 /**
- * Reliable Change Index (Jacobson & Truax, 1991) — audit finding: a raw
- * delta between two measures cannot distinguish a clinically-reliable change
- * from ordinary measurement noise. RCI = (score2 - score1) / SE_diff, where
- * SE_diff = SEM * sqrt(2) and SEM = SD * sqrt(1 - reliability). |RCI| >= 1.96
- * is reliable change at the 95% CI.
- *
- * Per-instrument SD / test-retest reliability are NOT stored in the schema
- * (no schema changes permitted for this remediation), so this is a small,
- * explicitly-cited table of published psychometrics for the constructs we
- * know. `polarity` makes the classification direction-aware: for symptom
- * scales (PHQ-9, GAD-7) a DECREASE is the improvement.
- */
-type ConstructPolarity = 'lower-is-better' | 'higher-is-better';
-
-interface ConstructPsychometrics {
-  sd: number;
-  reliability: number;
-  polarity: ConstructPolarity;
-  /** Source citation — kept alongside the numbers so they're never orphaned. */
-  citation: string;
-}
-
-const CONSTRUCT_PSYCHOMETRICS = {
-  depression: {
-    sd: 6.1,
-    reliability: 0.86,
-    polarity: 'lower-is-better',
-    citation:
-      'PHQ-9: SD ~6.1, internal-consistency reliability (Cronbach a) ~0.86 ' +
-      '(Kroenke, Spitzer & Williams, 2001; Löwe et al., 2004).',
-  },
-  anxiety: {
-    sd: 5.5,
-    reliability: 0.89,
-    polarity: 'lower-is-better',
-    citation:
-      'GAD-7: SD ~5.5, internal-consistency reliability (Cronbach a) ~0.89 ' +
-      '(Spitzer, Kroenke, Williams & Löwe, 2006).',
-  },
-} as const satisfies Record<string, ConstructPsychometrics>;
-
-/** Free-text `construct` values that resolve onto a known psychometrics entry. */
-const CONSTRUCT_ALIASES: Record<string, keyof typeof CONSTRUCT_PSYCHOMETRICS> = {
-  depression: 'depression',
-  'phq-9': 'depression',
-  phq9: 'depression',
-  anxiety: 'anxiety',
-  'gad-7': 'anxiety',
-  gad7: 'anxiety',
-};
-
-function resolvePsychometrics(construct: string): ConstructPsychometrics | null {
-  const key = CONSTRUCT_ALIASES[construct.trim().toLowerCase()];
-  return key ? CONSTRUCT_PSYCHOMETRICS[key] : null;
-}
-
-/**
- * Returns `rci: null` + `classification: 'unknown-reliability'` whenever the
- * construct has no known SD/reliability on file — we never fabricate a
- * reliability coefficient to force a number out. Only called when there IS a
- * prior measure to compare against (baseline measures are handled by the
- * caller, not here).
- */
-function computeReliableChange(
-  construct: string,
-  previousValue: number,
-  currentValue: number,
-): Pick<OutcomeTrend, 'rci' | 'classification'> {
-  const psychometrics = resolvePsychometrics(construct);
-  if (!psychometrics) {
-    return { rci: null, classification: 'unknown-reliability' };
-  }
-
-  const sem = psychometrics.sd * Math.sqrt(1 - psychometrics.reliability);
-  const seDiff = sem * Math.sqrt(2);
-  const rci = Number(((currentValue - previousValue) / seDiff).toFixed(4));
-
-  if (Math.abs(rci) < 1.96) {
-    return { rci, classification: 'no-reliable-change' };
-  }
-  const improved = psychometrics.polarity === 'lower-is-better' ? rci < 0 : rci > 0;
-  return { rci, classification: improved ? 'reliably-improved' : 'reliably-worsened' };
-}
-
-/**
  * Outcomes. Recording a measure returns a deterministic trend — the raw delta
  * vs. the client's most recent prior measure for the same construct, plus the
- * Reliable-Change-Index classification above. No AI is consulted; this is a
+ * Reliable-Change-Index classification (Jacobson & Truax, 1991) from the
+ * shared clinical psychometrics registry. No AI is consulted; this is a
  * plain longitudinal comparison.
  */
 @Injectable()
@@ -155,6 +76,12 @@ export class OutcomesService {
       await this.raiseDeteriorationRisk(principal, input, measure.id, dto);
     }
 
+    const rciStamp = stampAlgorithm(
+      'outcomes.rci_jacobson_truax',
+      ALGORITHM_VERSIONS.rci,
+      'Jacobson & Truax (1991) Reliable Change Index; construct psychometrics from clinical registry.',
+    );
+
     await this.audit.record({
       tenantId: principal.tenantId,
       actorId: principal.userId,
@@ -165,6 +92,8 @@ export class OutcomesService {
         construct: input.construct,
         value: input.value,
         classification: dto.trend.classification,
+        rci: dto.trend.rci,
+        algorithm: rciStamp,
       },
       critical: dto.trend.classification === 'reliably-worsened',
     });
@@ -207,18 +136,11 @@ export class OutcomesService {
         },
       });
 
-      const SEVERITY_RANK: Record<string, number> = {
-        LOW: 1,
-        MODERATE: 2,
-        HIGH: 3,
-        SEVERE: 4,
-      };
       const client = await tx.client.findFirst({
         where: { id: input.clientId },
         select: { riskLevel: true },
       });
-      const prev = SEVERITY_RANK[client?.riskLevel ?? ''] ?? 0;
-      if (SEVERITY_RANK.HIGH > prev) {
+      if (isSeverityEscalation(client?.riskLevel, SeverityBand.HIGH)) {
         await tx.client.update({
           where: { id: input.clientId },
           data: { riskLevel: SeverityBand.HIGH },
@@ -254,7 +176,7 @@ export class OutcomesService {
   /**
    * Outcome Intelligence (doc 05 §3.5) — assistive trend NARRATIVE only. The
    * Reliable Change Index classification is looked up from the same
-   * deterministic `toDto`/`computeReliableChange` math used by
+   * deterministic `toDto`/`computeReliableChangeIndex` math used by
    * `record()`/`listForClient()` above; this method never recomputes or
    * overrides it, and never writes an OutcomeMeasure itself.
    */
@@ -284,9 +206,9 @@ export class OutcomesService {
           ? 'increased'
           : 'decreased';
 
-    const { rci, classification } = previous
-      ? computeReliableChange(measure.construct, previous.value, measure.value)
-      : { rci: null, classification: 'baseline' as const };
+    const rciResult = previous
+      ? computeReliableChangeIndex(measure.construct, previous.value, measure.value)
+      : null;
 
     return {
       id: measure.id,
@@ -299,8 +221,8 @@ export class OutcomesService {
         direction,
         delta,
         previousValue: previous ? previous.value : null,
-        rci,
-        classification,
+        rci: rciResult?.rci ?? null,
+        classification: rciResult?.classification ?? 'baseline',
       },
     };
   }

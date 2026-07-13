@@ -509,6 +509,16 @@ describe('RiskService.createSafetyPlan', () => {
 
     const plan = await svc.createSafetyPlan(principal, input);
     expect(plan.version).toBe(1);
+    // SPI completeness is assistive quality metric attached on every read path.
+    expect(plan.completeness).toEqual(
+      expect.objectContaining({
+        score: expect.any(Number),
+        missing: expect.any(Array),
+        algorithmVersion: expect.any(String),
+      }),
+    );
+    expect(plan.completeness!.score).toBeGreaterThanOrEqual(0);
+    expect(plan.completeness!.score).toBeLessThanOrEqual(100);
   });
 
   it('increments the version on the second plan for the same client (append-only, never mutated)', async () => {

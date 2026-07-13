@@ -16,6 +16,12 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
+import {
+  ALGORITHM_VERSIONS,
+  isSeverityEscalation,
+  severityRank,
+  stampAlgorithm,
+} from '../../common/clinical';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { ScoringService, type ClassicalScoreResult, type SafetyItemHit } from './scoring.service';
 import { IrtScoringService, type IrtScorableItem } from './irt-scoring.service';
@@ -91,14 +97,6 @@ export interface ScoringTx {
   outboxEvent: { create: (args: any) => Promise<any> };
 }
 
-/** Ordering used to only ever escalate — never silently downgrade — a client's reflected risk level. */
-const SEVERITY_RANK: Record<string, number> = {
-  [SeverityBand.LOW]: 1,
-  [SeverityBand.MODERATE]: 2,
-  [SeverityBand.HIGH]: 3,
-  [SeverityBand.SEVERE]: 4,
-};
-
 /**
  * Psychometrics. Administering a response is a single transactional unit:
  * the response and its computed PsychometricScore are created together, so a
@@ -124,6 +122,54 @@ export class PsychometricsService {
     private readonly bus: EventBus,
     private readonly ai: AiGatewayService,
   ) {}
+
+  /**
+   * Professional instrument catalog — license-aware inventory of published
+   * questionnaires the tenant may administer (PUBLIC_DOMAIN free; LICENSED
+   * requires active InstrumentLicenseGrant).
+   */
+  async listCatalog(principal: AuthPrincipal) {
+    const instruments = await this.prisma.questionnaire.findMany({
+      where: { versions: { some: { published: true } } },
+      include: {
+        versions: {
+          where: { published: true },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { id: true, version: true },
+        },
+        licenseGrants: {
+          where: { tenantId: principal.tenantId },
+          take: 1,
+        },
+      },
+      orderBy: { code: 'asc' },
+    });
+    const now = new Date();
+    return instruments.map((q) => {
+      const free = q.licensing === 'PUBLIC_DOMAIN';
+      const grant = q.licenseGrants[0];
+      let licenseGrantStatus: 'not_required' | 'active' | 'missing' | 'expired' | 'revoked' =
+        free ? 'not_required' : 'missing';
+      if (!free && grant) {
+        if (grant.status === 'REVOKED') licenseGrantStatus = 'revoked';
+        else if (grant.expiresAt && grant.expiresAt <= now) licenseGrantStatus = 'expired';
+        else if (grant.status === 'ACTIVE') licenseGrantStatus = 'active';
+      }
+      const administerAllowed = free || licenseGrantStatus === 'active';
+      return {
+        questionnaireId: q.id,
+        code: q.code,
+        name: q.name,
+        construct: q.construct,
+        licensing: q.licensing,
+        scoringMethod: q.scoringMethod,
+        latestPublishedVersionId: q.versions[0]?.id ?? null,
+        licenseGrantStatus,
+        administerAllowed,
+      };
+    });
+  }
 
   async administer(principal: AuthPrincipal, input: AdministerResponseInput): Promise<QuestionnaireResponseDto> {
     const version = await this.prisma.questionnaireVersion.findUnique({
@@ -286,7 +332,7 @@ export class PsychometricsService {
       // HIGH — answer 1 stays HIGH (as before), answer >= 2 escalates to
       // SEVERE.
       const severity = hit.answer >= 2 ? SeverityBand.SEVERE : SeverityBand.HIGH;
-      if (SEVERITY_RANK[severity] > SEVERITY_RANK[highestSafetySeverity]) highestSafetySeverity = severity;
+      if (severityRank(severity) > severityRank(highestSafetySeverity)) highestSafetySeverity = severity;
 
       const rf = await tx.riskFlag.create({
         data: {
@@ -329,7 +375,7 @@ export class PsychometricsService {
 
     // Reflect elevated risk on the client record — escalate only, never
     // silently downgrade a client already flagged more severely elsewhere.
-    if (raisedFlagIds.length > 0 && SEVERITY_RANK[client.riskLevel] < SEVERITY_RANK[highestSafetySeverity]) {
+    if (raisedFlagIds.length > 0 && isSeverityEscalation(client.riskLevel, highestSafetySeverity)) {
       await tx.client.update({ where: { id: client.id }, data: { riskLevel: highestSafetySeverity } });
     }
 
@@ -349,6 +395,21 @@ export class PsychometricsService {
     result: PersistedScoreResult,
   ): Promise<void> {
     const { computed, irtResult } = computation;
+    const synthetic = computation.interpretation.includes(SYNTHETIC_CALIBRATION_MARKER);
+    const algorithm = irtResult
+      ? stampAlgorithm(
+          'scoring.irt_eap',
+          ALGORITHM_VERSIONS.irtEap,
+          'IRT EAP ability estimation (Bock & Mislevy tradition); synthetic calibration branded when demo params used.',
+          { calibration: synthetic ? 'synthetic_demo' : 'empirical' },
+        )
+      : stampAlgorithm(
+          'scoring.classical',
+          ALGORITHM_VERSIONS.classicalScoring,
+          'Classical test theory raw-sum banding against published cutoffs.',
+          { calibration: synthetic ? 'synthetic_demo' : 'empirical' },
+        );
+
     await this.audit.record({
       tenantId: principal.tenantId,
       actorId: principal.userId,
@@ -361,7 +422,9 @@ export class PsychometricsService {
         thetaEstimate: irtResult?.thetaEstimate ?? null,
         standardError: irtResult?.standardError ?? null,
         safetyFlagsRaised: result.raisedFlagIds.length,
+        algorithm,
       },
+      critical: result.raisedFlagIds.length > 0,
     });
     // AssessmentScored stays direct/non-durable — RiskFlagRaised/
     // EscalationRaised for safety hits are now published durably, in-tx,

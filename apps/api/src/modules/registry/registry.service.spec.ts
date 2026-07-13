@@ -1,4 +1,5 @@
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { Role } from '@vpsy/contracts';
 import type { AuthPrincipal } from '@vpsy/contracts';
 import { RegistryService } from './registry.service';
@@ -87,6 +88,12 @@ function makeService() {
     user: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue(clientRow.user),
+      update: jest.fn(),
+    },
+    passwordResetToken: {
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      create: jest.fn().mockResolvedValue({ id: 'invite_tok_1' }),
+      findUnique: jest.fn(),
     },
     role: { findUnique: jest.fn().mockResolvedValue({ id: 'role_1', name: 'CLIENT' }) },
     roleAssignment: { create: jest.fn().mockResolvedValue({}) },
@@ -110,7 +117,7 @@ function makeService() {
 }
 
 describe('RegistryService — Client Registry', () => {
-  it('creates a Client + linked User (status INVITED, no email sent) and audits it', async () => {
+  it('creates a Client + linked User (status INVITED) with invite token and audits it', async () => {
     const { svc, prisma, audit, bus } = makeService();
 
     const result = await svc.createClient(manager, {
@@ -125,6 +132,7 @@ describe('RegistryService — Client Registry', () => {
     expect(prisma.user.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'INVITED', email: 'new.client@example.com' }) }),
     );
+    expect(prisma.passwordResetToken.create).toHaveBeenCalled();
     expect(result.email).toBe('new.client@example.com');
     expect(result.userStatus).toBe('INVITED');
     expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'registry.client.created' }));
@@ -322,5 +330,46 @@ describe('RegistryService — Psychologist Registry', () => {
     const { svc } = makeService();
 
     await expect(svc.listPsychologists(client, 25)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe('RegistryService.completeInvite', () => {
+  it('activates an INVITED user and consumes the token', async () => {
+    const { svc, prisma, audit } = makeService();
+    const raw = 'invite-token-value-at-least-20-chars';
+    const tokenHash = createHash('sha256').update(raw, 'utf8').digest('hex');
+    (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue({
+      id: 'tok_1',
+      tenantId: 'tenant_demo',
+      userId: 'user_new_client',
+      tokenHash,
+      usedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      user: { id: 'user_new_client', status: 'INVITED', deletedAt: null },
+    });
+    (prisma.passwordResetToken.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+    (prisma.user.update as jest.Mock).mockResolvedValue({ id: 'user_new_client', status: 'ACTIVE' });
+
+    const result = await svc.completeInvite({ token: raw, password: 'secure-password-1' });
+
+    expect(result).toEqual({ ok: true, userId: 'user_new_client' });
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'user_new_client' },
+        data: expect.objectContaining({ status: 'ACTIVE' }),
+      }),
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'registry.invite.completed', critical: true }),
+    );
+  });
+
+  it('rejects an invalid or non-INVITED token', async () => {
+    const { svc, prisma } = makeService();
+    (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue(null);
+
+    await expect(
+      svc.completeInvite({ token: 'not-a-real-token-value-xx', password: 'secure-password-1' }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });

@@ -26,22 +26,35 @@ export class CliniciansService {
     });
 
     const clientIds = assignments.map((a) => a.clientId);
-    const upcoming = clientIds.length
-      ? await this.prisma.appointment.findMany({
-          where: {
-            clientId: { in: clientIds },
-            tenantId: principal.tenantId,
-            startsAt: { gte: new Date() },
-            status: { in: ['BOOKED', 'CONFIRMED'] },
-          },
-          orderBy: { startsAt: 'asc' },
-        })
-      : [];
+    const now = new Date();
+    const [upcoming, overduePlans] = clientIds.length
+      ? await Promise.all([
+          this.prisma.appointment.findMany({
+            where: {
+              clientId: { in: clientIds },
+              tenantId: principal.tenantId,
+              startsAt: { gte: now },
+              status: { in: ['BOOKED', 'CONFIRMED'] },
+            },
+            orderBy: { startsAt: 'asc' },
+          }),
+          this.prisma.treatmentPlan.findMany({
+            where: {
+              clientId: { in: clientIds },
+              tenantId: principal.tenantId,
+              status: 'active',
+              reviewDate: { lt: now },
+            },
+            select: { clientId: true },
+          }),
+        ])
+      : [[], []];
 
     const nextByClient = new Map<string, Date>();
     for (const appt of upcoming) {
       if (!nextByClient.has(appt.clientId)) nextByClient.set(appt.clientId, appt.startsAt);
     }
+    const mbcOverdueClients = new Set(overduePlans.map((p) => p.clientId));
 
     // A client may (rarely) have more than one APPROVED/ACTIVE assignment row
     // for the same psychologist (e.g. a historical transfer never closed) —
@@ -54,6 +67,7 @@ export class CliniciansService {
         displayName: a.client.user.fullName,
         riskLevel: a.client.riskLevel as CaseloadEntry['riskLevel'],
         nextAppointmentAt: nextByClient.get(a.clientId)?.toISOString() ?? null,
+        mbcOverdue: mbcOverdueClients.has(a.clientId) || undefined,
       });
     }
     return Array.from(byClient.values());

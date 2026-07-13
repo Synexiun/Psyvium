@@ -1,5 +1,6 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  AppointmentStatus,
   AssignmentStatus,
   Role,
   type AppointmentDto,
@@ -41,6 +42,30 @@ const APPOINTMENT_INCLUDE = {
   client: { include: { user: true } },
   psychologist: { include: { user: true } },
 } as const;
+
+/**
+ * Professional appointment status transition map.
+ * BOOKED → CONFIRMED → COMPLETED | CANCELLED | NO_SHOW; BOOKED may also
+ * cancel before confirmation. Terminal states have no outbound edges.
+ */
+const APPOINTMENT_TRANSITIONS: Record<string, readonly string[]> = {
+  [AppointmentStatus.BOOKED]: [AppointmentStatus.CONFIRMED, AppointmentStatus.CANCELLED],
+  [AppointmentStatus.CONFIRMED]: [
+    AppointmentStatus.COMPLETED,
+    AppointmentStatus.CANCELLED,
+    AppointmentStatus.NO_SHOW,
+  ],
+  [AppointmentStatus.COMPLETED]: [],
+  [AppointmentStatus.NO_SHOW]: [],
+  [AppointmentStatus.CANCELLED]: [],
+};
+
+/** Exported for unit tests of the transition map. */
+export function isAllowedAppointmentTransition(from: string, to: string): boolean {
+  if (from === to) return true;
+  const allowed = APPOINTMENT_TRANSITIONS[from];
+  return Array.isArray(allowed) && allowed.includes(to);
+}
 
 /**
  * Scheduling (`docs/technical/13-roadmap-and-phases.md`, context 9, Phase 2 —
@@ -280,6 +305,13 @@ export class SchedulingService {
     });
     if (!existing) throw new NotFoundException('Appointment not found');
 
+    if (!isAllowedAppointmentTransition(existing.status, input.status)) {
+      const allowed = APPOINTMENT_TRANSITIONS[existing.status] ?? [];
+      throw new ConflictException(
+        `Illegal appointment status transition ${existing.status} → ${input.status}. Allowed: ${allowed.join(', ') || 'none (terminal)'}`,
+      );
+    }
+
     // Compare-and-swap: refuse double-completion / status flapping races.
     const claimed = await this.prisma.appointment.updateMany({
       where: {
@@ -306,7 +338,7 @@ export class SchedulingService {
       entityType: 'Appointment',
       entityId: updated.id,
       before: { status: existing.status },
-      after: { status: updated.status },
+      after: { status: updated.status, transition: `${existing.status}→${updated.status}` },
     });
 
     if (input.status === 'NO_SHOW') {

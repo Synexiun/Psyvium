@@ -67,6 +67,18 @@ export const clinicalSummaryNoteSchema = z.object({
   excerpt: z.string(),
 });
 
+/**
+ * Optional measurement-based care (MBC) overdue hint — surfaces when the
+ * active plan's `reviewDate` has passed or the latest assessment is stale
+ * relative to a simple 14-day MBC cadence. Advisory only; never blocks care.
+ */
+export const mbcOverdueHintSchema = z.object({
+  kind: z.enum(['plan_review_overdue', 'assessment_stale']),
+  message: z.string(),
+  since: z.string().optional(),
+});
+export type MbcOverdueHint = z.infer<typeof mbcOverdueHintSchema>;
+
 export const clinicalSummarySchema = z.object({
   client: clinicalSummaryClientSchema,
   nextAppointment: clinicalSummaryAppointmentSchema.nullable(),
@@ -75,6 +87,8 @@ export const clinicalSummarySchema = z.object({
   outcomes: z.array(clinicalSummaryOutcomeSchema),
   recentNotes: z.array(clinicalSummaryNoteSchema),
   wearable: wearableRollupSchema.nullable(),
+  /** Optional MBC overdue hints — omitted when nothing is overdue. */
+  mbcHints: z.array(mbcOverdueHintSchema).optional(),
 });
 export type ClinicalSummary = z.infer<typeof clinicalSummarySchema>;
 
@@ -83,5 +97,7 @@ export const caseloadEntrySchema = z.object({
   displayName: z.string(),
   riskLevel: z.nativeEnum(SeverityBand),
   nextAppointmentAt: z.string().nullable(),
+  /** Optional MBC overdue hint for caseload triage. */
+  mbcOverdue: z.boolean().optional(),
 });
 export type CaseloadEntry = z.infer<typeof caseloadEntrySchema>;

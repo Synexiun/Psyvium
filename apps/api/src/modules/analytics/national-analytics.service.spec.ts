@@ -43,6 +43,10 @@ describe('NationalAnalyticsService.getNationalAnalytics', () => {
     const result = await svc.getNationalAnalytics(principal);
 
     expect(result.kAnonymityFloor).toBe(5);
+    expect(result.meta.kAnonymityFloor).toBe(5);
+    expect(result.meta.kAnonymityPolicy).toMatch(/hard-nulled/i);
+    expect(result.meta.algorithm.family).toBe('analytics.k_anonymity');
+    expect(result.meta.algorithm.version).toBeTruthy();
 
     const vt = result.metrics.find((m) => m.region === 'US-VT')!;
     expect(vt.cohortSize).toBe(3);

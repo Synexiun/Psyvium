@@ -8,12 +8,18 @@ import { z } from 'zod';
  * regardless of signature state.
  */
 
+/** Optional clinical-quality checklist items (assistive documentation excellence). */
+export const noteQualityChecklistSchema = z
+  .record(z.union([z.boolean(), z.string()]))
+  .optional();
+
 export const soapNoteContentSchema = z.object({
   format: z.literal('SOAP'),
   subjective: z.string().max(4000),
   objective: z.string().max(4000),
   assessment: z.string().max(4000),
   plan: z.string().max(4000),
+  qualityChecklist: noteQualityChecklistSchema,
 });
 
 export const dapNoteContentSchema = z.object({
@@ -21,12 +27,14 @@ export const dapNoteContentSchema = z.object({
   data: z.string().max(4000),
   assessment: z.string().max(4000),
   plan: z.string().max(4000),
+  qualityChecklist: noteQualityChecklistSchema,
 });
 
 /** Free-text narrative note — the common quick-note case and what the clinician UI files. */
 export const narrativeNoteContentSchema = z.object({
   format: z.literal('narrative'),
   narrative: z.string().min(1).max(8000),
+  qualityChecklist: noteQualityChecklistSchema,
 });
 
 export const sessionNoteContentSchema = z.discriminatedUnion('format', [

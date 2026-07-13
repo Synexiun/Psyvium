@@ -93,6 +93,8 @@ export interface AuthPrincipal {
   mfaEnrollmentRequired?: boolean;
   clinicId?: string;
   jurisdiction?: string;
+  /** Server-side refresh session id (`sid` claim) for the current access token. */
+  sessionId?: string;
 }
 
 // ── MFA / TOTP (doc 06-security-and-rbac.md §3) ──
@@ -147,3 +149,20 @@ export interface MfaEnrollResponse {
   /** otpauth:// URI for the authenticator app to scan as a QR code. */
   otpauthUrl: string;
 }
+
+// ── Active refresh sessions (device/session inventory) ──
+
+/**
+ * Public summary of a server-side `RefreshSession` row. Never includes token
+ * digests — only metadata the user needs to recognize a device and revoke it.
+ */
+export const refreshSessionSummarySchema = z.object({
+  id: z.string(),
+  createdAt: z.string(),
+  lastUsedAt: z.string().nullable(),
+  expiresAt: z.string(),
+  userAgent: z.string().nullable().optional(),
+  /** True when this row is the session that issued the current access token. */
+  current: z.boolean().optional(),
+});
+export type RefreshSessionSummary = z.infer<typeof refreshSessionSummarySchema>;

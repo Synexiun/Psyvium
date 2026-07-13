@@ -180,7 +180,40 @@ describe('ClinicalDocumentationService.create — golden-thread enforcement (WAV
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'note.created',
-        after: expect.objectContaining({ goldenThread: 'anchored' }),
+        after: expect.objectContaining({
+          goldenThread: 'anchored',
+          algorithm: expect.objectContaining({ family: 'documentation.note_quality' }),
+        }),
+      }),
+    );
+  });
+
+  it('records optional qualityChecklist presence on note.created audit', async () => {
+    const { svc, prisma, audit } = makeCreateService();
+    (prisma.sessionNote.findFirst as jest.Mock)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    (prisma.treatmentPlan.findFirst as jest.Mock).mockResolvedValue(activePlan);
+    const withChecklist = {
+      ...content,
+      qualityChecklist: { problemListUpdated: true, riskAssessed: false, goalsLinked: true },
+    };
+
+    await svc.create(principal, {
+      sessionId: 'sess_1',
+      content: withChecklist,
+      planId: 'plan_1',
+      goalIds: ['goal_1'],
+    } as any);
+
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'note.created',
+        after: expect.objectContaining({
+          qualityChecklistPresent: true,
+          qualityChecklistChecked: 2,
+          qualityChecklistTotal: 3,
+        }),
       }),
     );
   });

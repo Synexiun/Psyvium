@@ -97,6 +97,9 @@ export class TwilioSmsWebhookController {
     } else if (result.action === 'opt_in') {
       twiml =
         '<?xml version="1.0" encoding="UTF-8"?><Response><Message>You are re-subscribed to SMS from this clinic.</Message></Response>';
+    } else if (result.action === 'help') {
+      twiml =
+        '<?xml version="1.0" encoding="UTF-8"?><Response><Message>Clinic SMS help: Reply STOP to unsubscribe, START to resubscribe. For crisis support in the US call or text 988. This channel is not for emergencies.</Message></Response>';
     }
 
     res.status(200).type('text/xml').send(twiml);

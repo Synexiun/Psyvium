@@ -1,4 +1,11 @@
-import { ForbiddenException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  NotImplementedException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Prisma } from '@vpsy/database';
 import type {
   AuthPrincipal,
@@ -7,6 +14,7 @@ import type {
   InvoiceLineDto,
   PayInvoiceInput,
   PaymentDto,
+  RequestRefundInput,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
@@ -57,6 +65,8 @@ type PaymentRow = {
   method: string;
   status: string;
   capturedAt: Date | null;
+  pspRef?: string | null;
+  tenantId?: string;
 };
 
 @Injectable()
@@ -253,6 +263,162 @@ export class PaymentsService {
     });
 
     return session;
+  }
+
+  /**
+   * Requests a refund for a previously captured payment.
+   *
+   * Fail-closed honesty:
+   *  - No Stripe key → 503 (PSP refund path not available; offline captures
+   *    have no bank-rail reverse).
+   *  - Stripe key present but payment has no `pspRef` (offline/manual capture)
+   *    → 501 (refund cannot be automated against a non-PSP payment).
+   *  - Stripe key + pspRef → real Stripe Refund; status is whatever Stripe
+   *    reports (never fabricated success). On `succeeded`, flips Payment to
+   *    `refunded` and Invoice back to `OPEN` so a re-charge is possible.
+   *
+   * Every attempt — success or refuse — emits a **critical** audit event.
+   */
+  async requestRefund(
+    principal: AuthPrincipal,
+    paymentId: string,
+    input: RequestRefundInput,
+  ): Promise<PaymentDto> {
+    const payment = await this.prisma.payment.findFirst({
+      where: { id: paymentId, tenantId: principal.tenantId, deletedAt: null },
+    });
+    if (!payment) throw new NotFoundException('Payment not found');
+
+    if (payment.status === 'refunded') {
+      throw new ForbiddenException('Payment is already refunded');
+    }
+    if (payment.status !== 'captured') {
+      throw new ForbiddenException(
+        `Only captured payments can be refunded (current status=${payment.status})`,
+      );
+    }
+
+    // ── No PSP configured: fail closed 503 ──
+    if (!this.provider) {
+      await this.audit.record({
+        tenantId: principal.tenantId,
+        actorId: principal.userId,
+        action: 'payment.refund_refused',
+        entityType: 'Payment',
+        entityId: paymentId,
+        after: {
+          reason: input.reason,
+          refusedBecause: 'stripe_not_configured',
+          message:
+            'STRIPE_SECRET_KEY unset — automated refunds unavailable for offline/manual captures.',
+        },
+        critical: true,
+      });
+      throw new ServiceUnavailableException(
+        'Refund path not available: Stripe is not configured (STRIPE_SECRET_KEY unset). ' +
+          'Offline/manual captures cannot be reverse-settled through a PSP.',
+      );
+    }
+
+    // ── PSP configured but no charge ref (offline capture under a keyed deploy) ──
+    if (!payment.pspRef) {
+      await this.audit.record({
+        tenantId: principal.tenantId,
+        actorId: principal.userId,
+        action: 'payment.refund_refused',
+        entityType: 'Payment',
+        entityId: paymentId,
+        after: {
+          reason: input.reason,
+          refusedBecause: 'no_psp_ref',
+          message: 'Payment has no PSP charge reference — cannot issue a Stripe refund.',
+        },
+        critical: true,
+      });
+      throw new NotImplementedException(
+        'Refund not automated: this payment has no PSP charge reference (offline/manual capture). ' +
+          'Process the bank-rail reverse outside VPSY and reconcile the ledger manually.',
+      );
+    }
+
+    const refund = await this.provider.refundPayment(
+      payment.pspRef,
+      payment.amount.toFixed(4),
+      payment.currency,
+      input.reason,
+      { paymentId: payment.id, tenantId: principal.tenantId, invoiceId: payment.invoiceId },
+    );
+
+    if (refund.status !== 'succeeded') {
+      await this.audit.record({
+        tenantId: principal.tenantId,
+        actorId: principal.userId,
+        action: 'payment.refund_failed',
+        entityType: 'Payment',
+        entityId: paymentId,
+        after: {
+          reason: input.reason,
+          pspRefundRef: refund.providerRef,
+          status: refund.status,
+          failureReason: refund.failureReason ?? null,
+        },
+        critical: true,
+      });
+      throw new ServiceUnavailableException(
+        `Stripe refund did not succeed (status=${refund.status}` +
+          `${refund.failureReason ? `, detail=${refund.failureReason}` : ''}). Payment left unchanged.`,
+      );
+    }
+
+    // Atomic: mark payment refunded, reopen invoice, reverse ledger (debit
+    // Service Revenue / credit Cash) so books stay balanced.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.payment.updateMany({
+        where: { id: payment.id, tenantId: principal.tenantId, status: 'captured' },
+        data: { status: 'refunded' },
+      });
+      if (claimed.count !== 1) {
+        throw new ForbiddenException('Payment is no longer in a refundable state');
+      }
+      await tx.invoice.updateMany({
+        where: { id: payment.invoiceId, tenantId: principal.tenantId, status: 'PAID' },
+        data: { status: 'OPEN' },
+      });
+      await this.accounting.postBalancedEntry(tx, {
+        tenantId: principal.tenantId,
+        debitAccountCode: '4000', // Service Revenue (reverse)
+        creditAccountCode: '1000', // Cash (out)
+        amount: payment.amount,
+        memo: `Refund payment ${payment.id} (Stripe ${refund.providerRef}): ${input.reason}`,
+        invoiceId: payment.invoiceId,
+      });
+      await this.bus.publishDurable(tx, Events.PaymentRefunded, principal.tenantId, {
+        paymentId: payment.id,
+        invoiceId: payment.invoiceId,
+        amount: payment.amount.toFixed(4),
+        currency: payment.currency,
+        pspRefundRef: refund.providerRef,
+      });
+      return tx.payment.findFirstOrThrow({ where: { id: payment.id } });
+    });
+
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'payment.refunded',
+      entityType: 'Payment',
+      entityId: paymentId,
+      before: { status: 'captured' },
+      after: {
+        status: 'refunded',
+        reason: input.reason,
+        pspRefundRef: refund.providerRef,
+        amount: payment.amount.toFixed(4),
+      },
+      critical: true,
+    });
+
+    return this.toPaymentDto(updated as unknown as PaymentRow);
   }
 
   /**

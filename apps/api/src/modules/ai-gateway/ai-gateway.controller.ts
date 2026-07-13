@@ -58,6 +58,16 @@ export class AiRiskContextController {
     return this.ai.listPendingRecommendations(user, Number.isFinite(parsed) ? parsed : 50);
   }
 
+  /**
+   * Model/prompt provenance for a single recommendation (EU AI Act logging).
+   * Must be registered BEFORE the `:id/decision` sibling so Nest routing is unambiguous.
+   */
+  @Get('recommendations/:id')
+  @RequirePermissions(Permission.AI_DECISION)
+  getProvenance(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
+    return this.ai.getRecommendationProvenance(user, id);
+  }
+
   @Patch('recommendations/:id/decision')
   @RequirePermissions(Permission.AI_DECISION)
   decide(

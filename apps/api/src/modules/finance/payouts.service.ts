@@ -16,13 +16,17 @@ import { AccountingService } from './accounting.service';
  * period, form the revenue base.
  *
  * That revenue base is then **composed** across every stacked share on the
- * psychologist's active Contract's RevenueShareRule — base `pct`,
- * `seniorOverridePct`, `supervisorSharePct`, `clinicSharePct` and
- * `referralSharePct` — honoring per-country overrides in `countryRules`
- * (keyed by the tenant's ISO country code). This is a deliberate move away
- * from a flat single-percentage read: the engine must express the composite,
- * not just the base share, or the "12+ models, composable" claim in the
- * business docs is a facade.
+ * psychologist's active Contract's `RevenueShareRule` row(s) — NOT inventing
+ * columns on `Contract` itself. Schema source of truth
+ * (`packages/database/prisma/schema.prisma` → `RevenueShareRule`):
+ *   - `pct`                 clinician base share
+ *   - `seniorOverridePct`   senior-override entitlement of *this* psychologist
+ *   - `supervisorSharePct`  amount owed to `Contract.supervisorId` (if set)
+ *   - `clinicSharePct`      clinic-retained margin (recorded in rulesApplied only)
+ *   - `referralSharePct`    external referral share
+ *   - `countryRules`        per-country overrides keyed by tenant ISO code
+ * Honoring those fields (rather than a flat single-percentage read) is what
+ * makes the "12+ models, composable" claim in the business docs real.
  *
  * Bookkeeping model for a single `computePayout` call:
  *  - The **clinician's own Payout** (`computedAmount`, the DTO field) is the

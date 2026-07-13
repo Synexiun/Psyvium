@@ -99,6 +99,12 @@ export const payInvoiceSchema = z.object({
 });
 export type PayInvoiceInput = z.infer<typeof payInvoiceSchema>;
 
+/** Refund request — reason is required for the critical audit trail. */
+export const requestRefundSchema = z.object({
+  reason: z.string().min(3).max(500),
+});
+export type RequestRefundInput = z.infer<typeof requestRefundSchema>;
+
 export const computePayoutSchema = z.object({
   psychologistId: z.string().min(1),
   periodStart: z.string().datetime(),

@@ -29,6 +29,25 @@ export class CredentialingService {
     private readonly audit: AuditService,
   ) {}
 
+  /**
+   * Manager/ops: credentials expiring within N days (renewal pipeline).
+   * Includes already-expired verified credentials so nothing ages silently.
+   */
+  async listExpiring(principal: AuthPrincipal, withinDays = 60): Promise<CredentialDto[]> {
+    const horizon = new Date();
+    horizon.setUTCDate(horizon.getUTCDate() + Math.max(1, Math.min(withinDays, 365)));
+    const rows = await this.prisma.credential.findMany({
+      where: {
+        psychologist: { tenantId: principal.tenantId, deletedAt: null },
+        verificationStatus: 'verified',
+        expiresAt: { not: null, lte: horizon },
+      },
+      orderBy: { expiresAt: 'asc' },
+      take: 200,
+    });
+    return rows.map((c) => this.toDto(c as CredentialRow));
+  }
+
   async create(principal: AuthPrincipal, input: CreateCredentialInput): Promise<CredentialDto> {
     const psychologistId = input.psychologistId ?? (await this.resolveOwnPsychologistId(principal));
 

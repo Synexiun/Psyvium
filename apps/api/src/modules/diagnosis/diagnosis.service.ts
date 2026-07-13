@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type {
   AuthPrincipal,
   CreateDiagnosisHypothesisInput,
@@ -11,6 +11,11 @@ import type {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus } from '../../common/events/event-bus.service';
+import {
+  ALGORITHM_VERSIONS,
+  stampAlgorithm,
+  validateClinicalCode,
+} from '../../common/clinical';
 
 /**
  * Canonical event name for context 13 (Diagnosis Support), per
@@ -176,6 +181,14 @@ export class DiagnosisService {
     });
     if (!client) throw new NotFoundException('Client not found');
 
+    // Format-level ICD-10-CM check — not a full terminology server; clinician owns diagnosis.
+    const coding = validateClinicalCode(input.icdCode, 'ICD-10-CM');
+    if (!coding.valid) {
+      throw new BadRequestException(
+        `Invalid ICD-10-CM code format: ${coding.reason ?? 'rejected'}. ${coding.disclaimer}`,
+      );
+    }
+
     if (input.basedOnHypothesisId) {
       const hypothesis = await this.prisma.diagnosisHypothesis.findFirst({
         where: { id: input.basedOnHypothesisId, tenantId: principal.tenantId, clientId: input.clientId },
@@ -188,7 +201,7 @@ export class DiagnosisService {
         tenantId: principal.tenantId,
         clientId: input.clientId,
         authorId: principal.userId,
-        icdCode: input.icdCode,
+        icdCode: coding.normalized,
         dsmCode: input.dsmCode,
         description: input.description,
         status: input.status,
@@ -205,7 +218,16 @@ export class DiagnosisService {
       action: 'formulation.recorded',
       entityType: 'Formulation',
       entityId: formulation.id,
-      after: { clientId: input.clientId, icdCode: input.icdCode, status: formulation.status },
+      after: {
+        clientId: input.clientId,
+        icdCode: coding.normalized,
+        status: formulation.status,
+        algorithm: stampAlgorithm(
+          'coding.icd10_format',
+          ALGORITHM_VERSIONS.icd10Format,
+          'ICD-10-CM format check only — not a diagnosis and not complete terminology validation.',
+        ),
+      },
       critical: true,
     });
     await this.bus.publish(FORMULATION_RECORDED, principal.tenantId, {

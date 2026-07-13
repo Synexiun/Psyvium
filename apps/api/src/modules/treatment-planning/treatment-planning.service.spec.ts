@@ -30,6 +30,9 @@ function makeService() {
       findFirst: jest.fn(),
       update: jest.fn(),
     },
+    outcomeMeasure: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
   };
   // create() runs inside `this.prisma.$transaction(async (tx) => ...)` — hand
   // the callback the same mock object so `tx.treatmentPlan.*` calls land on
@@ -260,5 +263,36 @@ describe('TreatmentPlanningService.acknowledge — client collaborative acknowle
     expect(prisma.treatmentPlan.update).not.toHaveBeenCalled();
     expect(dto.clientAcknowledgedAt).toBe(ackedAt.toISOString());
     expect(audit.record).not.toHaveBeenCalled();
+  });
+});
+
+describe('TreatmentPlanningService.mbcSchedule — measurement-based care cadence', () => {
+  it('recommends cadence from active plan goal targetMetrics + last measures', async () => {
+    const { svc, prisma } = makeService();
+    prisma.treatmentPlan.findFirst.mockResolvedValue({
+      id: 'plan_1',
+      sessionFrequency: 'weekly',
+      goals: [
+        { targetMetric: 'depression' },
+        { targetMetric: 'anxiety' },
+        { targetMetric: null },
+      ],
+    });
+    prisma.outcomeMeasure.findMany.mockResolvedValue([
+      { construct: 'depression', occurredAt: new Date('2026-07-01T00:00:00.000Z') },
+    ]);
+
+    const result = await svc.mbcSchedule(principal, 'client_1');
+
+    expect(result.recommendations).toHaveLength(2);
+    expect(result.recommendations.map((r) => r.construct).sort()).toEqual(['anxiety', 'depression']);
+    expect(result.algorithm.family).toBe('mbc.schedule');
+  });
+
+  it('rejects when the client is not in this tenant', async () => {
+    const { svc, prisma } = makeService();
+    prisma.client.findFirst.mockResolvedValue(null);
+
+    await expect(svc.mbcSchedule(principal, 'client_missing')).rejects.toBeInstanceOf(NotFoundException);
   });
 });

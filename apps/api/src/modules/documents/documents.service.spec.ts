@@ -59,6 +59,40 @@ function makeService() {
 }
 
 describe('DocumentsService', () => {
+  it('capabilityStatus documents virusScanStatus workflow notes', () => {
+    const { svc } = makeService();
+    const status = svc.capabilityStatus();
+    expect(status.virusScanWorkflow.statuses).toContain('pending');
+    expect(status.virusScanWorkflow.statuses).toContain('clean');
+    expect(status.virusScanWorkflow.notes.length).toBeGreaterThan(10);
+  });
+
+  it('lists documents pending virus scan for the tenant', async () => {
+    const { svc, prisma } = makeService();
+    (prisma.document.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: 'doc_pending',
+        ownerType: 'client',
+        ownerId: 'client_1',
+        category: 'intake-form',
+        storageKey: 's3://bucket/key.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 1024,
+        virusScanStatus: 'pending',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      },
+    ]);
+
+    const result = await svc.listPendingVirusScan(clinician);
+    expect(prisma.document.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ virusScanStatus: 'pending', tenantId: 'tenant_demo' }),
+      }),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]!.virusScanStatus).toBe('pending');
+  });
+
   it('registers document metadata for an existing client and audits it', async () => {
     const { svc, audit, bus } = makeService();
 

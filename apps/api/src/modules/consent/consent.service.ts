@@ -71,7 +71,7 @@ export class ConsentService {
       where: { clientId: client.id },
       orderBy: { grantedAt: 'desc' },
     });
-    return consents.map((c) => this.toDto(c));
+    return consents.map((c) => this.toDto(c, /* withReconsentFlag */ true));
   }
 
   async revoke(principal: AuthPrincipal, id: string): Promise<ConsentDto> {
@@ -147,8 +147,8 @@ export class ConsentService {
     return client;
   }
 
-  private toDto(c: ConsentRow): ConsentDto {
-    return {
+  private toDto(c: ConsentRow, withReconsentFlag = false): ConsentDto {
+    const dto: ConsentDto = {
       id: c.id,
       clientId: c.clientId,
       type: c.type as ConsentDto['type'],
@@ -158,5 +158,24 @@ export class ConsentService {
       documentUrl: c.documentUrl,
       policyContentHash: c.policyContentHash ?? null,
     };
+    if (withReconsentFlag) {
+      dto.reconsentNeeded = this.computeReconsentNeeded(c);
+    }
+    return dto;
+  }
+
+  /**
+   * Active grant whose version is below the current required version for that
+   * type needs re-consent. Revoked rows and types without a required version
+   * never flag reconsentNeeded.
+   */
+  private computeReconsentNeeded(c: ConsentRow): boolean {
+    if (c.revokedAt) return false;
+    const required =
+      c.type === ConsentType.AI_ASSISTED_ANALYSIS
+        ? AI_CONSENT_VERSION
+        : REQUIRED_CONSENT_VERSIONS[c.type as ConsentType];
+    if (!required) return false;
+    return c.version !== required;
   }
 }

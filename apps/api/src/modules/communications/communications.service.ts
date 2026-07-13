@@ -500,9 +500,18 @@ export class CommunicationsService {
     tenantId: string,
     fromE164: string,
     body: string,
-  ): Promise<{ handled: boolean; action?: 'opt_out' | 'opt_in' }> {
+  ): Promise<{ handled: boolean; action?: 'opt_out' | 'opt_in' | 'help' }> {
     const keyword = body.trim().toUpperCase().split(/\s+/)[0] ?? '';
     const e164 = normalizeE164(fromE164);
+    if (keyword === 'HELP' || keyword === 'INFO') {
+      await this.audit.record({
+        tenantId,
+        action: 'comms.sms.help',
+        entityType: 'SmsMessage',
+        after: { e164, source: 'KEYWORD', keyword },
+      });
+      return { handled: true, action: 'help' };
+    }
     if (['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT'].includes(keyword)) {
       await this.prisma.smsOptOut.upsert({
         where: { tenantId_e164: { tenantId, e164 } },

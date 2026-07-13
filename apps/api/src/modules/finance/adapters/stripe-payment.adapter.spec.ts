@@ -1,11 +1,13 @@
 const paymentIntentsCreate = jest.fn();
 const checkoutSessionsCreate = jest.fn();
+const refundsCreate = jest.fn();
 const constructEvent = jest.fn();
 
 jest.mock('stripe', () => {
   return jest.fn().mockImplementation(() => ({
     paymentIntents: { create: paymentIntentsCreate },
     checkout: { sessions: { create: checkoutSessionsCreate } },
+    refunds: { create: refundsCreate },
     webhooks: { constructEvent },
   }));
 });
@@ -116,6 +118,36 @@ describe('StripePaymentAdapter.createCheckoutSession', () => {
     await expect(
       adapter.createCheckoutSession('inv_1', '10.00', 'USD', 'https://s', 'https://c', {}),
     ).rejects.toThrow(/redirect URL/);
+  });
+});
+
+describe('StripePaymentAdapter.refundPayment', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('maps a succeeded Stripe refund honestly', async () => {
+    refundsCreate.mockResolvedValue({ id: 're_1', status: 'succeeded' });
+    const adapter = new StripePaymentAdapter('sk_test_123');
+
+    const result = await adapter.refundPayment('pi_1', '10.00', 'USD', 'duplicate', { paymentId: 'p1' });
+
+    expect(refundsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payment_intent: 'pi_1',
+        amount: 1000,
+        reason: 'requested_by_customer',
+      }),
+    );
+    expect(result).toEqual({ providerRef: 're_1', status: 'succeeded' });
+  });
+
+  it('maps a PSP error to failed without throwing', async () => {
+    refundsCreate.mockRejectedValue({ code: 'charge_already_refunded', message: 'already refunded' });
+    const adapter = new StripePaymentAdapter('sk_test_123');
+
+    const result = await adapter.refundPayment('pi_1', null, 'USD', 'dup', {});
+
+    expect(result.status).toBe('failed');
+    expect(result.failureReason).toBe('already refunded');
   });
 });
 

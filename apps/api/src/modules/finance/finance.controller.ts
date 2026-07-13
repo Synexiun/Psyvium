@@ -13,11 +13,13 @@ import {
   computePayoutSchema,
   createInvoiceSchema,
   payInvoiceSchema,
+  requestRefundSchema,
   Permission,
   type AuthPrincipal,
   type ComputePayoutInput,
   type CreateInvoiceInput,
   type PayInvoiceInput,
+  type RequestRefundInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
@@ -86,6 +88,22 @@ export class FinanceController {
     const successUrl = `${origin}/finance/invoices/${id}?checkout=success`;
     const cancelUrl = `${origin}/finance/invoices/${id}?checkout=cancelled`;
     return this.payments.createCheckoutSession(user, id, successUrl, cancelUrl);
+  }
+
+  /**
+   * Refund a captured payment. Fail-closed when Stripe is unset or the
+   * payment has no PSP ref — always critically audited (see
+   * `PaymentsService.requestRefund`).
+   */
+  @Post('payments/:id/refund')
+  @RequirePermissions(Permission.FINANCE_MANAGE)
+  @UseInterceptors(IdempotencyInterceptor)
+  requestRefund(
+    @CurrentUser() user: AuthPrincipal,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(requestRefundSchema)) body: RequestRefundInput,
+  ) {
+    return this.payments.requestRefund(user, id, body);
   }
 
   @Get('ledger')

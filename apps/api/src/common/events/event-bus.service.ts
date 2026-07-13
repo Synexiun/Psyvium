@@ -114,6 +114,8 @@ export const Events = {
   RiskFlagRaised: 'risk.flag.raised',
   AssignmentProposed: 'assignment.proposed',
   AssignmentApproved: 'assignment.approved',
+  AssignmentRejected: 'assignment.rejected',
+  AssignmentHeld: 'assignment.held',
   NoteSigned: 'note.signed',
   PlanActivated: 'plan.activated',
   AssessmentScored: 'assessment.scored',
@@ -144,6 +146,7 @@ export const Events = {
   // Finance (contexts 24/25/26 — Payments, Accounting, Revenue Share/Payouts)
   InvoiceCreated: 'invoice.created',
   PaymentCaptured: 'payment.captured',
+  PaymentRefunded: 'payment.refunded',
   PayoutComputed: 'payout.computed',
   // AI Gateway (ADR-007) — every inference is logged as an AIRecommendation
   // behind a PENDING human-decision gate; this is the seam the real-time

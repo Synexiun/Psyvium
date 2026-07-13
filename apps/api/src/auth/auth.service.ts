@@ -7,11 +7,13 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type {
+  AuthPrincipal,
   AuthTokens,
   LoginInput,
   MfaEnrollResponse,
   PasswordResetCompleteInput,
   PasswordResetRequestInput,
+  RefreshSessionSummary,
   RegisterInput,
 } from '@vpsy/contracts';
 import { MFA_MANDATORY_ROLES, MfaErrorCode, ROLE_PERMISSIONS, Role } from '@vpsy/contracts';
@@ -386,6 +388,73 @@ export class AuthService {
         entityId: claims.sid,
       });
     }
+  }
+
+  /**
+   * List active (unrevoked, unexpired) refresh sessions for the current user.
+   * Never returns token digests — only device/session metadata.
+   */
+  async listSessions(principal: AuthPrincipal): Promise<RefreshSessionSummary[]> {
+    const now = new Date();
+    const sessions = await this.prisma.refreshSession.findMany({
+      where: {
+        userId: principal.userId,
+        tenantId: principal.tenantId,
+        revokedAt: null,
+        expiresAt: { gt: now },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        createdAt: true,
+        lastUsedAt: true,
+        expiresAt: true,
+        userAgent: true,
+      },
+    });
+    return sessions.map((s) => ({
+      id: s.id,
+      createdAt: s.createdAt.toISOString(),
+      lastUsedAt: s.lastUsedAt ? s.lastUsedAt.toISOString() : null,
+      expiresAt: s.expiresAt.toISOString(),
+      userAgent: s.userAgent,
+      current: principal.sessionId ? s.id === principal.sessionId : undefined,
+    }));
+  }
+
+  /**
+   * Revoke every active refresh session for the principal and bump authVersion
+   * so in-flight access tokens fail the server-side session check immediately.
+   */
+  async revokeAllSessions(principal: AuthPrincipal): Promise<{ revoked: number }> {
+    const now = new Date();
+    const result = await this.prisma.$transaction(async (tx) => {
+      const revoked = await tx.refreshSession.updateMany({
+        where: {
+          userId: principal.userId,
+          tenantId: principal.tenantId,
+          revokedAt: null,
+        },
+        data: { revokedAt: now },
+      });
+      await tx.user.update({
+        where: { id: principal.userId },
+        data: { authVersion: { increment: 1 } },
+      });
+      return revoked.count;
+    });
+
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'auth.sessions_revoked_all',
+      entityType: 'User',
+      entityId: principal.userId,
+      after: { revoked: result },
+      critical: true,
+    });
+
+    return { revoked: result };
   }
 
   async mfaEnroll(userId: string, currentCode?: string): Promise<MfaEnrollResponse> {

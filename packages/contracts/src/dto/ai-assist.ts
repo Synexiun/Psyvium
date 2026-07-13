@@ -245,5 +245,39 @@ export const aiRecommendationDtoSchema = z.object({
   linkedEntityId: z.string().nullable(),
   output: z.unknown(),
   createdAt: z.string(),
+  /** Present on provenance GET and when relations are loaded. */
+  modelVersionId: z.string().optional(),
+  promptVersionId: z.string().optional(),
 });
 export type AiRecommendationDto = z.infer<typeof aiRecommendationDtoSchema>;
+
+/**
+ * Full provenance for a single AIRecommendation — model/prompt versions,
+ * input hash, decision gate state. Required for EU AI Act logging /
+ * clinician oversight (ADR-007).
+ */
+export const aiRecommendationProvenanceSchema = z.object({
+  id: z.string(),
+  agent: z.string(),
+  confidence: z.number(),
+  humanDecision: z.nativeEnum(HumanDecision),
+  decidedBy: z.string().nullable(),
+  linkedEntityType: z.string().nullable(),
+  linkedEntityId: z.string().nullable(),
+  output: z.unknown(),
+  inputHash: z.string(),
+  createdAt: z.string(),
+  modelVersion: z.object({
+    id: z.string(),
+    provider: z.string(),
+    model: z.string(),
+    version: z.string(),
+    capability: z.string(),
+  }),
+  promptVersion: z.object({
+    id: z.string(),
+    agent: z.string(),
+    version: z.string(),
+  }),
+});
+export type AiRecommendationProvenanceDto = z.infer<typeof aiRecommendationProvenanceSchema>;

@@ -53,24 +53,51 @@ export class DocumentsService {
     private readonly bus: EventBus,
   ) {}
 
-  /** Honest capability status for UI/API consumers. */
+  /**
+   * Honest capability status for UI/API consumers.
+   *
+   * `virusScanStatus` workflow (Document.virusScanStatus string column):
+   *   pending  → just registered; not yet scanned (default on create)
+   *   clean    → scanner reported no threat (download permitted when blob live)
+   *   infected → scanner reported threat; quarantine — never serve bytes
+   *   error    → scanner failed; treat as not-clean until re-scanned
+   *   skipped  → metadata-only mode; no scanner configured
+   * Advancement from `pending` requires a real malware-scan worker (not wired
+   * in this module). Admin can list pending rows via `listPendingVirusScan`.
+   */
   capabilityStatus(): {
     mode: 'disabled' | 'metadata-only' | 'blob';
     canUpload: boolean;
     canDownload: boolean;
     virusScan: boolean;
     message: string;
+    virusScanWorkflow: {
+      statuses: Array<'pending' | 'clean' | 'infected' | 'error' | 'skipped'>;
+      defaultOnCreate: 'pending' | 'skipped';
+      notes: string;
+    };
   } {
     const allowMeta =
       process.env.NODE_ENV !== 'production' || process.env.VPSY_ALLOW_DOCUMENT_METADATA_ONLY === 'true';
     const blobReady = process.env.VPSY_DOCUMENT_BLOB_BACKEND === 's3';
+    const virusScanEnabled = process.env.VPSY_DOCUMENT_VIRUS_SCAN === 'true';
+    const statuses = ['pending', 'clean', 'infected', 'error', 'skipped'] as const;
+
     if (blobReady) {
       return {
         mode: 'blob',
         canUpload: true,
         canDownload: true,
-        virusScan: process.env.VPSY_DOCUMENT_VIRUS_SCAN === 'true',
-        message: 'Object storage backend is configured.',
+        virusScan: virusScanEnabled,
+        message: virusScanEnabled
+          ? 'Object storage + malware scan configured. Downloads should only serve virusScanStatus=clean.'
+          : 'Object storage configured but malware scan is OFF (VPSY_DOCUMENT_VIRUS_SCAN≠true) — treat all as untrusted.',
+        virusScanWorkflow: {
+          statuses: [...statuses],
+          defaultOnCreate: virusScanEnabled ? 'pending' : 'skipped',
+          notes:
+            'Worker must advance pending → clean|infected|error. Never serve infected or error rows to clients.',
+        },
       };
     }
     if (allowMeta) {
@@ -81,6 +108,12 @@ export class DocumentsService {
         virusScan: false,
         message:
           'Metadata registration only — no blob storage or malware scan. Not for real PHI documents.',
+        virusScanWorkflow: {
+          statuses: [...statuses],
+          defaultOnCreate: 'skipped',
+          notes:
+            'DB default is still "pending"; no scanner will advance it in metadata-only mode. Do not trust for PHI.',
+        },
       };
     }
     return {
@@ -90,7 +123,30 @@ export class DocumentsService {
       virusScan: false,
       message:
         'Document storage is disabled in production until blob storage + malware scan are configured.',
+      virusScanWorkflow: {
+        statuses: [...statuses],
+        defaultOnCreate: 'skipped',
+        notes: 'Create path is ServiceUnavailable until blob + scan are ready.',
+      },
     };
+  }
+
+  /**
+   * Admin/ops view of documents still awaiting malware scan (`virusScanStatus
+   * = pending`). Useful once a scanner worker is wired — until then this
+   * simply surfaces every metadata registration still sitting at the default.
+   */
+  async listPendingVirusScan(principal: AuthPrincipal, take = 50): Promise<DocumentDto[]> {
+    const documents = await this.prisma.document.findMany({
+      where: {
+        tenantId: principal.tenantId,
+        virusScanStatus: 'pending',
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'asc' },
+      take: Math.min(Math.max(take, 1), 200),
+    });
+    return documents.map((d) => this.toDto(d));
   }
 
   async create(principal: AuthPrincipal, input: CreateDocumentInput): Promise<DocumentDto> {

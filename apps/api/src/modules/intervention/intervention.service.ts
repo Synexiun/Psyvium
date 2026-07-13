@@ -251,6 +251,11 @@ export class InterventionService {
       throw new ForbiddenException('A client may only complete their own homework');
     }
 
+    // Preserve prior completion for professional review (no history JSON column —
+    // audit before/after is the tamper-evident completion trail).
+    const previousCompletionPct = homework.completionPct;
+    const previousClientReport = homework.clientReport;
+
     const updated = await this.prisma.homework.update({
       where: { id: homeworkId },
       data: { completionPct: input.completionPct, clientReport: input.clientReport },
@@ -262,7 +267,19 @@ export class InterventionService {
       action: 'homework.completed',
       entityType: 'Homework',
       entityId: updated.id,
-      after: { completionPct: updated.completionPct },
+      before: {
+        completionPct: previousCompletionPct,
+        clientReport: previousClientReport,
+      },
+      after: {
+        completionPct: updated.completionPct,
+        clientReport: updated.clientReport,
+        // Explicit history snapshot for clinician review of partial→complete path.
+        completionHistory: [
+          { completionPct: previousCompletionPct, at: 'before' },
+          { completionPct: updated.completionPct, at: 'after' },
+        ],
+      },
     });
 
     return this.toHomeworkDto(updated);

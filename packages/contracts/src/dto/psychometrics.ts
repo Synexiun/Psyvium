@@ -49,6 +49,20 @@ export const administerResponseSchema = z.object({
 });
 export type AdministerResponseInput = z.infer<typeof administerResponseSchema>;
 
+/** Professional instrument catalog entry (license-aware, tenant-scoped grants). */
+export const instrumentCatalogEntrySchema = z.object({
+  questionnaireId: z.string(),
+  code: z.string(),
+  name: z.string(),
+  construct: z.string(),
+  licensing: z.string(),
+  scoringMethod: z.string(),
+  latestPublishedVersionId: z.string().nullable(),
+  licenseGrantStatus: z.enum(['not_required', 'active', 'missing', 'expired', 'revoked']),
+  administerAllowed: z.boolean(),
+});
+export type InstrumentCatalogEntry = z.infer<typeof instrumentCatalogEntrySchema>;
+
 /**
  * IRT item parameters (docs/technical/07-psychometrics-engine.md §3/§5).
  * Deterministic scoring inputs: `a` (discrimination), `b` (difficulty,

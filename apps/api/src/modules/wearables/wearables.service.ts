@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import type { AuthPrincipal, RecordWearableMetricInput, WearableMetricDto, WearableRollup } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { ALGORITHM_VERSIONS, stampAlgorithm } from '../../common/clinical/algorithm-provenance';
 
 type MetricRow = {
   id: string;
@@ -19,11 +20,15 @@ type DeviceRow = {
 };
 
 /**
- * There is no dedicated `WEARABLE` ConsentType in the shared enum
- * (`packages/contracts`) yet, so `DATA_PROCESSING` is the category used to
- * gate wearable/physiological-signal ingestion — see the demo
- * `consent_demo_wearable_data` grant in `seed.ts`, kept separate from the
- * intake consent so revoking one never silently revokes the other.
+ * Consent gate for wearable/physiological-signal ingestion.
+ *
+ * Schema audit (`ConsentType` enum in `schema.prisma` + contracts): there is
+ * NO dedicated `WEARABLE` value — only TELEPSYCHOLOGY | DATA_PROCESSING |
+ * RECORDING | RESEARCH | CRISIS_POLICY | AI_ASSISTED_ANALYSIS. Until a
+ * WEARABLE ConsentType lands, `DATA_PROCESSING` is the honest category used
+ * to gate ingestion (see seed `consent_demo_wearable_data`, kept as a
+ * separate grant from intake consents so revoking one never silently revokes
+ * the other). Do NOT invent a WEARABLE enum value here.
  */
 const WEARABLE_CONSENT_TYPE = 'DATA_PROCESSING';
 
@@ -188,6 +193,12 @@ export class WearablesService {
     const avgSleepHours = this.minutesToHours(this.avg(sleepMinutesAll));
     const restingHrBpm = this.round(this.avg(rhrAll), 1);
 
+    const algorithm = stampAlgorithm(
+      'wearables.rollup_nondiagnostic',
+      ALGORITHM_VERSIONS.wearablesRollup,
+      'Descriptive windowed averages only — FDA CDS non-device context; not a diagnostic algorithm',
+    );
+
     return {
       windowDays,
       avgHrvMs,
@@ -195,6 +206,13 @@ export class WearablesService {
       restingHrBpm,
       arousalNote: this.buildArousalNote(series, avgSleepHours),
       series,
+      algorithm: {
+        family: algorithm.family,
+        version: algorithm.version,
+        citation: algorithm.citation,
+        computedAt: algorithm.computedAt,
+        nonDiagnostic: true as const,
+      },
     };
   }
 

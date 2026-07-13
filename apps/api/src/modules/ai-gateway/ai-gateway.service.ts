@@ -10,6 +10,7 @@ import {
   AiAgent,
   HumanDecision,
   type AiRecommendationDto,
+  type AiRecommendationProvenanceDto,
   type AllocationRationale,
   type AuthPrincipal,
   type DecideAiRecommendationInput,
@@ -136,6 +137,47 @@ export class AiGatewayService {
     return this.toRecommendationDto(updated);
   }
 
+  /**
+   * Provenance for a single recommendation — model + prompt versions are
+   * required on every AIRecommendation row (EU AI Act / ADR-007). Clinicians
+   * use this to see *which* algorithm/version produced an assistive output.
+   */
+  async getRecommendationProvenance(
+    principal: AuthPrincipal,
+    recommendationId: string,
+  ): Promise<AiRecommendationProvenanceDto> {
+    const row = await this.prisma.aIRecommendation.findFirst({
+      where: { id: recommendationId, tenantId: principal.tenantId },
+      include: { modelVersion: true, promptVersion: true },
+    });
+    if (!row) throw new NotFoundException('AI recommendation not found');
+
+    return {
+      id: row.id,
+      agent: row.agent,
+      confidence: row.confidence,
+      humanDecision: row.humanDecision as AiRecommendationProvenanceDto['humanDecision'],
+      decidedBy: row.decidedBy,
+      linkedEntityType: row.linkedEntityType,
+      linkedEntityId: row.linkedEntityId,
+      output: row.output,
+      inputHash: row.inputHash,
+      createdAt: row.createdAt.toISOString(),
+      modelVersion: {
+        id: row.modelVersion.id,
+        provider: row.modelVersion.provider,
+        model: row.modelVersion.model,
+        version: row.modelVersion.version,
+        capability: row.modelVersion.capability,
+      },
+      promptVersion: {
+        id: row.promptVersion.id,
+        agent: row.promptVersion.agent,
+        version: row.promptVersion.version,
+      },
+    };
+  }
+
   private toRecommendationDto(row: {
     id: string;
     agent: string;
@@ -146,6 +188,8 @@ export class AiGatewayService {
     linkedEntityId: string | null;
     output: unknown;
     createdAt: Date;
+    modelVersionId?: string;
+    promptVersionId?: string;
   }): AiRecommendationDto {
     return {
       id: row.id,
@@ -157,6 +201,8 @@ export class AiGatewayService {
       linkedEntityId: row.linkedEntityId,
       output: row.output,
       createdAt: row.createdAt.toISOString(),
+      modelVersionId: row.modelVersionId,
+      promptVersionId: row.promptVersionId,
     };
   }
 
@@ -1287,6 +1333,12 @@ export class AiGatewayService {
     );
   }
 
+  /**
+   * Every recommendation MUST store modelVersionId + promptVersionId
+   * (schema-required FKs). If no activated versions exist yet, we upsert a
+   * transparent rule-based / env-model stub so the row still carries honest
+   * provenance rather than silently dropping the log.
+   */
   private async logRecommendation(input: {
     tenantId: string;
     agent: AiAgent;
@@ -1297,12 +1349,41 @@ export class AiGatewayService {
     linkedEntityId: string;
   }): Promise<string | undefined> {
     try {
-      const model = await this.prisma.aIModelVersion.findFirst({ orderBy: { activatedAt: 'desc' } });
-      const prompt = await this.prisma.promptVersion.findFirst({
+      let model = await this.prisma.aIModelVersion.findFirst({ orderBy: { activatedAt: 'desc' } });
+      let prompt = await this.prisma.promptVersion.findFirst({
         where: { agent: input.agent },
         orderBy: { activatedAt: 'desc' },
       });
-      if (!model || !prompt) return undefined;
+      if (!model) {
+        model = await this.prisma.aIModelVersion.upsert({
+          where: {
+            provider_model_version: {
+              provider: this.aiConfigured ? 'anthropic' : 'rule-based',
+              model: this.aiConfigured ? this.model : 'deterministic-rules',
+              version: this.aiConfigured ? 'runtime' : '1.0.0',
+            },
+          },
+          create: {
+            provider: this.aiConfigured ? 'anthropic' : 'rule-based',
+            model: this.aiConfigured ? this.model : 'deterministic-rules',
+            version: this.aiConfigured ? 'runtime' : '1.0.0',
+            capability: String(input.agent),
+          },
+          update: {},
+        });
+      }
+      if (!prompt) {
+        prompt = await this.prisma.promptVersion.upsert({
+          where: { agent_version: { agent: input.agent, version: '1.0.0' } },
+          create: {
+            agent: input.agent,
+            version: '1.0.0',
+            template: `default-${input.agent}-v1`,
+            guardrails: { humanDecisionRequired: true },
+          },
+          update: {},
+        });
+      }
       const inputHash = createHash('sha256').update(JSON.stringify(input.input)).digest('hex');
       const rec = await this.prisma.aIRecommendation.create({
         data: {

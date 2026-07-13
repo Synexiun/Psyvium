@@ -107,7 +107,7 @@ describe('OutcomesService — Reliable Change Index', () => {
   });
 
   it('GAD-7 (anxiety) worsening 5 -> 15 -> reliably-worsened (increase is worse on a symptom scale)', async () => {
-    const { svc, prisma } = makeService();
+    const { svc, prisma, audit } = makeService();
     prisma.outcomeMeasure.findFirst.mockResolvedValue(measureRow({ id: 'm_prev', construct: 'anxiety', value: 5 }));
     prisma.outcomeMeasure.create.mockResolvedValue(measureRow({ id: 'm_cur', construct: 'anxiety', value: 15 }));
 
@@ -115,6 +115,16 @@ describe('OutcomesService — Reliable Change Index', () => {
 
     expect(result.trend.rci).toBeGreaterThan(1.96);
     expect(result.trend.classification).toBe('reliably-worsened');
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'outcome.recorded',
+        critical: true,
+        after: expect.objectContaining({
+          classification: 'reliably-worsened',
+          algorithm: expect.objectContaining({ family: 'outcomes.rci_jacobson_truax' }),
+        }),
+      }),
+    );
   });
 
   it('unknown construct: honest null rci + "unknown-reliability" — never fabricates a reliability', async () => {

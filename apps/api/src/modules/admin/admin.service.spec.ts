@@ -57,8 +57,19 @@ function makeService() {
   };
   const audit = { record: jest.fn() };
   const bus = { publish: jest.fn() };
-  const svc = new AdminService(prisma as any, audit as any, bus as any);
-  return { svc, prisma, audit, bus, tenantRow, clinicRow, flagRow };
+  const flags = {
+    listForTenant: jest.fn().mockResolvedValue([
+      {
+        id: flagRow.id,
+        key: flagRow.key,
+        enabled: flagRow.enabled,
+        updatedAt: flagRow.updatedAt.toISOString(),
+      },
+    ]),
+    isEnabled: jest.fn().mockResolvedValue(true),
+  };
+  const svc = new AdminService(prisma as any, audit as any, bus as any, flags as any);
+  return { svc, prisma, audit, bus, flags, tenantRow, clinicRow, flagRow };
 }
 
 describe('AdminService — Tenant', () => {
@@ -143,11 +154,12 @@ describe('AdminService — Clinics', () => {
 });
 
 describe('AdminService — Feature flags (EU-AI-Act kill-switch seam)', () => {
-  it('lists feature flags for the tenant', async () => {
-    const { svc, prisma } = makeService();
+  it('lists feature flags for the tenant via FeatureFlagsService', async () => {
+    const { svc, flags } = makeService();
 
     const result = await svc.listFeatureFlags(admin);
 
+    expect(flags.listForTenant).toHaveBeenCalledWith('tenant_demo');
     expect(result).toHaveLength(1);
     expect(result[0]!.key).toBe('AI_ASSISTED_ANALYSIS');
   });

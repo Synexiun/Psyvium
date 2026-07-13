@@ -10,7 +10,9 @@ import {
   AssignmentStatus,
   type ApproveAssignmentInput,
   type AuthPrincipal,
+  type HoldAssignmentInput,
   type MatchCandidate,
+  type RejectAssignmentInput,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
@@ -284,6 +286,110 @@ export class MatchingService implements OnModuleInit {
       psychologistId: input.psychologistId,
     });
     return updated;
+  }
+
+  /**
+   * Manager rejects a proposal — client returns to unassigned waitlist.
+   * No REJECTED enum: CLOSED is the terminal status. Does not free caseload
+   * (never assigned). Critical audit + domain event for downstream waitlist.
+   */
+  async reject(principal: AuthPrincipal, input: RejectAssignmentInput) {
+    const assignment = await this.prisma.assignment.findFirst({
+      where: { id: input.assignmentId, tenantId: principal.tenantId, deletedAt: null },
+    });
+    if (!assignment) throw new NotFoundException('Assignment not found');
+    if (assignment.status !== AssignmentStatus.PROPOSED) {
+      throw new ConflictException(`Only PROPOSED assignments can be rejected (status=${assignment.status})`);
+    }
+
+    const claimed = await this.prisma.assignment.updateMany({
+      where: {
+        id: assignment.id,
+        tenantId: principal.tenantId,
+        status: AssignmentStatus.PROPOSED,
+        deletedAt: null,
+      },
+      data: {
+        status: AssignmentStatus.CLOSED,
+        managerNote: `REJECTED: ${input.reason}`,
+        approvedBy: principal.userId,
+      },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictException('Assignment was already decided by another manager action');
+    }
+
+    const updated = await this.prisma.assignment.findFirstOrThrow({ where: { id: assignment.id } });
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'assignment.rejected',
+      entityType: 'Assignment',
+      entityId: updated.id,
+      before: { status: AssignmentStatus.PROPOSED },
+      after: {
+        status: AssignmentStatus.CLOSED,
+        reason: input.reason,
+        rejectedBy: principal.userId,
+        transition: `${AssignmentStatus.PROPOSED}→${AssignmentStatus.CLOSED}`,
+      },
+      critical: true,
+    });
+    await this.bus.publish(Events.AssignmentRejected, principal.tenantId, {
+      assignmentId: updated.id,
+      clientId: updated.clientId,
+      reason: input.reason,
+    });
+    return updated;
+  }
+
+  /**
+   * Manager parks a proposal for later. No HOLD enum — status stays PROPOSED;
+   * managerNote + audit `status: 'on_hold'` surface the hold to triage UIs.
+   */
+  async hold(principal: AuthPrincipal, input: HoldAssignmentInput) {
+    const assignment = await this.prisma.assignment.findFirst({
+      where: { id: input.assignmentId, tenantId: principal.tenantId, deletedAt: null },
+    });
+    if (!assignment) throw new NotFoundException('Assignment not found');
+    if (assignment.status !== AssignmentStatus.PROPOSED) {
+      throw new ConflictException(`Only PROPOSED assignments can be held (status=${assignment.status})`);
+    }
+
+    const claimed = await this.prisma.assignment.updateMany({
+      where: {
+        id: assignment.id,
+        tenantId: principal.tenantId,
+        status: AssignmentStatus.PROPOSED,
+        deletedAt: null,
+      },
+      data: {
+        managerNote: `[ON_HOLD] ${input.reason}`,
+        approvedBy: principal.userId,
+      },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictException('Assignment was already decided by another manager action');
+    }
+
+    const updated = await this.prisma.assignment.findFirstOrThrow({ where: { id: assignment.id } });
+
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'assignment.held',
+      entityType: 'Assignment',
+      entityId: updated.id,
+      before: { status: AssignmentStatus.PROPOSED },
+      after: { status: 'on_hold', reason: input.reason, heldBy: principal.userId },
+      critical: true,
+    });
+    await this.bus.publish(Events.AssignmentHeld, principal.tenantId, {
+      assignmentId: updated.id,
+      clientId: updated.clientId,
+      reason: input.reason,
+    });
+    return { ...updated, holdStatus: 'on_hold' as const };
   }
 
   private isUniqueConstraintError(error: unknown): boolean {

@@ -33,11 +33,22 @@ export class DocumentsController {
   /**
    * Capability probe for the UI: reports whether blob storage is live or
    * metadata-only / disabled. Never pretends uploads work when they do not.
+   * Includes virusScanStatus workflow notes for ops/UI.
    */
   @Get('status')
   @RequirePermissions(Permission.CLIENT_READ)
   status() {
     return this.documents.capabilityStatus();
+  }
+
+  /**
+   * Documents still at virusScanStatus=pending — manager/admin triage surface
+   * for the (future) malware-scan worker backlog.
+   */
+  @Get('virus-scan/pending')
+  @RequirePermissions(Permission.CLIENT_READ)
+  listPendingVirusScan(@CurrentUser() user: AuthPrincipal) {
+    return this.documents.listPendingVirusScan(user);
   }
 
   /** Registers document METADATA only — see honesty note in documents.service.ts. */

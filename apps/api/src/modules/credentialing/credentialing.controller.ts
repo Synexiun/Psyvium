@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   createCredentialSchema,
@@ -21,6 +21,14 @@ import { CredentialingService } from './credentialing.service';
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class CredentialingController {
   constructor(private readonly credentials: CredentialingService) {}
+
+  /** Credentials expiring within N days (default 60) — renewal / compliance board. */
+  @Get('expiring')
+  @RequirePermissions(Permission.CREDENTIAL_VERIFY)
+  listExpiring(@CurrentUser() user: AuthPrincipal, @Query('withinDays') withinDays?: string) {
+    const days = withinDays ? Number(withinDays) : 60;
+    return this.credentials.listExpiring(user, Number.isFinite(days) ? days : 60);
+  }
 
   /** Captures a license/credential for a psychologist (self, unless psychologistId is given). */
   @Post()

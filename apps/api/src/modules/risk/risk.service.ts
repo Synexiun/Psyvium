@@ -23,18 +23,16 @@ import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
 import { FieldCipherService } from '../../common/crypto/field-cipher';
 import { ClinicalAccessService } from '../../common/auth/clinical-access.service';
+import {
+  ALGORITHM_VERSIONS,
+  scoreSafetyPlanCompleteness,
+  severityRank,
+  stampAlgorithm,
+} from '../../common/clinical';
 import { CRISIS_LINE_FALLBACK, resolveCrisisResource } from './crisis-lines';
 
 /** 1 hour, matching the roadmap's break-glass time-box (06-security-and-rbac.md §2.2). */
 const BREAK_GLASS_TTL_MS = 60 * 60 * 1000;
-
-/** SEVERE→LOW ordering for the priority-lane board. */
-const SEVERITY_RANK: Record<string, number> = {
-  [SeverityBand.SEVERE]: 4,
-  [SeverityBand.HIGH]: 3,
-  [SeverityBand.MODERATE]: 2,
-  [SeverityBand.LOW]: 1,
-};
 
 /** Resolution risk levels that require a Zero Suicide caring-contact follow-up. */
 const FOLLOW_UP_REQUIRED_LEVELS = new Set<string>([SeverityBand.HIGH, SeverityBand.SEVERE]);
@@ -161,7 +159,7 @@ export class RiskService {
     ]);
 
     const sorted = [...escalations].sort((a, b) => {
-      const rankDiff = SEVERITY_RANK[b.riskFlag.severity]! - SEVERITY_RANK[a.riskFlag.severity]!;
+      const rankDiff = severityRank(b.riskFlag.severity) - severityRank(a.riskFlag.severity);
       if (rankDiff !== 0) return rankDiff;
       return a.openedAt.getTime() - b.openedAt.getTime();
     });
@@ -422,13 +420,26 @@ export class RiskService {
       },
     });
 
+    const dto = await this.toSafetyPlanDto(plan as SafetyPlanRow, tenantId);
+
     await this.audit.record({
       tenantId: principal.tenantId,
       actorId: principal.userId,
       action: 'safetyplan.created',
       entityType: 'SafetyPlan',
       entityId: plan.id,
-      after: { clientId: plan.clientId, version: plan.version },
+      after: {
+        clientId: plan.clientId,
+        version: plan.version,
+        completenessScore: dto.completeness?.score ?? null,
+        completenessMissing: dto.completeness?.missing ?? [],
+        algorithm: stampAlgorithm(
+          'risk.safety_plan_completeness',
+          ALGORITHM_VERSIONS.safetyPlanCompleteness,
+          'Stanley B, Brown GK. Safety Planning Intervention (SPI), 2012; Zero Suicide / Joint Commission NPSG 15.01.01.',
+        ),
+      },
+      critical: true,
     });
 
     await this.bus.publish(Events.SafetyPlanCreated, principal.tenantId, {
@@ -437,7 +448,7 @@ export class RiskService {
       version: plan.version,
     });
 
-    return this.toSafetyPlanDto(plan as SafetyPlanRow, tenantId);
+    return dto;
   }
 
   async getLatestSafetyPlan(principal: AuthPrincipal, clientId: string): Promise<SafetyPlanDto | null> {
@@ -796,9 +807,7 @@ export class RiskService {
       this.cipher.decryptJson(plan.meansRestriction, tenantId),
     ]);
 
-    return {
-      id: plan.id,
-      clientId: plan.clientId,
+    const fields = {
       warningSigns,
       copingStrategies,
       supportContacts: (supportContacts as string[] | null) ?? [],
@@ -809,8 +818,22 @@ export class RiskService {
       crisisLineInfo: (crisisLineInfo as SafetyPlanDto['crisisLineInfo']) ?? null,
       meansRestriction: (meansRestriction as SafetyPlanDto['meansRestriction']) ?? null,
       clientAcknowledgedAt: plan.clientAcknowledgedAt ? plan.clientAcknowledgedAt.toISOString() : null,
+    };
+    // Stanley–Brown SPI completeness — assistive quality score, never blocks save.
+    const completeness = scoreSafetyPlanCompleteness(fields);
+
+    return {
+      id: plan.id,
+      clientId: plan.clientId,
+      ...fields,
       version: plan.version,
       createdAt: plan.createdAt.toISOString(),
+      completeness: {
+        score: completeness.score,
+        missing: completeness.missing,
+        algorithmVersion: completeness.algorithmVersion,
+        citation: completeness.citation,
+      },
     };
   }
 }

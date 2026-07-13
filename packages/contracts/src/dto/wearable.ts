@@ -54,5 +54,19 @@ export const wearableRollupSchema = z.object({
   restingHrBpm: z.number().nullable(),
   arousalNote: z.string(),
   series: z.array(wearableSeriesPointSchema),
+  /**
+   * Algorithm provenance stamp. Wearable rollups are **non-diagnostic**
+   * descriptive summaries only — never clinical interpretation or diagnosis.
+   */
+  algorithm: z
+    .object({
+      family: z.string(),
+      version: z.string(),
+      citation: z.string(),
+      computedAt: z.string(),
+      /** Always true for wearable rollups — context, not diagnosis. */
+      nonDiagnostic: z.literal(true),
+    })
+    .optional(),
 });
 export type WearableRollup = z.infer<typeof wearableRollupSchema>;

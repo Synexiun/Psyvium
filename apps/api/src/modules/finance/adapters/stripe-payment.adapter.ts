@@ -1,7 +1,12 @@
 import { Logger } from '@nestjs/common';
 import Stripe from 'stripe';
 import { decimalStringToMinorUnits } from '../money/minor-units';
-import type { ChargeResult, CheckoutSessionResult, PaymentProvider } from '../ports/payment-provider.port';
+import type {
+  ChargeResult,
+  CheckoutSessionResult,
+  PaymentProvider,
+  RefundResult,
+} from '../ports/payment-provider.port';
 
 /**
  * Real Stripe adapter (activate-on-key, same pattern as
@@ -107,5 +112,44 @@ export class StripePaymentAdapter implements PaymentProvider {
   /** Verifies the `Stripe-Signature` header against the raw request body; throws `Stripe.errors.StripeSignatureVerificationError` on mismatch. */
   constructWebhookEvent(rawBody: Buffer, signature: string, webhookSecret: string): Stripe.Event {
     return this.client.webhooks.constructEvent(rawBody, signature, webhookSecret);
+  }
+
+  /**
+   * Issues a Stripe refund against a PaymentIntent id (`Payment.pspRef`).
+   * Maps Stripe's refund status honestly — never rounds a pending/failed
+   * refund up to `succeeded`.
+   */
+  async refundPayment(
+    providerChargeRef: string,
+    amount: string | null,
+    currency: string,
+    reason: string,
+    metadata: Record<string, string>,
+  ): Promise<RefundResult> {
+    try {
+      const params: Stripe.RefundCreateParams = {
+        payment_intent: providerChargeRef,
+        reason: 'requested_by_customer',
+        metadata: { ...metadata, refund_reason: reason.slice(0, 500) },
+      };
+      if (amount != null) {
+        params.amount = decimalStringToMinorUnits(amount, currency);
+      }
+      const refund = await this.client.refunds.create(params);
+      const status: RefundResult['status'] =
+        refund.status === 'succeeded' ? 'succeeded' : refund.status === 'pending' ? 'pending' : 'failed';
+      this.logger.log(
+        `[stripe] refund ${refund.id} for PI ${providerChargeRef} status=${refund.status} -> mapped ${status}`,
+      );
+      return { providerRef: refund.id, status };
+    } catch (err) {
+      const e = err as { code?: string; message?: string };
+      this.logger.warn(`[stripe] refundPayment failed: ${e.code ?? ''} ${e.message ?? String(err)}`);
+      return {
+        providerRef: `stripe_refund_error_${e.code ?? 'unknown'}`,
+        status: 'failed',
+        failureReason: e.message ?? String(err),
+      };
+    }
   }
 }

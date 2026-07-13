@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { FeatureFlagDto } from '@vpsy/contracts';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -29,5 +30,19 @@ export class FeatureFlagsService {
     } catch {
       return defaultEnabled;
     }
+  }
+
+  /** All flags for a tenant (tenant-scoped rows only), key-sorted. */
+  async listForTenant(tenantId: string): Promise<FeatureFlagDto[]> {
+    const flags = await this.prisma.featureFlag.findMany({
+      where: { tenantId },
+      orderBy: { key: 'asc' },
+    });
+    return flags.map((f) => ({
+      id: f.id,
+      key: f.key,
+      enabled: f.enabled,
+      updatedAt: f.updatedAt.toISOString(),
+    }));
   }
 }

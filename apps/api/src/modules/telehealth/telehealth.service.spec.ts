@@ -170,6 +170,15 @@ describe('TelehealthService', () => {
   });
 
   describe('joinSession', () => {
+    it('blocks join when TELEPSYCHOLOGY consent was revoked after create', async () => {
+      const prisma = makePrisma();
+      (prisma.consent.findFirst as jest.Mock).mockResolvedValue(null);
+      const { svc } = makeService(false, prisma);
+
+      await expect(svc.joinSession(clientUser, 'tele_1')).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.teleSession.update).not.toHaveBeenCalled();
+    });
+
     it("CLIENT join lands in WAITING_ROOM with no token — even with LiveKit unconfigured (doc §6, no media needed yet)", async () => {
       const { svc, prisma } = makeService(false);
 

@@ -2,9 +2,13 @@ import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   approveAssignmentSchema,
+  holdAssignmentSchema,
   Permission,
+  rejectAssignmentSchema,
   type ApproveAssignmentInput,
   type AuthPrincipal,
+  type HoldAssignmentInput,
+  type RejectAssignmentInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
@@ -35,5 +39,25 @@ export class MatchingController {
     @Body(new ZodValidationPipe(approveAssignmentSchema)) body: ApproveAssignmentInput,
   ) {
     return this.matching.approve(user, body);
+  }
+
+  /** Manager rejects a proposal (client returns to waitlist). */
+  @Post('reject')
+  @RequirePermissions(Permission.ASSIGNMENT_APPROVE)
+  reject(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(rejectAssignmentSchema)) body: RejectAssignmentInput,
+  ) {
+    return this.matching.reject(user, body);
+  }
+
+  /** Manager holds a proposal for later review. */
+  @Post('hold')
+  @RequirePermissions(Permission.ASSIGNMENT_APPROVE)
+  hold(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(holdAssignmentSchema)) body: HoldAssignmentInput,
+  ) {
+    return this.matching.hold(user, body);
   }
 }

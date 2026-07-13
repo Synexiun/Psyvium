@@ -10,6 +10,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
 import { FieldCipherService } from '../../common/crypto/field-cipher';
+import { ALGORITHM_VERSIONS, stampAlgorithm } from '../../common/clinical';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 
 type NoteRow = {
@@ -165,13 +166,32 @@ export class ClinicalDocumentationService {
       },
     });
 
+    const qualityChecklist =
+      input.content && typeof input.content === 'object' && 'qualityChecklist' in input.content
+        ? (input.content as { qualityChecklist?: Record<string, boolean | string> }).qualityChecklist
+        : undefined;
+    const checklistEntries = qualityChecklist ? Object.entries(qualityChecklist) : [];
+    const checklistChecked = checklistEntries.filter(([, v]) => v === true || v === 'true').length;
+
     await this.audit.record({
       tenantId: principal.tenantId,
       actorId: principal.userId,
       action: 'note.created',
       entityType: 'SessionNote',
       entityId: note.id,
-      after: { sessionId: input.sessionId, version: note.version, goldenThread: goldenThreadFlag ?? 'anchored' },
+      after: {
+        sessionId: input.sessionId,
+        version: note.version,
+        goldenThread: goldenThreadFlag ?? 'anchored',
+        qualityChecklistPresent: checklistEntries.length > 0,
+        qualityChecklistChecked: checklistChecked,
+        qualityChecklistTotal: checklistEntries.length,
+        algorithm: stampAlgorithm(
+          'documentation.note_quality',
+          ALGORITHM_VERSIONS.noteQuality,
+          'Optional clinical note quality checklist (assistive documentation excellence; never blocks save).',
+        ),
+      },
       critical: true,
     });
 

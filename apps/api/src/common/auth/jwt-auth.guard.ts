@@ -98,6 +98,7 @@ export class JwtAuthGuard implements CanActivate {
         clinicId: payload.clinicId,
         jurisdiction: payload.jurisdiction,
         mfaEnrollmentRequired,
+        sessionId: payload.sid,
       };
       req.principal = principal;
 

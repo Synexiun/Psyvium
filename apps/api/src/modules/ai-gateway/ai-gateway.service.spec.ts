@@ -21,10 +21,17 @@ jest.mock('@anthropic-ai/sdk', () => {
 
 function makePrisma() {
   return {
-    aIModelVersion: { findFirst: jest.fn().mockResolvedValue({ id: 'model_1' }) },
-    promptVersion: { findFirst: jest.fn().mockResolvedValue({ id: 'prompt_1' }) },
+    aIModelVersion: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'model_1' }),
+      upsert: jest.fn().mockResolvedValue({ id: 'model_1' }),
+    },
+    promptVersion: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'prompt_1' }),
+      upsert: jest.fn().mockResolvedValue({ id: 'prompt_1' }),
+    },
     aIRecommendation: {
       create: jest.fn().mockImplementation(({ data }: any) => ({ id: 'rec_1', ...data })),
+      findFirst: jest.fn(),
     },
   };
 }

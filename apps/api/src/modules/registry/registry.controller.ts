@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
+  completeInviteSchema,
   createClientRegistrySchema,
   createPsychologistRegistrySchema,
   patchClientRegistrySchema,
@@ -8,6 +9,7 @@ import {
   Permission,
   registryListQuerySchema,
   type AuthPrincipal,
+  type CompleteInviteInput,
   type CreateClientRegistryInput,
   type CreatePsychologistRegistryInput,
   type PatchClientRegistryInput,
@@ -20,6 +22,22 @@ import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { RegistryService } from './registry.service';
+
+/**
+ * Public invite activation (no JWT). The invite token is the credential —
+ * same pattern as auth password-reset completion. Wired against the
+ * PasswordResetToken store for INVITED users.
+ */
+@ApiTags('registry-invite')
+@Controller('registry/invite')
+export class RegistryInviteController {
+  constructor(private readonly registry: RegistryService) {}
+
+  @Post('complete')
+  complete(@Body(new ZodValidationPipe(completeInviteSchema)) body: CompleteInviteInput) {
+    return this.registry.completeInvite(body);
+  }
+}
 
 /**
  * Client Registry (context 3, Wave E) — ADMIN write surface for the person

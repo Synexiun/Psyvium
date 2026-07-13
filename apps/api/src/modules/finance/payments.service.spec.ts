@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import type { AuthPrincipal } from '@vpsy/contracts';
 import { Role } from '@vpsy/contracts';
 import { Prisma } from '@vpsy/database';
@@ -57,6 +57,10 @@ function makeService(overrides: Partial<Record<string, unknown>> = {}) {
         client: { user: { fullName: 'Alex Chen' } },
         ...data,
       })),
+    },
+    payment: {
+      findFirst: jest.fn(),
+      create: jest.fn(),
     },
     $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(prismaTx)),
     ...overrides,
@@ -168,5 +172,42 @@ describe('PaymentsService.payInvoice', () => {
       'tenant_demo',
       expect.objectContaining({ invoiceId: 'invoice_1', amount: '180.0000' }),
     );
+  });
+});
+
+describe('PaymentsService.requestRefund', () => {
+  const capturedPayment = {
+    id: 'payment_1',
+    tenantId: 'tenant_demo',
+    invoiceId: 'invoice_1',
+    amount: new Prisma.Decimal('180.0000'),
+    currency: 'USD',
+    method: 'card',
+    status: 'captured',
+    pspRef: null as string | null,
+    capturedAt: new Date('2026-07-01T00:00:00Z'),
+    deletedAt: null,
+  };
+
+  it('fails closed with 503 and critical audit when Stripe is not configured', async () => {
+    const { svc, audit, prisma } = makeService({
+      payment: {
+        findFirst: jest.fn().mockResolvedValue(capturedPayment),
+        create: jest.fn(),
+      },
+    });
+
+    await expect(
+      svc.requestRefund(managerPrincipal, 'payment_1', { reason: 'Client cancelled within 24h' }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'payment.refund_refused',
+        critical: true,
+        after: expect.objectContaining({ refusedBecause: 'stripe_not_configured' }),
+      }),
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

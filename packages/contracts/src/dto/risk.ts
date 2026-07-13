@@ -170,6 +170,13 @@ export const createSafetyPlanSchema = z.object({
 });
 export type CreateSafetyPlanInput = z.infer<typeof createSafetyPlanSchema>;
 
+export const safetyPlanCompletenessSchema = z.object({
+  score: z.number().min(0).max(100),
+  missing: z.array(z.string()),
+  algorithmVersion: z.string(),
+  citation: z.string(),
+});
+
 export const safetyPlanSchema = z.object({
   id: z.string(),
   clientId: z.string(),
@@ -185,6 +192,8 @@ export const safetyPlanSchema = z.object({
   clientAcknowledgedAt: z.string().nullable(),
   version: z.number().int(),
   createdAt: z.string(),
+  /** Stanley–Brown SPI completeness (assistive quality metric, never a save gate). */
+  completeness: safetyPlanCompletenessSchema.optional(),
 });
 export type SafetyPlanDto = z.infer<typeof safetyPlanSchema>;
 

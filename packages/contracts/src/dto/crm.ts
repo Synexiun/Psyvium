@@ -15,6 +15,13 @@ export const crmContactSchema = z.object({
   name: z.string().min(1).max(200),
   email: z.string().email().optional(),
   phone: z.string().max(40).optional(),
+  /**
+   * Optional suppression flag stored inside the contact JSON blob.
+   * The Lead model has no dedicated `doNotContact` column — when this is
+   * true, outbound engagement is blocked. Absence means "not set" (outreach
+   * is still allowed, but conversion notes that care-consent is required).
+   */
+  doNotContact: z.boolean().optional(),
 });
 export type CrmContact = z.infer<typeof crmContactSchema>;
 

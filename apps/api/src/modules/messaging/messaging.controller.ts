@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   createThreadSchema,
@@ -69,5 +69,12 @@ export class MessagingController {
   @RequirePermissions(Permission.COMMS_WRITE)
   markMessageRead(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
     return this.messaging.markMessageRead(user, id);
+  }
+
+  /** Soft-retract: sender only, within 15 minutes of send. */
+  @Delete('messages/:id')
+  @RequirePermissions(Permission.COMMS_WRITE)
+  retractMessage(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
+    return this.messaging.retractMessage(user, id);
   }
 }

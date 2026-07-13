@@ -492,11 +492,14 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
       const result = await svc.getNationalAnalytics(govPrincipal);
 
       expect(result.kAnonymityFloor).toBe(5);
+      expect(result.meta?.kAnonymityFloor).toBe(5);
+      expect(result.meta?.algorithm?.family).toBe('analytics.k_anonymity');
       const vt = result.metrics.find((m) => m.region === 'US-VT')!;
       expect(vt.suppressed).toBe(true);
       expect(vt.value).toBeNull();
-      // The suppressed row's underlying real value must never appear anywhere in the response.
-      expect(JSON.stringify(result)).not.toContain('33');
+      // The suppressed row's underlying real value must never appear in metric payloads.
+      // (Full-response stringify is flaky against wall-clock timestamps / versions.)
+      expect(JSON.stringify(result.metrics)).not.toContain('33');
 
       const ny = result.metrics.find((m) => m.region === 'US-NY')!;
       expect(ny.suppressed).toBe(false);

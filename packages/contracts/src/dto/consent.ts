@@ -48,6 +48,14 @@ export const consentSchema = z.object({
   grantedAt: z.string(),
   revokedAt: z.string().nullable(),
   documentUrl: z.string().nullable(),
+  /** Optional at grant time — missing hash is still accepted. */
   policyContentHash: z.string().nullable().optional(),
+  /**
+   * True when this grant is active but its version is below the current
+   * required version for that type (`REQUIRED_CONSENT_VERSIONS` or
+   * `AI_CONSENT_VERSION`). Clients should re-grant before purpose-scoped
+   * workflows that check the current version.
+   */
+  reconsentNeeded: z.boolean().optional(),
 });
 export type ConsentDto = z.infer<typeof consentSchema>;

@@ -1,7 +1,7 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import type { AuthPrincipal } from '@vpsy/contracts';
 import { Role } from '@vpsy/contracts';
-import { SchedulingService } from './scheduling.service';
+import { isAllowedAppointmentTransition, SchedulingService } from './scheduling.service';
 
 /**
  * Phase 2 DoD (docs/technical/13-roadmap-and-phases.md, ctx 9 Scheduling):
@@ -177,13 +177,32 @@ describe('SchedulingService.bookAppointment', () => {
   });
 });
 
+describe('isAllowedAppointmentTransition', () => {
+  it('allows the professional path BOOKED → CONFIRMED → COMPLETED/CANCELLED/NO_SHOW', () => {
+    expect(isAllowedAppointmentTransition('BOOKED', 'CONFIRMED')).toBe(true);
+    expect(isAllowedAppointmentTransition('BOOKED', 'CANCELLED')).toBe(true);
+    expect(isAllowedAppointmentTransition('CONFIRMED', 'COMPLETED')).toBe(true);
+    expect(isAllowedAppointmentTransition('CONFIRMED', 'CANCELLED')).toBe(true);
+    expect(isAllowedAppointmentTransition('CONFIRMED', 'NO_SHOW')).toBe(true);
+  });
+
+  it('rejects illegal jumps (BOOKED → COMPLETED/NO_SHOW, terminal → anything else)', () => {
+    expect(isAllowedAppointmentTransition('BOOKED', 'COMPLETED')).toBe(false);
+    expect(isAllowedAppointmentTransition('BOOKED', 'NO_SHOW')).toBe(false);
+    expect(isAllowedAppointmentTransition('COMPLETED', 'BOOKED')).toBe(false);
+    expect(isAllowedAppointmentTransition('CANCELLED', 'CONFIRMED')).toBe(false);
+    expect(isAllowedAppointmentTransition('NO_SHOW', 'COMPLETED')).toBe(false);
+  });
+});
+
 describe('SchedulingService.updateAppointmentStatus', () => {
-  it('emits NoShowRecorded when the status transitions to NO_SHOW', async () => {
-    const { svc, prisma, bus } = makeService({
+  it('emits NoShowRecorded when CONFIRMED transitions to NO_SHOW', async () => {
+    const confirmed = { ...appointmentRow, status: 'CONFIRMED' };
+    const { svc, prisma, bus, audit } = makeService({
       appointment: {
-        findFirst: jest.fn().mockResolvedValue(appointmentRow),
+        findFirst: jest.fn().mockResolvedValue(confirmed),
         findMany: jest.fn(),
-        update: jest.fn().mockResolvedValue({ ...appointmentRow, status: 'NO_SHOW' }),
+        update: jest.fn().mockResolvedValue({ ...confirmed, status: 'NO_SHOW' }),
       },
     });
 
@@ -198,9 +217,16 @@ describe('SchedulingService.updateAppointmentStatus', () => {
       'tenant_demo',
       expect.objectContaining({ appointmentId: 'appt_1' }),
     );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'appointment.status_updated',
+        before: { status: 'CONFIRMED' },
+        after: expect.objectContaining({ status: 'NO_SHOW', transition: 'CONFIRMED→NO_SHOW' }),
+      }),
+    );
   });
 
-  it('does not emit NoShowRecorded for a non-NO_SHOW status change, but does emit the real-time AppointmentStatusChanged event', async () => {
+  it('does not emit NoShowRecorded for BOOKED → CONFIRMED, but does emit AppointmentStatusChanged', async () => {
     const { svc, bus } = makeService({
       appointment: {
         findFirst: jest.fn().mockResolvedValue(appointmentRow),
@@ -223,12 +249,13 @@ describe('SchedulingService.updateAppointmentStatus', () => {
     );
   });
 
-  it('emits AppointmentStatusChanged alongside NoShowRecorded on a NO_SHOW transition', async () => {
+  it('emits AppointmentStatusChanged alongside NoShowRecorded on a CONFIRMED → NO_SHOW transition', async () => {
+    const confirmed = { ...appointmentRow, status: 'CONFIRMED' };
     const { svc, bus } = makeService({
       appointment: {
-        findFirst: jest.fn().mockResolvedValue(appointmentRow),
+        findFirst: jest.fn().mockResolvedValue(confirmed),
         findMany: jest.fn(),
-        update: jest.fn().mockResolvedValue({ ...appointmentRow, status: 'NO_SHOW' }),
+        update: jest.fn().mockResolvedValue({ ...confirmed, status: 'NO_SHOW' }),
       },
     });
 
@@ -239,6 +266,37 @@ describe('SchedulingService.updateAppointmentStatus', () => {
       'tenant_demo',
       expect.objectContaining({ appointmentId: 'appt_1', status: 'NO_SHOW' }),
     );
+  });
+
+  it('throws ConflictException on illegal BOOKED → NO_SHOW jump', async () => {
+    const { svc, prisma, audit } = makeService({
+      appointment: {
+        findFirst: jest.fn().mockResolvedValue(appointmentRow),
+        findMany: jest.fn(),
+        update: jest.fn(),
+      },
+    });
+
+    await expect(
+      svc.updateAppointmentStatus(psychologistPrincipal, 'appt_1', { status: 'NO_SHOW' as const }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.appointment.updateMany).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('throws ConflictException on terminal COMPLETED → anything', async () => {
+    const completed = { ...appointmentRow, status: 'COMPLETED' };
+    const { svc } = makeService({
+      appointment: {
+        findFirst: jest.fn().mockResolvedValue(completed),
+        findMany: jest.fn(),
+        update: jest.fn(),
+      },
+    });
+
+    await expect(
+      svc.updateAppointmentStatus(psychologistPrincipal, 'appt_1', { status: 'CANCELLED' as const }),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 });
 

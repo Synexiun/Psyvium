@@ -151,3 +151,14 @@ export const psychologistRegistryListDto = z.object({
   nextCursor: z.string().nullable(),
 });
 export type PsychologistRegistryListDto = z.infer<typeof psychologistRegistryListDto>;
+
+/**
+ * Invite activation for INVITED registry users. Reuses the PasswordResetToken
+ * store (same SHA-256 digest + expiry model as auth password reset). Public —
+ * no JWT required (the token is the credential).
+ */
+export const completeInviteSchema = z.object({
+  token: z.string().min(20).max(200),
+  password: z.string().min(8).max(200),
+});
+export type CompleteInviteInput = z.infer<typeof completeInviteSchema>;
