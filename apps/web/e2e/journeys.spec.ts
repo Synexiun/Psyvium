@@ -46,6 +46,23 @@ test.describe('Clinician journey (dr.rivera)', () => {
     await expect(page.getByText('No clients are assigned to you yet.')).toHaveCount(0);
   });
 
+  test('session workspace shows secure document vault for a selected client', async ({ page }) => {
+    await page.goto('/session');
+    await expect(page.getByRole('heading', { name: 'Session workspace' })).toBeVisible();
+
+    const clientSelect = page.locator('#workspace-client');
+    await expect(clientSelect).toBeVisible({ timeout: 15_000 });
+    // Pick the first real caseload option (skip placeholder).
+    const options = clientSelect.locator('option');
+    const count = await options.count();
+    expect(count).toBeGreaterThan(1);
+    const value = await options.nth(1).getAttribute('value');
+    await clientSelect.selectOption(value!);
+
+    await expect(page.getByText('Secure document vault')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/Choose file|Uploading/i).first()).toBeVisible();
+  });
+
   test('risk board renders with SLA text', async ({ page }) => {
     await page.goto('/risk');
     await expect(page.getByRole('heading', { name: 'Escalation board' })).toBeVisible();

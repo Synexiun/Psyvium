@@ -118,9 +118,7 @@ export class AuditService {
         });
         const prevHash = prev?.hash ?? null;
         const occurredAt = new Date();
-        // Full material — before/ip/userAgent participate in the hash so an
-        // attacker cannot rewrite those forensic fields without breaking the chain.
-        const material = JSON.stringify({
+        const hash = computeEventHash({
           prevHash,
           tenantId: input.tenantId,
           actorId: input.actorId ?? null,
@@ -133,7 +131,6 @@ export class AuditService {
           userAgent: input.userAgent ?? null,
           occurredAt: occurredAt.toISOString(),
         });
-        const hash = createHash('sha256').update(material).digest('hex');
 
         await tx.auditEvent.create({
           data: {
@@ -172,6 +169,125 @@ export class AuditService {
       }
     }
   }
+
+  /**
+   * Verify prevHash linkage for the newest `limit` events (oldest→newest
+   * within the window). Detects silent deletion/reordering of middle rows.
+   *
+   * Note: full material re-hash is intentionally not done on read — JSONB
+   * key order is not stable across drivers, so recomputing would false-fail
+   * honest history. Integrity against field rewrite relies on the stored
+   * hash + daily tip anchor export (SIEM/WORM) and the write-path hash.
+   */
+  async verifyChain(
+    tenantId: string,
+    limit = 500,
+  ): Promise<{
+    ok: boolean;
+    checked: number;
+    tipHash: string | null;
+    tipId: string | null;
+    brokenAt?: string;
+    reason?: string;
+  }> {
+    const take = Math.min(Math.max(limit, 1), 5000);
+    const newestFirst = await this.prisma.auditEvent.findMany({
+      where: { tenantId },
+      orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+      take,
+    });
+    if (newestFirst.length === 0) {
+      return { ok: true, checked: 0, tipHash: null, tipId: null };
+    }
+    const tip = newestFirst[0]!;
+    const rows = [...newestFirst].reverse(); // oldest → newest within window
+
+    // Within the window every consecutive prevHash must equal the prior hash.
+    // The window's first row may point outside (genesis or older tip).
+    for (let i = 1; i < rows.length; i++) {
+      const prev = rows[i - 1]!;
+      const row = rows[i]!;
+      if (row.prevHash !== prev.hash) {
+        return {
+          ok: false,
+          checked: i,
+          tipHash: tip.hash,
+          tipId: tip.id,
+          brokenAt: row.id,
+          reason: 'prevHash_mismatch',
+        };
+      }
+    }
+    return {
+      ok: true,
+      checked: rows.length,
+      tipHash: tip.hash,
+      tipId: tip.id,
+    };
+  }
+
+  /**
+   * Daily integrity proof: verify recent chain then append a critical
+   * `audit.daily_anchor` event binding the tip hash to the UTC calendar day.
+   */
+  async recordDailyAnchor(tenantId: string): Promise<{
+    ok: boolean;
+    day: string;
+    tipHash: string | null;
+    verified: boolean;
+    checked: number;
+  }> {
+    const day = new Date().toISOString().slice(0, 10);
+    const verification = await this.verifyChain(tenantId, 1000);
+    await this.record({
+      tenantId,
+      actorId: 'system.audit-anchor',
+      action: 'audit.daily_anchor',
+      entityType: 'AuditChain',
+      entityId: day,
+      after: {
+        day,
+        tipHash: verification.tipHash,
+        tipId: verification.tipId,
+        checked: verification.checked,
+        chainOk: verification.ok,
+        brokenAt: verification.brokenAt ?? null,
+        reason: verification.reason ?? null,
+      },
+      critical: true,
+    });
+    if (!verification.ok) {
+      this.logger.error(
+        `audit chain BROKEN tenantId=${tenantId} day=${day} brokenAt=${verification.brokenAt} reason=${verification.reason}`,
+      );
+    }
+    return {
+      ok: verification.ok,
+      day,
+      tipHash: verification.tipHash,
+      verified: verification.ok,
+      checked: verification.checked,
+    };
+  }
+}
+
+function computeEventHash(fields: {
+  prevHash: string | null;
+  tenantId: string;
+  actorId: string | null;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  before: unknown;
+  after: unknown;
+  ip: string | null;
+  userAgent: string | null;
+  occurredAt: string;
+}): string {
+  // Full material — before/ip/userAgent participate in the hash so an
+  // attacker cannot rewrite those forensic fields without breaking the chain.
+  const material = JSON.stringify(fields);
+  return createHash('sha256').update(material).digest('hex');
 }
 
 /** Stable signed 32-bit advisory lock key from a tenant id. */

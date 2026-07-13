@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Permission, type AuthPrincipal } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -39,5 +39,23 @@ export class AuditController {
       actorId,
       action,
     });
+  }
+
+  /** Recompute recent chain integrity for the caller's tenant. */
+  @Get('chain/verify')
+  @RequirePermissions(Permission.AUDIT_READ)
+  verifyChain(@CurrentUser() user: AuthPrincipal, @Query('limit') limit?: string) {
+    const parsed = limit ? Number(limit) : 500;
+    return this.audit.verifyChain(user.tenantId, Number.isFinite(parsed) ? parsed : 500);
+  }
+
+  /**
+   * Record a daily tip-hash anchor for this tenant (ops / after restore drill).
+   * Nightly cron also runs for all tenants.
+   */
+  @Post('chain/anchor')
+  @RequirePermissions(Permission.AUDIT_READ)
+  anchorNow(@CurrentUser() user: AuthPrincipal) {
+    return this.audit.recordDailyAnchor(user.tenantId);
   }
 }

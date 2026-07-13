@@ -110,6 +110,21 @@ describe('DocumentVirusScanService', () => {
     expect(result.virusScanStatus).toBe('error');
   });
 
+  it('ClamAV INSTREAM works when bytes come from S3-shaped load path', async () => {
+    process.env.VPSY_DOCUMENT_VIRUS_SCAN = 'true';
+    process.env.CLAMAV_HOST = '127.0.0.1';
+    process.env.VPSY_DOCUMENT_BLOB_BACKEND = 's3';
+    delete process.env.VPSY_DOCUMENT_VIRUS_SCAN_STUB;
+    process.env.NODE_ENV = 'test';
+
+    DocumentVirusScanService.loadObjectBytesOverride = async () => Buffer.from('s3 clean payload');
+    fakeSocketThatReplies('stream: OK\0');
+
+    const { svc } = makeService('tenant_1/client/c1/from-s3.pdf');
+    const result = await svc.scanDocument('tenant_1', 'doc_1');
+    expect(result.virusScanStatus).toBe('clean');
+  });
+
   it('ClamAV INSTREAM marks clean when clamd returns OK', async () => {
     process.env.VPSY_DOCUMENT_VIRUS_SCAN = 'true';
     process.env.CLAMAV_HOST = '127.0.0.1';

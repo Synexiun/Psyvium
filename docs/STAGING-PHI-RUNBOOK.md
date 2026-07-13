@@ -84,11 +84,37 @@ VPSY_DOCUMENT_VIRUS_SCAN_STUB=true
 - Background sweep every 30s for `virusScanStatus=pending`  
 - Manual: `POST /documents/:id/virus-scan` (CLIENT_READ; tenant-scoped ops triage)  
 - Local + `CLAMAV_HOST`: loads object bytes from the local blob dir and streams zINSTREAM to clamd  
-- S3 + ClamAV without a download stream worker: fail-closed → `error` (honest until Lambda/sidecar lands)  
+- S3 + `CLAMAV_HOST`: server-side SigV4 GET → same INSTREAM path (in-process; keep max-bytes bound)  
 - Downloads of `infected` rows are **403**  
 - UI: Admin → Documents card (status + pending queue); Session workspace → client vault (presign upload)  
 
 **Never use the stub against real PHI.** Production stub requires explicit `VPSY_ALLOW_VIRUS_SCAN_STUB_IN_PROD=true`.
+
+---
+
+## 4b. Field-key rotation (env dual-key)
+
+```bash
+# After minting a new key, keep the old one for decrypt during re-encrypt window:
+VPSY_FIELD_KEY=<new base64 32-byte>
+VPSY_FIELD_KEY_ID=v2
+VPSY_FIELD_KEY_PREVIOUS=<old base64 32-byte>
+VPSY_FIELD_KEY_PREVIOUS_ID=v1
+```
+
+New writes get `kid` on the envelope; decrypt tries current then previous. KMS swap remains a single DI binding on `FIELD_KEY_PROVIDER`.
+
+---
+
+## 4c. Daily audit chain anchor
+
+```bash
+# Enabled by default. Disable cron only:
+VPSY_AUDIT_DAILY_ANCHOR=false
+```
+
+- Cron: midnight UTC tip-hash anchor per tenant (`audit.daily_anchor`)  
+- Ops: `GET /api/v1/audit/chain/verify`, `POST /api/v1/audit/chain/anchor` (AUDIT_READ)  
 
 ---
 
@@ -132,11 +158,12 @@ pnpm --filter @vpsy/api start
 
 - BAAs (host, email, SMS, video, AI, storage)  
 - External pen test + remediation  
-- Cloud malware stream (S3 → ClamAV/Lambda) end-to-end  
-- KMS-backed field keys + rotation  
+- Dedicated stream worker for multi-GB fleets (API in-process S3→ClamAV is fine for staging/single-node)  
+- AWS KMS (or equivalent) FieldKeyProvider + automated re-encrypt job  
 - PITR restore drill  
 - Clinical algorithm sign-off for marketed claims  
 - No shared demo seed on any public DB  
+- SIEM/WORM export of daily audit anchors 
 
 ---
 

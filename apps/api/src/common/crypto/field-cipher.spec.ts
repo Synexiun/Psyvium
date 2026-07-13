@@ -110,11 +110,43 @@ describe('FieldCipherService', () => {
     await expect(disabled.decryptJson(envelope, 'tenant_a')).rejects.toThrow(/VPSY_FIELD_KEY is not set/);
   });
 
+  it('writes kid on new envelopes and decrypts after key rotation via previous key', async () => {
+    const oldKey = TEST_KEY;
+    const newKey = OTHER_KEY;
+    const sealed = new FieldCipherService({
+      getKey: async () => oldKey,
+      getKeyId: async () => 'v0',
+    });
+    const envelope = await sealed.encryptJson({ secret: 'rotate-me' }, 'tenant_a');
+    expect(envelope).toMatchObject({ kid: 'v0' });
+
+    const rotated = new FieldCipherService({
+      getKey: async () => newKey,
+      getKeyId: async () => 'v1',
+      getPreviousKeys: async () => [{ id: 'v0', key: oldKey }],
+    });
+    await expect(rotated.decryptJson(envelope, 'tenant_a')).resolves.toEqual({ secret: 'rotate-me' });
+
+    // New writes use the new kid
+    const next = await rotated.encryptJson({ secret: 'new' }, 'tenant_a');
+    expect(next).toMatchObject({ kid: 'v1' });
+    await expect(rotated.decryptJson(next, 'tenant_a')).resolves.toEqual({ secret: 'new' });
+  });
+
   describe('EnvFieldKeyProvider — fail-fast (jwt-secrets.ts pattern)', () => {
     const ORIGINAL_ENV = process.env.VPSY_FIELD_KEY;
+    const ORIGINAL_ID = process.env.VPSY_FIELD_KEY_ID;
+    const ORIGINAL_PREV = process.env.VPSY_FIELD_KEY_PREVIOUS;
+    const ORIGINAL_PREV_ID = process.env.VPSY_FIELD_KEY_PREVIOUS_ID;
     afterEach(() => {
       if (ORIGINAL_ENV === undefined) delete process.env.VPSY_FIELD_KEY;
       else process.env.VPSY_FIELD_KEY = ORIGINAL_ENV;
+      if (ORIGINAL_ID === undefined) delete process.env.VPSY_FIELD_KEY_ID;
+      else process.env.VPSY_FIELD_KEY_ID = ORIGINAL_ID;
+      if (ORIGINAL_PREV === undefined) delete process.env.VPSY_FIELD_KEY_PREVIOUS;
+      else process.env.VPSY_FIELD_KEY_PREVIOUS = ORIGINAL_PREV;
+      if (ORIGINAL_PREV_ID === undefined) delete process.env.VPSY_FIELD_KEY_PREVIOUS_ID;
+      else process.env.VPSY_FIELD_KEY_PREVIOUS_ID = ORIGINAL_PREV_ID;
     });
 
     it('resolves null (disabled) when VPSY_FIELD_KEY is unset', async () => {
@@ -131,6 +163,16 @@ describe('FieldCipherService', () => {
       process.env.VPSY_FIELD_KEY = TEST_KEY.toString('base64');
       const key = await new EnvFieldKeyProvider().getKey();
       expect(key).toEqual(TEST_KEY);
+    });
+
+    it('exposes key id and previous key for rotation', async () => {
+      process.env.VPSY_FIELD_KEY = TEST_KEY.toString('base64');
+      process.env.VPSY_FIELD_KEY_ID = 'v2';
+      process.env.VPSY_FIELD_KEY_PREVIOUS = OTHER_KEY.toString('base64');
+      process.env.VPSY_FIELD_KEY_PREVIOUS_ID = 'v1';
+      const provider = new EnvFieldKeyProvider();
+      await expect(provider.getKeyId()).resolves.toBe('v2');
+      await expect(provider.getPreviousKeys()).resolves.toEqual([{ id: 'v1', key: OTHER_KEY }]);
     });
   });
 });

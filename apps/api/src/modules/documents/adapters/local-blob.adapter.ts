@@ -72,8 +72,12 @@ export class LocalBlobAdapter implements BlobStorageProvider {
     await writeFile(full, body);
   }
 
-  async getObject(storageKey: string): Promise<Buffer> {
-    return readFile(join(this.root, storageKey));
+  async getObject(storageKey: string, opts?: { maxBytes?: number }): Promise<Buffer> {
+    const buf = await readFile(join(this.root, storageKey));
+    if (opts?.maxBytes != null && buf.length > opts.maxBytes) {
+      throw new Error(`Local object ${buf.length} bytes exceeds max ${opts.maxBytes}`);
+    }
+    return buf;
   }
 
   async headObject(storageKey: string): Promise<{ exists: boolean; sizeBytes?: number }> {

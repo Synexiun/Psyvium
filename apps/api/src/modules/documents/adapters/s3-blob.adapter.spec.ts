@@ -57,4 +57,36 @@ describe('S3BlobAdapter', () => {
     const get = await adapter!.presignDownload(put.storageKey, 'application/pdf');
     expect(get.downloadUrl).toContain('X-Amz-Signature=');
   });
+
+  it('getObject fetches via SigV4 presign and enforces maxBytes', async () => {
+    process.env.VPSY_DOCUMENT_BLOB_BACKEND = 's3';
+    process.env.AWS_ACCESS_KEY_ID = 'AKIATEST';
+    process.env.AWS_SECRET_ACCESS_KEY = 'secretsecretsecret';
+    process.env.AWS_REGION = 'us-east-1';
+    process.env.VPSY_DOCUMENT_S3_BUCKET = 'vpsy-docs';
+
+    const adapter = S3BlobAdapter.fromEnv()!;
+    const payload = Buffer.from('s3-object-bytes');
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: (h: string) => (h.toLowerCase() === 'content-length' ? String(payload.length) : null) },
+      arrayBuffer: async () => payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength),
+    });
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as any;
+
+    try {
+      const buf = await adapter.getObject('tenant_1/client/c1/file.pdf', { maxBytes: 1024 });
+      expect(buf.toString()).toBe('s3-object-bytes');
+      expect(fetchMock).toHaveBeenCalled();
+      const url = fetchMock.mock.calls[0][0] as string;
+      expect(url).toContain('X-Amz-Signature=');
+
+      await expect(
+        adapter.getObject('tenant_1/client/c1/big.pdf', { maxBytes: 4 }),
+      ).rejects.toThrow(/exceeds max/);
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
 });

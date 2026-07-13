@@ -11,7 +11,7 @@ Living traceability of every bounded context against the roadmap (`technical/13-
 > **Engineering wave (2026-07-13):** Gate 0 + remaining code gates closed — `InstrumentLicenseGrant` 403 on administer/CAT, treatment-plan client acknowledgment API+UI, SMS templates, PolicyEngine skeleton, middleware matcher expansion, render.yaml web JWT notes. Prior Gate 0/1 items retained (auth/ABAC/MFA/password reset/SMS STOP/AI queue/CI migrate+audit).
 >
 > **Independent re-audit (2026-07-13):** see [`PLATFORM-AUDIT-2026-07-13.md`](PLATFORM-AUDIT-2026-07-13.md).  
-> **Clinical excellence + staging-PHI wave (2026-07-13):** shared `common/clinical` + email (Resend), **local + S3 document blobs** (SigV4 presign), **virus-scan worker** (stub/ClamAV ping), intake/SMS encryption, DIF skeleton, manager min-necessary, DPO email. See [`STAGING-PHI-RUNBOOK.md`](STAGING-PHI-RUNBOOK.md). Remaining for true PHI GA: full S3→scanner stream, KMS, BAAs, pen test, clinical validation.
+> **Clinical excellence + staging-PHI wave (2026-07-13):** shared `common/clinical` + email (Resend), **local + S3 document blobs** (SigV4 presign + server getObject), **virus-scan worker** (stub / ClamAV zINSTREAM for local+S3), document vault UI, field-key `kid` + previous-key rotation, daily audit chain anchor + verify API. See [`STAGING-PHI-RUNBOOK.md`](STAGING-PHI-RUNBOOK.md). Remaining for true PHI GA: KMS FieldKeyProvider, BAAs, pen test, SIEM/WORM, clinical validation.
 
 ## Context status (30 contexts)
 

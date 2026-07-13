@@ -81,6 +81,32 @@ export class S3BlobAdapter implements BlobStorageProvider {
     return { downloadUrl, expiresAt, backend: 's3' };
   }
 
+  /**
+   * Server-side GET via short-lived SigV4 presign + fetch.
+   * Used by the virus-scan worker (S3 → ClamAV INSTREAM) without AWS SDK.
+   */
+  async getObject(storageKey: string, opts?: { maxBytes?: number }): Promise<Buffer> {
+    const maxBytes = opts?.maxBytes ?? Number(process.env.VPSY_DOCUMENT_VIRUS_SCAN_MAX_BYTES ?? 25 * 1024 * 1024);
+    const { downloadUrl } = await this.presignDownload(storageKey, 'application/octet-stream');
+    const res = await fetch(downloadUrl, { method: 'GET' });
+    if (!res.ok) {
+      throw new Error(`S3 GET failed status=${res.status} key=${storageKey}`);
+    }
+    const lenHeader = res.headers.get('content-length');
+    if (lenHeader) {
+      const n = Number(lenHeader);
+      if (Number.isFinite(n) && n > maxBytes) {
+        throw new Error(`S3 object ${n} bytes exceeds max ${maxBytes}`);
+      }
+    }
+    const ab = await res.arrayBuffer();
+    if (ab.byteLength > maxBytes) {
+      throw new Error(`S3 object ${ab.byteLength} bytes exceeds max ${maxBytes}`);
+    }
+    this.logger.debug(`S3 getObject key=${storageKey} bytes=${ab.byteLength}`);
+    return Buffer.from(ab);
+  }
+
   async headObject(storageKey: string): Promise<{ exists: boolean; sizeBytes?: number }> {
     // Optional head — not required for presign flow; return unknown exists.
     void storageKey;

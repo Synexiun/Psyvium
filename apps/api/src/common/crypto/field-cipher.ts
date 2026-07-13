@@ -24,6 +24,11 @@ export const FIELD_ENC_ALG = 'xchacha20poly1305' as const;
 export interface FieldEnvelope {
   __vpsy_enc: 1;
   alg: typeof FIELD_ENC_ALG;
+  /**
+   * Key id used at encrypt time (rotation). Optional on legacy envelopes
+   * written before kid support — decrypt tries current then previous keys.
+   */
+  kid?: string;
   /** nonce, base64 */
   n: string;
   /** ciphertext (includes the Poly1305 tag), base64 */
@@ -80,6 +85,9 @@ function isFieldEnvelope(value: unknown): value is FieldEnvelope {
 export class FieldCipherService implements OnModuleInit {
   private readonly logger = new Logger(FieldCipherService.name);
   private key: Uint8Array | null = null;
+  private keyId: string | null = null;
+  /** Decrypt-only previous keys (rotation window). */
+  private previousKeys: Array<{ id: string; key: Uint8Array }> = [];
   private readonly readyPromise: Promise<void>;
 
   constructor(@Inject(FIELD_KEY_PROVIDER) private readonly keyProvider: FieldKeyProvider) {
@@ -95,9 +103,15 @@ export class FieldCipherService implements OnModuleInit {
     const key = await this.keyProvider.getKey();
     if (key) {
       this.key = new Uint8Array(key);
+      const kid = this.keyProvider.getKeyId ? await this.keyProvider.getKeyId() : null;
+      this.keyId = kid && kid.length > 0 ? kid : 'v1';
+      if (this.keyProvider.getPreviousKeys) {
+        const prev = await this.keyProvider.getPreviousKeys();
+        this.previousKeys = prev.map((p) => ({ id: p.id, key: new Uint8Array(p.key) }));
+      }
       this.logger.log(
-        '[security] Field-level PHI encryption ACTIVE (VPSY_FIELD_KEY set) — new SessionNote.content and ' +
-          'SafetyPlan writes are encrypted at rest (XChaCha20-Poly1305, tenant-bound AAD).',
+        `[security] Field-level PHI encryption ACTIVE (kid=${this.keyId}, previousKeys=${this.previousKeys.length}) — ` +
+          'new SessionNote.content and SafetyPlan writes are encrypted at rest (XChaCha20-Poly1305, tenant-bound AAD).',
       );
     } else {
       // Production must never store clinical fields in cleartext by accident.
@@ -121,6 +135,11 @@ export class FieldCipherService implements OnModuleInit {
     return this.key !== null;
   }
 
+  /** Active encrypt key id (null when encryption disabled). */
+  get activeKeyId(): string | null {
+    return this.keyId;
+  }
+
   private async ready(): Promise<void> {
     await this.readyPromise;
   }
@@ -142,6 +161,7 @@ export class FieldCipherService implements OnModuleInit {
     const envelope: FieldEnvelope = {
       __vpsy_enc: 1,
       alg: FIELD_ENC_ALG,
+      kid: this.keyId ?? 'v1',
       n: sodium.to_base64(nonce, sodium.base64_variants.ORIGINAL),
       c: sodium.to_base64(ciphertext, sodium.base64_variants.ORIGINAL),
     };
@@ -154,8 +174,10 @@ export class FieldCipherService implements OnModuleInit {
    *    -> returned unchanged. This is the backward-compatibility path: rows
    *    written before `VPSY_FIELD_KEY` existed stay readable forever.
    *  - Is an envelope but the tenantId (AAD) doesn't match the one it was
-   *    sealed under, or the configured key is wrong/missing -> throws. We
+   *    sealed under, or no configured key opens it -> throws. We
    *    never fabricate a plaintext fallback for ciphertext we can't open.
+   *  - During rotation, tries current key then previous keys (preferring
+   *    matching `kid` when present on the envelope).
    */
   async decryptJson(value: unknown, tenantId: string): Promise<unknown> {
     await this.ready();
@@ -170,16 +192,46 @@ export class FieldCipherService implements OnModuleInit {
     const ciphertext = sodium.from_base64(value.c, sodium.base64_variants.ORIGINAL);
     const aad = sodium.from_string(tenantId);
 
-    let plaintext: Uint8Array;
-    try {
-      plaintext = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, ciphertext, aad, nonce, this.key);
-    } catch {
-      throw new Error(
-        '[security] Field decryption failed (wrong key or tenant/AAD mismatch) — refusing to return corrupted ' +
-          'or cross-tenant PHI.',
-      );
+    const candidates = this.decryptKeyCandidates(value.kid);
+    for (const candidate of candidates) {
+      try {
+        const plaintext = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
+          null,
+          ciphertext,
+          aad,
+          nonce,
+          candidate,
+        );
+        return JSON.parse(sodium.to_string(plaintext));
+      } catch {
+        // try next key
+      }
     }
-    return JSON.parse(sodium.to_string(plaintext));
+    throw new Error(
+      '[security] Field decryption failed (wrong key or tenant/AAD mismatch) — refusing to return corrupted ' +
+        'or cross-tenant PHI.',
+    );
+  }
+
+  /** Prefer kid-matched previous keys, then current, then remaining previous. */
+  private decryptKeyCandidates(envelopeKid: string | undefined): Uint8Array[] {
+    const out: Uint8Array[] = [];
+    const seen = new Set<Uint8Array>();
+    const push = (k: Uint8Array | null | undefined) => {
+      if (!k || seen.has(k)) return;
+      seen.add(k);
+      out.push(k);
+    };
+
+    if (envelopeKid) {
+      for (const p of this.previousKeys) {
+        if (p.id === envelopeKid) push(p.key);
+      }
+      if (this.keyId === envelopeKid) push(this.key);
+    }
+    push(this.key);
+    for (const p of this.previousKeys) push(p.key);
+    return out;
   }
 
   /**

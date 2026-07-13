@@ -107,7 +107,7 @@ export class DocumentVirusScanService {
         const bytes = await this.loadObjectBytes(storageKey);
         if (!bytes) {
           this.logger.warn(
-            `ClamAV: no local bytes for ${storageKey} (S3 objects need a download stream worker) — fail-closed error`,
+            `ClamAV: could not load object bytes for ${storageKey} (check VPSY_DOCUMENT_BLOB_BACKEND + credentials) — fail-closed error`,
           );
           return 'error';
         }
@@ -130,25 +130,41 @@ export class DocumentVirusScanService {
     return 'skipped';
   }
 
-  /** Local blob only — S3 requires a separate stream pipeline. */
+  /**
+   * Load object bytes from the configured blob backend (local filesystem or S3
+   * SigV4 GET). Both feed ClamAV INSTREAM in-process — no separate Lambda
+   * required for staging/single-node; large multi-GB fleets may still prefer
+   * a dedicated stream worker to keep API memory bounded.
+   */
   private async loadObjectBytes(storageKey: string): Promise<Buffer | null> {
     if (DocumentVirusScanService.loadObjectBytesOverride) {
       return DocumentVirusScanService.loadObjectBytesOverride(storageKey);
     }
-    if (process.env.VPSY_DOCUMENT_BLOB_BACKEND !== 'local') return null;
+    const maxBytes = Number(process.env.VPSY_DOCUMENT_VIRUS_SCAN_MAX_BYTES ?? 25 * 1024 * 1024);
     try {
-      const { LocalBlobAdapter } = await import('./adapters/local-blob.adapter');
-      const local = LocalBlobAdapter.fromEnv();
-      if (!local) return null;
-      return await local.getObject(storageKey);
-    } catch {
+      const backend = process.env.VPSY_DOCUMENT_BLOB_BACKEND?.trim();
+      if (backend === 'local') {
+        const { LocalBlobAdapter } = await import('./adapters/local-blob.adapter');
+        const local = LocalBlobAdapter.fromEnv();
+        if (!local?.getObject) return null;
+        return await local.getObject(storageKey, { maxBytes });
+      }
+      if (backend === 's3') {
+        const { S3BlobAdapter } = await import('./adapters/s3-blob.adapter');
+        const s3 = S3BlobAdapter.fromEnv();
+        if (!s3?.getObject) return null;
+        return await s3.getObject(storageKey, { maxBytes });
+      }
+      return null;
+    } catch (err) {
+      this.logger.warn(`loadObjectBytes failed for ${storageKey}: ${(err as Error).message}`);
       return null;
     }
   }
 
   /**
    * ClamAV INSTREAM over TCP (zINSTREAM). Streams object bytes to clamd.
-   * Works for local blob objects; S3 should use a Lambda/sidecar that downloads first.
+   * Bytes come from local disk or S3 getObject (see loadObjectBytes).
    */
   private async scanWithClamavInstream(host: string, bytes: Buffer): Promise<VirusScanOutcome> {
     const port = Number(process.env.CLAMAV_PORT ?? 3310);
