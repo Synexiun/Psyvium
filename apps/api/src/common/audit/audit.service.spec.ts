@@ -32,7 +32,8 @@ describe('AuditService chain integrity', () => {
       auditEvent: prisma.auditEvent,
     };
     prisma.$transaction = jest.fn(async (fn: (t: unknown) => Promise<void>) => fn(tx));
-    return { svc: new AuditService(prisma as any), prisma, tx };
+    const bus = { publish: jest.fn().mockResolvedValue(undefined) };
+    return { svc: new AuditService(prisma as any, bus as any), prisma, tx, bus };
   }
 
   it('verifyChain accepts a well-linked window', async () => {
@@ -59,12 +60,12 @@ describe('AuditService chain integrity', () => {
     expect(result.reason).toBe('prevHash_mismatch');
   });
 
-  it('recordDailyAnchor writes critical anchor with tip', async () => {
+  it('recordDailyAnchor writes critical anchor with tip and publishes SIEM events', async () => {
     const rows = [
       { id: 'a', hash: 'h1', prevHash: null },
       { id: 'b', hash: 'h2', prevHash: 'h1' },
     ];
-    const { svc, tx } = makeService(rows);
+    const { svc, tx, bus } = makeService(rows);
     tx.auditEvent.findFirst = jest.fn().mockResolvedValue({ hash: 'h2' });
     tx.auditEvent.create = jest.fn().mockResolvedValue({});
 
@@ -78,6 +79,30 @@ describe('AuditService chain integrity', () => {
           entityType: 'AuditChain',
         }),
       }),
+    );
+    expect(bus.publish).toHaveBeenCalledWith(
+      'audit.daily_anchor',
+      'tenant_1',
+      expect.objectContaining({ chainOk: true, tipHash: 'h2' }),
+    );
+  });
+
+  it('recordDailyAnchor publishes audit.chain_broken when links fail', async () => {
+    const rows = [
+      { id: 'a', hash: 'h1', prevHash: null },
+      { id: 'b', hash: 'h2', prevHash: 'WRONG' },
+    ];
+    const { svc, tx, bus } = makeService(rows);
+    tx.auditEvent.findFirst = jest.fn().mockResolvedValue({ hash: 'h2' });
+    tx.auditEvent.create = jest.fn().mockResolvedValue({});
+
+    const result = await svc.recordDailyAnchor('tenant_1');
+    expect(result.ok).toBe(false);
+    expect(bus.publish).toHaveBeenCalledWith('audit.daily_anchor', 'tenant_1', expect.any(Object));
+    expect(bus.publish).toHaveBeenCalledWith(
+      'audit.chain_broken',
+      'tenant_1',
+      expect.objectContaining({ chainOk: false }),
     );
   });
 });

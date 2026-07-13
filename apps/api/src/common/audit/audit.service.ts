@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { AuthPrincipal } from '@vpsy/contracts';
 import { PrismaService } from '../prisma/prisma.service';
+import { EventBus, Events } from '../events/event-bus.service';
 
 export interface AuditInput {
   tenantId: string;
@@ -36,7 +37,10 @@ export interface AuditInput {
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly bus?: EventBus,
+  ) {}
 
   /**
    * Read-only audit trail for holders of AUDIT_READ. Returns the newest
@@ -239,27 +243,34 @@ export class AuditService {
   }> {
     const day = new Date().toISOString().slice(0, 10);
     const verification = await this.verifyChain(tenantId, 1000);
+    const after = {
+      day,
+      tipHash: verification.tipHash,
+      tipId: verification.tipId,
+      checked: verification.checked,
+      chainOk: verification.ok,
+      brokenAt: verification.brokenAt ?? null,
+      reason: verification.reason ?? null,
+    };
     await this.record({
       tenantId,
       actorId: 'system.audit-anchor',
       action: 'audit.daily_anchor',
       entityType: 'AuditChain',
       entityId: day,
-      after: {
-        day,
-        tipHash: verification.tipHash,
-        tipId: verification.tipId,
-        checked: verification.checked,
-        chainOk: verification.ok,
-        brokenAt: verification.brokenAt ?? null,
-        reason: verification.reason ?? null,
-      },
+      after,
       critical: true,
     });
     if (!verification.ok) {
       this.logger.error(
         `audit chain BROKEN tenantId=${tenantId} day=${day} brokenAt=${verification.brokenAt} reason=${verification.reason}`,
       );
+    }
+    if (this.bus) {
+      await this.bus.publish(Events.AuditDailyAnchor, tenantId, after);
+      if (!verification.ok) {
+        await this.bus.publish(Events.AuditChainBroken, tenantId, after);
+      }
     }
     return {
       ok: verification.ok,

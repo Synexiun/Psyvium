@@ -102,7 +102,22 @@ VPSY_FIELD_KEY_PREVIOUS=<old base64 32-byte>
 VPSY_FIELD_KEY_PREVIOUS_ID=v1
 ```
 
-New writes get `kid` on the envelope; decrypt tries current then previous. KMS swap remains a single DI binding on `FIELD_KEY_PROVIDER`.
+New writes get `kid` on the envelope; decrypt tries current then previous.
+
+### KMS-wrapped DEK (production-shaped)
+
+```bash
+VPSY_FIELD_KEY_PROVIDER=kms
+# 32-byte DEK encrypted with your CMK (aws kms encrypt --key-id ... --plaintext fileb://dek.bin)
+VPSY_FIELD_DEK_CIPHERTEXT=<base64 CiphertextBlob>
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=us-east-1
+# Optional LocalStack / VPC endpoint:
+# VPSY_KMS_ENDPOINT=http://localhost:4566
+```
+
+Boot calls `kms:Decrypt` once (pure Node SigV4), caches the DEK in memory. Fail-fast if unwrap fails.
 
 ---
 
@@ -115,6 +130,21 @@ VPSY_AUDIT_DAILY_ANCHOR=false
 
 - Cron: midnight UTC tip-hash anchor per tenant (`audit.daily_anchor`)  
 - Ops: `GET /api/v1/audit/chain/verify`, `POST /api/v1/audit/chain/anchor` (AUDIT_READ)  
+- Broken chains publish `audit.chain_broken` → DPO email + SIEM  
+
+---
+
+## 4d. SIEM export
+
+```bash
+VPSY_SIEM_WEBHOOK_URL=https://siem.example/ingest
+VPSY_SIEM_WEBHOOK_SECRET=<hmac secret>
+# and/or append-only JSONL:
+VPSY_SIEM_LOCAL_DIR=./data/siem-export
+DPO_ALERT_EMAIL=security@example.com
+```
+
+Emitted (PHI-minimized): break-glass, escalation assigned, SLA breach, daily audit anchors, chain broken.
 
 ---
 
@@ -151,6 +181,8 @@ pnpm --filter @vpsy/api start
 | Admin Documents card | mode blob + pending queue + client vault load |
 | Session document vault | upload → pending/clean → download clean only |
 | ClamAV local | clean file → clean; EICAR bytes → infected |
+| `GET /audit/chain/verify` | `{ ok: true }` on healthy chain |
+| SIEM local dir | JSONL line after break-glass or daily anchor |
 
 ---
 
@@ -159,11 +191,11 @@ pnpm --filter @vpsy/api start
 - BAAs (host, email, SMS, video, AI, storage)  
 - External pen test + remediation  
 - Dedicated stream worker for multi-GB fleets (API in-process S3→ClamAV is fine for staging/single-node)  
-- AWS KMS (or equivalent) FieldKeyProvider + automated re-encrypt job  
+- Automated re-encrypt job after DEK rotation (kid dual-key decrypt is live; bulk re-write is ops)  
+- True WORM (S3 Object Lock / immutable SIEM) — JSONL + webhook are staging-grade  
 - PITR restore drill  
 - Clinical algorithm sign-off for marketed claims  
-- No shared demo seed on any public DB  
-- SIEM/WORM export of daily audit anchors 
+- No shared demo seed on any public DB 
 
 ---
 

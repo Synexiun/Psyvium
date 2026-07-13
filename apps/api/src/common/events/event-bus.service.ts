@@ -136,6 +136,11 @@ export const Events = {
   EscalationResolved: 'escalation.resolved',
   BreakGlassInvoked: 'breakglass.invoked',
   SafetyPlanCreated: 'safetyplan.created',
+  /** Risk SLA: published as raw name historically; keep constant for SIEM subscribers. */
+  EscalationSlaBreached: 'escalation.sla_breached',
+  /** Audit integrity: daily tip anchor result (ok or broken). */
+  AuditDailyAnchor: 'audit.daily_anchor',
+  AuditChainBroken: 'audit.chain_broken',
   // Scheduling (context 9)
   AppointmentBooked: 'appointment.booked',
   AppointmentStatusChanged: 'appointment.status_changed',

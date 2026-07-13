@@ -91,12 +91,7 @@ export class RiskSlaService {
         critical: true,
       });
 
-      // Raw event name (not `Events.EscalationSlaBreached`): this wave owns
-      // only the Risk & Crisis / Intake / Psychometrics modules, not the
-      // shared event-bus registry, so a brand-new event name is published as
-      // a literal string using the same `noun.verb` convention as the
-      // existing `Events` entries rather than adding a key to that file.
-      await this.bus.publish('escalation.sla_breached', tenantId, {
+      await this.bus.publish(Events.EscalationSlaBreached, tenantId, {
         escalationId: esc.id,
         riskFlagId: esc.riskFlagId,
         clientId: esc.riskFlag.clientId,
