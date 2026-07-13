@@ -29,6 +29,8 @@ import { ACCESS_TOKEN_COOKIE, Permission } from '@vpsy/contracts';
  * listed here (e.g. /home) only require a valid session, no specific grant. */
 const ROUTE_REQUIREMENTS: Array<{ prefix: string; anyOf: string[] }> = [
   { prefix: '/session', anyOf: [Permission.SESSION_HOST] },
+  { prefix: '/diagnosis', anyOf: [Permission.NOTE_READ] },
+  { prefix: '/ai-queue', anyOf: [Permission.AI_DECISION] },
   { prefix: '/manager', anyOf: [Permission.ASSIGNMENT_APPROVE] },
   { prefix: '/reports', anyOf: [Permission.REPORTS_READ] },
   { prefix: '/finance', anyOf: [Permission.FINANCE_READ, Permission.FINANCE_MANAGE] },
@@ -42,6 +44,7 @@ const ROUTE_REQUIREMENTS: Array<{ prefix: string; anyOf: string[] }> = [
   { prefix: '/messages', anyOf: [Permission.COMMS_READ] },
   { prefix: '/telehealth', anyOf: [Permission.SCHEDULING_READ] },
   { prefix: '/admin', anyOf: [Permission.ADMIN_CONFIG] },
+  { prefix: '/audit', anyOf: [Permission.AUDIT_READ] },
   { prefix: '/assessments', anyOf: [Permission.ASSESSMENT_ADMINISTER] },
 ];
 

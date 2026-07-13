@@ -13,6 +13,8 @@ import {
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
 import { ClinicalWriteGuard } from '../../common/auth/clinical-write.guard';
+import { ClinicalAccessGuard } from '../../common/auth/clinical-access.guard';
+import { RequireClinicalAccess } from '../../common/auth/clinical-access.decorator';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -27,7 +29,8 @@ export class TreatmentPlanningController {
 
   /** Supersedes any prior active plan for the client. Gated by ClinicalWriteGuard. */
   @Post()
-  @UseGuards(ClinicalWriteGuard)
+  @UseGuards(ClinicalWriteGuard, ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'body', key: 'clientId' })
   @RequirePermissions(Permission.PLAN_WRITE)
   create(
     @CurrentUser() user: AuthPrincipal,
@@ -37,7 +40,8 @@ export class TreatmentPlanningController {
   }
 
   @Patch('goals/progress')
-  @UseGuards(ClinicalWriteGuard)
+  @UseGuards(ClinicalWriteGuard, ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'goal', source: 'body', key: 'goalId' })
   @RequirePermissions(Permission.PLAN_WRITE)
   updateGoalProgress(
     @CurrentUser() user: AuthPrincipal,
@@ -47,6 +51,8 @@ export class TreatmentPlanningController {
   }
 
   @Get('client/:clientId/active')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'params', key: 'clientId' })
   @RequirePermissions(Permission.PLAN_READ)
   getActivePlan(@CurrentUser() user: AuthPrincipal, @Param('clientId') clientId: string) {
     return this.plans.getActivePlan(user, clientId);
@@ -71,6 +77,8 @@ export class TreatmentPlanningController {
    * record mutation.
    */
   @Post('ai-assist')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'body', key: 'clientId' })
   @RequirePermissions(Permission.PLAN_WRITE)
   aiAssist(
     @CurrentUser() user: AuthPrincipal,

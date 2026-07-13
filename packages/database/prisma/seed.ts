@@ -17,12 +17,14 @@ async function main() {
 
   const tenant = await prisma.tenant.upsert({
     where: { id: 'tenant_demo' },
-    update: {},
+    update: { slug: 'vpsy-demo', selfRegistrationEnabled: true },
     create: {
       id: 'tenant_demo',
       name: 'VPSY Demo Clinic Network',
+      slug: 'vpsy-demo',
       countryCode: 'US',
       residencyRegion: 'us-east',
+      selfRegistrationEnabled: true,
     },
   });
 
@@ -383,6 +385,7 @@ async function main() {
           { band: 'HIGH', min: 10, max: 14 },
           { band: 'SEVERE', min: 15, max: 21 },
         ],
+        safetyItems: [],
       },
     },
     create: {
@@ -402,6 +405,7 @@ async function main() {
           { band: 'HIGH', min: 10, max: 14 },
           { band: 'SEVERE', min: 15, max: 21 },
         ],
+        safetyItems: [],
       },
     },
   });

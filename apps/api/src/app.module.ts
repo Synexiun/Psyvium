@@ -9,6 +9,8 @@ import { RealtimeModule } from './common/realtime/realtime.module';
 import { ObservabilityModule } from './common/observability/observability.module';
 import { RateLimitModule } from './common/rate-limit/rate-limit.module';
 import { IdempotencyModule } from './common/idempotency/idempotency.module';
+import { ClinicalAccessModule } from './common/auth/clinical-access.module';
+import { FeatureFlagsModule } from './common/feature-flags/feature-flags.module';
 import { TenantContextMiddleware } from './common/tenant-context.interceptor';
 import { AiGatewayModule } from './modules/ai-gateway/ai-gateway.module';
 import { AuthModule } from './auth/auth.module';
@@ -77,6 +79,8 @@ import { HealthModule } from './health/health.module';
     // replay via decorators/interceptors (see the controllers themselves).
     RateLimitModule,
     IdempotencyModule,
+    ClinicalAccessModule,
+    FeatureFlagsModule,
     // Bounded contexts (Phase 1)
     AuthModule,
     // Bounded contexts (Phase 2)

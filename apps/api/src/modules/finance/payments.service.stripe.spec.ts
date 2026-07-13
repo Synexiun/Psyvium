@@ -39,7 +39,10 @@ function makeService(provider: Record<string, jest.Mock> | null, overrides: Part
 
   const prismaTx = {
     payment: { create: jest.fn(async ({ data }: any) => ({ id: 'payment_1', ...data })) },
-    invoice: { update: jest.fn() },
+    invoice: {
+      update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     outboxEvent: { create: jest.fn() },
   };
 
@@ -77,7 +80,10 @@ describe('PaymentsService.payInvoice — keyed (Stripe configured)', () => {
       tenantId: 'tenant_demo',
     });
     expect(result.status).toBe('captured');
-    expect(prismaTx.invoice.update).toHaveBeenCalledWith({ where: { id: 'invoice_1' }, data: { status: 'PAID' } });
+    expect(prismaTx.invoice.updateMany).toHaveBeenCalledWith({
+      where: { id: 'invoice_1', tenantId: 'tenant_demo', status: 'OPEN' },
+      data: { status: 'PAID' },
+    });
     expect(accounting.postBalancedEntry).toHaveBeenCalled();
     expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'payment.captured' }));
     expect(bus.publishDurable).toHaveBeenCalledWith(prismaTx, 'payment.captured', 'tenant_demo', expect.anything());
@@ -94,7 +100,7 @@ describe('PaymentsService.payInvoice — keyed (Stripe configured)', () => {
 
     expect(result.status).toBe('requires_payment_method');
     expect(prisma.$transaction).not.toHaveBeenCalled();
-    expect(prismaTx.invoice.update).not.toHaveBeenCalled();
+    expect(prismaTx.invoice.updateMany).not.toHaveBeenCalled();
     expect(accounting.postBalancedEntry).not.toHaveBeenCalled();
     expect(prisma.payment.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'requires_payment_method', pspRef: 'pi_pending' }) }),
@@ -159,7 +165,10 @@ describe('PaymentsService.capturePaymentFromWebhook', () => {
     const result = await svc.capturePaymentFromWebhook('tenant_demo', 'invoice_1', 'pi_webhook_1');
 
     expect(result?.status).toBe('captured');
-    expect(prismaTx.invoice.update).toHaveBeenCalledWith({ where: { id: 'invoice_1' }, data: { status: 'PAID' } });
+    expect(prismaTx.invoice.updateMany).toHaveBeenCalledWith({
+      where: { id: 'invoice_1', tenantId: 'tenant_demo', status: 'OPEN' },
+      data: { status: 'PAID' },
+    });
     expect(accounting.postBalancedEntry).toHaveBeenCalled();
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'payment.captured', actorId: 'system:stripe-webhook' }),
@@ -177,7 +186,7 @@ describe('PaymentsService.capturePaymentFromWebhook', () => {
 
     expect(result).toBeNull();
     expect(prisma.$transaction).not.toHaveBeenCalled();
-    expect(prismaTx.invoice.update).not.toHaveBeenCalled();
+    expect(prismaTx.invoice.updateMany).not.toHaveBeenCalled();
     expect(accounting.postBalancedEntry).not.toHaveBeenCalled();
   });
 

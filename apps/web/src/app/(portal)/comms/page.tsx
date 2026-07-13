@@ -1,25 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { api, setToken, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useI18n } from '@/i18n';
 import type { CommsLogEntryDto, MediaMessageDto, MediaKind } from '@/lib/comms-types';
-
-const DEMO_THREAD = 'thread_demo_alex_rivera';
 
 export default function CommsPage() {
   const { t } = useI18n();
   const [log, setLog] = useState<CommsLogEntryDto[]>([]);
   const [live, setLive] = useState<'live' | 'offline' | 'loading'>('loading');
-
-  async function ensureSession() {
-    try {
-      const tok = await api.login('dr.rivera@vpsy.health', 'Vpsy!2026');
-      setToken(tok.accessToken);
-    } catch {
-      /* may already be signed in or offline */
-    }
-  }
 
   async function loadLog() {
     try {
@@ -32,10 +21,7 @@ export default function CommsPage() {
   }
 
   useEffect(() => {
-    (async () => {
-      await ensureSession();
-      await loadLog();
-    })();
+    void loadLog();
   }, []);
 
   return (
@@ -46,7 +32,7 @@ export default function CommsPage() {
           <h1 className="mt-2 font-display text-2xl font-semibold text-mist">{t('comms.title')}</h1>
         </div>
         <span role="status" className={`chip ${live === 'live' ? 'text-teal-soft/80' : live === 'offline' ? 'chip-signal' : 'text-mist/50'}`}>
-          {live === 'live' ? t('common.liveData') : live === 'offline' ? t('common.offlineDemo') : t('common.loadingLive')}
+          {live === 'live' ? t('common.liveData') : live === 'offline' ? t('common.connectionIssue') : t('common.loadingLive')}
         </span>
       </div>
       <p className="mt-3 max-w-3xl text-mist/60">{t('comms.intro')}</p>
@@ -104,6 +90,7 @@ function TelephonyPanel({ onChanged }: { onChanged: () => void }) {
 /* ── Async voice/video messages ──────────────────────────────────────── */
 function MediaMessagesPanel() {
   const { t } = useI18n();
+  const [threadId, setThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MediaMessageDto[]>([]);
   const [recording, setRecording] = useState<MediaKind | null>(null);
   const [seconds, setSeconds] = useState(0);
@@ -116,10 +103,35 @@ function MediaMessagesPanel() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previewRef = useRef<HTMLVideoElement | null>(null);
 
-  async function loadThread() {
-    try { setMessages(await api.commsThreadMedia(DEMO_THREAD)); } catch { /* offline */ }
+  async function resolveThread(): Promise<string | null> {
+    try {
+      const threads = await api.msgThreads();
+      const first = threads[0]?.id ?? null;
+      setThreadId(first);
+      return first;
+    } catch {
+      setThreadId(null);
+      return null;
+    }
   }
-  useEffect(() => { loadThread(); }, []);
+
+  async function loadThread() {
+    const id = threadId ?? (await resolveThread());
+    if (!id) {
+      setMessages([]);
+      setNote(t('comms.noMediaThread'));
+      return;
+    }
+    try {
+      setMessages(await api.commsThreadMedia(id));
+      setNote(null);
+    } catch {
+      /* offline */
+    }
+  }
+  useEffect(() => {
+    void loadThread();
+  }, []);
 
   function cleanup() {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -130,6 +142,11 @@ function MediaMessagesPanel() {
 
   async function start(kind: MediaKind) {
     setNote(null);
+    const id = threadId ?? (await resolveThread());
+    if (!id) {
+      setNote(t('comms.noMediaThread'));
+      return;
+    }
     if (typeof window === 'undefined' || !navigator.mediaDevices || typeof MediaRecorder === 'undefined') {
       setNote(t('comms.unsupported')); return;
     }
@@ -171,16 +188,24 @@ function MediaMessagesPanel() {
     setSending(true);
     setNote(null);
     try {
+      const id = threadId ?? (await resolveThread());
+      if (!id) {
+        setNote(t('comms.noMediaThread'));
+        return;
+      }
       const dataUrl: string = await new Promise((resolve, reject) => {
         const fr = new FileReader();
         fr.onload = () => resolve(String(fr.result));
         fr.onerror = () => reject(new Error('read'));
         fr.readAsDataURL(blob);
       });
+      // Media binary storage remains activate-on-config; storageKey is still an
+      // opaque key. Data URIs are accepted only for local demos — production
+      // should post an object-storage key after a real upload pipeline.
       await api.commsCreateMediaMessage({
-        threadId: DEMO_THREAD,
+        threadId: id,
         kind,
-        storageKey: dataUrl, // demo: data URI round-trips; production stores an object-storage key
+        storageKey: dataUrl,
         durationSec: dur,
         mimeType: blob.type,
       });

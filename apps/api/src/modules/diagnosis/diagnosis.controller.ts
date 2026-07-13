@@ -17,6 +17,8 @@ import {
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
 import { ClinicalWriteGuard } from '../../common/auth/clinical-write.guard';
+import { ClinicalAccessGuard } from '../../common/auth/clinical-access.guard';
+import { RequireClinicalAccess } from '../../common/auth/clinical-access.decorator';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -47,7 +49,8 @@ export class DiagnosisController {
   ) {}
 
   @Post()
-  @UseGuards(ClinicalWriteGuard)
+  @UseGuards(ClinicalWriteGuard, ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'body', key: 'clientId' })
   @RequirePermissions(Permission.NOTE_WRITE)
   create(
     @CurrentUser() user: AuthPrincipal,
@@ -58,7 +61,8 @@ export class DiagnosisController {
 
   /** Toggles `clinicianConfirmed` — see the model-gap note in diagnosis.service.ts. */
   @Patch('status')
-  @UseGuards(ClinicalWriteGuard)
+  @UseGuards(ClinicalWriteGuard, ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'hypothesis', source: 'body', key: 'hypothesisId' })
   @RequirePermissions(Permission.NOTE_WRITE)
   updateStatus(
     @CurrentUser() user: AuthPrincipal,
@@ -68,6 +72,8 @@ export class DiagnosisController {
   }
 
   @Get('client/:clientId')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'params', key: 'clientId' })
   @RequirePermissions(Permission.NOTE_READ)
   listForClient(@CurrentUser() user: AuthPrincipal, @Param('clientId') clientId: string) {
     return this.diagnosis.listForClient(user, clientId);
@@ -81,6 +87,8 @@ export class DiagnosisController {
    * mutation, matching the session-note/treatment-plan ai-assist pattern.
    */
   @Post('ai-assist')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'body', key: 'clientId' })
   @RequirePermissions(Permission.NOTE_WRITE)
   aiAssist(
     @CurrentUser() user: AuthPrincipal,
@@ -115,7 +123,8 @@ export class FormulationController {
   constructor(private readonly diagnosis: DiagnosisService) {}
 
   @Post()
-  @UseGuards(ClinicalWriteGuard)
+  @UseGuards(ClinicalWriteGuard, ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'body', key: 'clientId' })
   @RequirePermissions(Permission.NOTE_WRITE)
   create(
     @CurrentUser() user: AuthPrincipal,
@@ -125,7 +134,8 @@ export class FormulationController {
   }
 
   @Patch(':id/status')
-  @UseGuards(ClinicalWriteGuard)
+  @UseGuards(ClinicalWriteGuard, ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'formulation', source: 'params', key: 'id' })
   @RequirePermissions(Permission.NOTE_WRITE)
   updateStatus(
     @CurrentUser() user: AuthPrincipal,
@@ -136,6 +146,8 @@ export class FormulationController {
   }
 
   @Get('client/:clientId')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'params', key: 'clientId' })
   @RequirePermissions(Permission.NOTE_READ)
   listForClient(@CurrentUser() user: AuthPrincipal, @Param('clientId') clientId: string) {
     return this.diagnosis.listFormulationsForClient(user, clientId);

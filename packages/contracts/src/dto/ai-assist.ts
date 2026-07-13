@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { SeverityBand, TherapyFormat } from '../enums';
+import { HumanDecision, SeverityBand, TherapyFormat } from '../enums';
 
 /**
  * AI-assist DTOs for two more governed agents from docs/technical/05-ai-clinical-layer.md
@@ -48,7 +48,7 @@ export const sessionNoteAiAssistResponseSchema = z.object({
    * the model client is never invoked). Absent when AI simply isn't
    * configured or the client has consented.
    */
-  withheldReason: z.literal('no-ai-consent').optional(),
+  withheldReason: z.enum(['no-ai-consent', 'feature-disabled']).optional(),
 });
 export type SessionNoteAiAssistResult = z.infer<typeof sessionNoteAiAssistResponseSchema>;
 
@@ -82,7 +82,7 @@ export const treatmentPlanAiAssistResponseSchema = z.object({
    * the model client is never invoked). Absent when AI simply isn't
    * configured or the client has consented.
    */
-  withheldReason: z.literal('no-ai-consent').optional(),
+  withheldReason: z.enum(['no-ai-consent', 'feature-disabled']).optional(),
 });
 export type TreatmentPlanAiAssistResult = z.infer<typeof treatmentPlanAiAssistResponseSchema>;
 
@@ -119,7 +119,7 @@ export const differentialAiAssistResponseSchema = z.object({
   source: z.enum(['ai', 'rule-based']),
   aiConfigured: z.boolean(),
   recommendationId: z.string().optional(),
-  withheldReason: z.literal('no-ai-consent').optional(),
+  withheldReason: z.enum(['no-ai-consent', 'feature-disabled']).optional(),
 });
 export type DifferentialAiAssistResult = z.infer<typeof differentialAiAssistResponseSchema>;
 
@@ -152,7 +152,7 @@ export const outcomeAiAssistResponseSchema = z.object({
   source: z.enum(['ai', 'rule-based']),
   aiConfigured: z.boolean(),
   recommendationId: z.string().optional(),
-  withheldReason: z.literal('no-ai-consent').optional(),
+  withheldReason: z.enum(['no-ai-consent', 'feature-disabled']).optional(),
 });
 export type OutcomeAiAssistResult = z.infer<typeof outcomeAiAssistResponseSchema>;
 
@@ -167,7 +167,7 @@ export const psychometricAiAssistResponseSchema = z.object({
   source: z.enum(['ai', 'rule-based']),
   aiConfigured: z.boolean(),
   recommendationId: z.string().optional(),
-  withheldReason: z.literal('no-ai-consent').optional(),
+  withheldReason: z.enum(['no-ai-consent', 'feature-disabled']).optional(),
 });
 export type PsychometricAiAssistResult = z.infer<typeof psychometricAiAssistResponseSchema>;
 
@@ -193,7 +193,7 @@ export const riskContextAiAssistResponseSchema = z.object({
   source: z.enum(['ai', 'rule-based']),
   aiConfigured: z.boolean(),
   recommendationId: z.string().optional(),
-  withheldReason: z.literal('no-ai-consent').optional(),
+  withheldReason: z.enum(['no-ai-consent', 'feature-disabled']).optional(),
 });
 export type RiskContextAiAssistResult = z.infer<typeof riskContextAiAssistResponseSchema>;
 
@@ -207,3 +207,43 @@ export const allocationRationaleSchema = z.object({
   rationale: z.string(),
 });
 export type AllocationRationale = z.infer<typeof allocationRationaleSchema>;
+
+// ── Human decision gate (ADR-007 / doc 05) ──
+// Every AIRecommendation is born PENDING. A licensed clinician records the
+// terminal decision here — never auto-accepted.
+
+const terminalHumanDecision = z.enum([
+  HumanDecision.ACCEPTED,
+  HumanDecision.MODIFIED,
+  HumanDecision.REJECTED,
+]);
+
+export const decideAiRecommendationSchema = z.object({
+  decision: terminalHumanDecision,
+  /** Required when decision is MODIFIED — free-text clinician amendment note. */
+  modificationNote: z.string().min(3).max(2000).optional(),
+  /** Optional free-text rationale for ACCEPTED/REJECTED (audited). */
+  rationale: z.string().max(2000).optional(),
+}).superRefine((value, ctx) => {
+  if (value.decision === HumanDecision.MODIFIED && !value.modificationNote?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['modificationNote'],
+      message: 'modificationNote is required when decision is MODIFIED',
+    });
+  }
+});
+export type DecideAiRecommendationInput = z.infer<typeof decideAiRecommendationSchema>;
+
+export const aiRecommendationDtoSchema = z.object({
+  id: z.string(),
+  agent: z.string(),
+  confidence: z.number(),
+  humanDecision: z.nativeEnum(HumanDecision),
+  decidedBy: z.string().nullable(),
+  linkedEntityType: z.string().nullable(),
+  linkedEntityId: z.string().nullable(),
+  output: z.unknown(),
+  createdAt: z.string(),
+});
+export type AiRecommendationDto = z.infer<typeof aiRecommendationDtoSchema>;

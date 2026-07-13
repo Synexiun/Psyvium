@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { REQUIRED_CONSENT_VERSIONS, SeverityBand } from '@vpsy/contracts';
+import { REQUIRED_CONSENT_VERSIONS, Role, SeverityBand } from '@vpsy/contracts';
 import type { AuthPrincipal } from '@vpsy/contracts';
 import { CredentialingService } from '../modules/credentialing/credentialing.service';
 import { ConsentService } from '../modules/consent/consent.service';
@@ -280,6 +280,12 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
   // HIGH RiskFlag deterministically, even outside the intake flow.
   // ---------------------------------------------------------------------
   describe('Safety-item routing — PsychometricsService.administer', () => {
+    const clientPrincipal: AuthPrincipal = {
+      userId: 'user_client_1',
+      tenantId: 'tenant_demo',
+      roles: [Role.CLIENT],
+      permissions: [],
+    };
     const CUTOFFS_WITH_SAFETY_ITEM = {
       bands: [
         { band: 'LOW', min: 0, max: 4 },
@@ -294,8 +300,19 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
       const createdRiskFlags: any[] = [];
       const createdEscalations: any[] = [];
 
-      const version = { id: 'qv_1', published: true, cutoffs: CUTOFFS_WITH_SAFETY_ITEM };
-      const client = { id: 'client_1', tenantId: 'tenant_demo', riskLevel: 'LOW' };
+      const version = {
+        id: 'qv_1',
+        published: true,
+        cutoffs: CUTOFFS_WITH_SAFETY_ITEM,
+        items: ['q1', 'q2', 'q9'].map((linkId, orderIndex) => ({
+          id: `item_${linkId}`,
+          linkId,
+          responseOptions: [0, 1, 2, 3],
+          orderIndex,
+          parameters: [],
+        })),
+      };
+      const client = { id: 'client_1', tenantId: 'tenant_demo', userId: 'user_client_1', riskLevel: 'LOW' };
 
       const tx = {
         questionnaireResponse: {
@@ -360,7 +377,7 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
     it('raises a HIGH RiskFlag + human Escalation for a positive PHQ-9 item-9 endorsement', async () => {
       const { svc, tx, bus, createdRiskFlags, createdEscalations } = makeService();
 
-      await svc.administer(principal, {
+      await svc.administer(clientPrincipal, {
         versionId: 'qv_1',
         clientId: 'client_1',
         answers: { q1: 1, q2: 1, q9: 1 }, // q9 (safety item) endorsed at minAnswer(1) -> HIGH (graduated: >=2 -> SEVERE)
@@ -387,7 +404,7 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
 
     it('never raises a flag when the safety item is answered below threshold or is simply absent', async () => {
       const belowThreshold = makeService();
-      await belowThreshold.svc.administer(principal, {
+      await belowThreshold.svc.administer(clientPrincipal, {
         versionId: 'qv_1',
         clientId: 'client_1',
         answers: { q1: 1, q2: 1, q9: 0 },
@@ -396,11 +413,14 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
       expect(belowThreshold.tx.escalation.create).not.toHaveBeenCalled();
 
       const absentItem = makeService();
-      await absentItem.svc.administer(principal, {
-        versionId: 'qv_1',
-        clientId: 'client_1',
-        answers: { q1: 1, q2: 1 },
-      });
+      await expect(
+        absentItem.svc.administer(clientPrincipal, {
+          versionId: 'qv_1',
+          clientId: 'client_1',
+          answers: { q1: 1, q2: 1 },
+        }),
+      ).rejects.toThrow(/incomplete.*q9/i);
+      expect(absentItem.tx.questionnaireResponse.create).not.toHaveBeenCalled();
       expect(absentItem.tx.riskFlag.create).not.toHaveBeenCalled();
       expect(absentItem.tx.escalation.create).not.toHaveBeenCalled();
     });

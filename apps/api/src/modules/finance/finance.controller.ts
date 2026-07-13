@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, UseGuards, UseInterceptors } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  ServiceUnavailableException,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   computePayoutSchema,
@@ -92,6 +101,27 @@ export class FinanceController {
     @Body(new ZodValidationPipe(computePayoutSchema)) body: ComputePayoutInput,
   ) {
     return this.payouts.computePayout(user, body);
+  }
+
+  /**
+   * Bank-rail disbursement is not implemented (audit Gate 0 §16 / Gate 2).
+   * Compute remains available for statements; this endpoint exists so clients
+   * never invent a fake "paid out" transition.
+   */
+  @Post('payouts/:id/disburse')
+  @RequirePermissions(Permission.FINANCE_MANAGE)
+  disbursePayout(@Param('id') id: string) {
+    if (process.env.VPSY_ALLOW_PAYOUT_DISBURSE === 'true') {
+      // Reserved for a real ACH/wire adapter. Still not wired.
+      throw new ServiceUnavailableException(
+        `Payout disbursement adapter is not configured (payout ${id}).`,
+      );
+    }
+    throw new ServiceUnavailableException(
+      'Payout disbursement to bank rails is not production-ready. ' +
+        'Use POST /finance/payouts/compute for calculated entitlements only. ' +
+        'Set VPSY_ALLOW_PAYOUT_DISBURSE=true only after a real disbursement provider is integrated.',
+    );
   }
 
   @Get('payouts')

@@ -53,20 +53,11 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # ── Dependency audit (WARN, non-blocking) ───────────────────────────
-      # docs/technical/10-observability-and-devops.md §4.1 lists "vulnerable
-      # dep" as a security-scan gate, but a HARD block here would let an
-      # unpatched *transitive* advisory (frequently with no fix available
-      # yet, and no clinical-data exposure of its own) stop an unrelated
-      # clinical-safety fix from merging — the worse outcome for a system
-      # whose core promise is that safety fixes ship fast. So this reports
-      # (and is visible in the job log/summary for every PR) without failing
-      # the build. Revisit if/when this repo adds a triage/allowlist process
-      # (e.g. `pnpm audit --json` diffed against a reviewed exceptions file)
-      # that could safely make specific severities blocking again.
-      - name: "Dependency audit (high+critical — WARN, non-blocking; see comment above)"
+      # ── Dependency audit ────────────────────────────────────────────────
+      # High+critical findings fail the job. Use `pnpm audit --fix` + a
+      # reviewed exceptions process if a transitive advisory has no fix yet.
+      - name: "Dependency audit (high+critical — BLOCKING)"
         run: pnpm audit --audit-level high
-        continue-on-error: true
 
       - name: Prisma generate
         run: pnpm --filter @vpsy/database exec prisma generate
@@ -74,8 +65,10 @@ jobs:
       - name: Validate schema
         run: pnpm --filter @vpsy/database run validate
 
-      - name: Apply schema to Postgres (proves migrations apply)
-        run: pnpm --filter @vpsy/database exec prisma db push --skip-generate
+      # Real migration path (not `db push`) so RLS raw-SQL migrations and
+      # partial unique indexes are actually installed in CI — Gate 0 audit.
+      - name: "Apply migrations (prisma migrate deploy)"
+        run: pnpm --filter @vpsy/database exec prisma migrate deploy
 
       - name: Seed
         run: pnpm --filter @vpsy/database run seed

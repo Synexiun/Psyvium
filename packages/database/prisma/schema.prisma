@@ -297,15 +297,18 @@ enum FormulationStatus {
 model Tenant {
   id              String   @id @default(cuid())
   name            String
+  slug            String?  @unique
   countryCode     String   @db.VarChar(2)
   residencyRegion String   @default("global")
   config          Json     @default("{}")
   status          String   @default("active")
+  selfRegistrationEnabled Boolean @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  clinics Clinic[]
-  users   User[]
+  clinics         Clinic[]
+  users           User[]
+  refreshSessions RefreshSession[]
 
   @@index([countryCode])
 }
@@ -333,9 +336,11 @@ model User {
   fullName       String
   mfaEnabled     Boolean    @default(false)
   mfaSecret      String?
+  mfaPendingSecret String?
   locale         String     @default("en")
   timezone       String     @default("UTC")
   status         UserStatus @default(ACTIVE)
+  authVersion    Int        @default(0)
   lastLoginAt    DateTime?
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
@@ -344,9 +349,58 @@ model User {
   roleAssignments RoleAssignment[]
   client          Client?          @relation("UserClient")
   psychologist    Psychologist?    @relation("UserPsychologist")
+  refreshSessions RefreshSession[]
+  passwordResets  PasswordResetToken[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
+  @@index([tenantId, status])
+}
+
+/**
+ * One-time password-reset token (doc 06 §3). Only the SHA-256 digest is
+ * stored; the raw token is emailed (or returned in non-production for demos).
+ * Single-use: usedAt is set on successful reset.
+ */
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  tenantId  String
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique @db.VarChar(64)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  ipHash    String?   @db.VarChar(64)
+
+  @@index([userId, expiresAt])
+  @@index([tenantId])
+}
+
+/**
+ * Server-side refresh-token state. Only a SHA-256 digest is persisted; the
+ * bearer token itself is never stored. A family groups rotations so replaying
+ * any replaced token can revoke the entire chain deterministically.
+ */
+model RefreshSession {
+  id           String    @id
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  familyId     String
+  tokenHash    String    @unique @db.VarChar(64)
+  expiresAt    DateTime
+  lastUsedAt   DateTime?
+  revokedAt    DateTime?
+  replacedById String?
+  createdAt    DateTime  @default(now())
+  userAgent    String?   @db.VarChar(512)
+  ipHash       String?   @db.VarChar(64)
+
+  @@index([tenantId, userId])
+  @@index([familyId])
+  @@index([expiresAt])
 }
 
 model Role {
@@ -1734,6 +1788,27 @@ model SmsMessage {
 
   @@index([tenantId, clientId])
   @@index([tenantId, status])
+}
+
+/// TCPA/GDPR-style SMS suppression list (doc 15 §4). An active opt-out
+/// (optedInAt IS NULL) blocks all outbound SMS to that E.164 for the tenant.
+/// STOP/START keyword processing and staff-initiated updates both land here.
+model SmsOptOut {
+  id         String    @id @default(cuid())
+  tenantId   String
+  /// Digits-only normalized E.164 (leading + stripped for equality).
+  e164       String
+  /// KEYWORD | STAFF | SYSTEM
+  source     String    @default("KEYWORD")
+  reason     String?
+  optedOutAt DateTime  @default(now())
+  /// When set, the number is no longer suppressed (START / re-consent).
+  optedInAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([tenantId, e164])
+  @@index([tenantId, optedInAt])
 }
 
 /// Async (store-and-forward) voice/video message (`15` §6.2; Messaging,

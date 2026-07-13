@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   AssignmentStatus,
   Role,
@@ -145,6 +145,12 @@ export class SchedulingService {
       throw new ForbiddenException('No approved assignment links this client and psychologist');
     }
 
+    const startsAt = new Date(input.startsAt);
+    const endsAt = new Date(input.endsAt);
+    if (!(endsAt > startsAt)) {
+      throw new ForbiddenException('endsAt must be after startsAt');
+    }
+
     let slot: AvailabilitySlotRow | null = null;
     if (input.slotId) {
       slot = await this.prisma.availabilitySlot.findFirst({
@@ -155,24 +161,52 @@ export class SchedulingService {
     }
 
     const appointment = await this.prisma.$transaction(async (tx) => {
-      const appt = await tx.appointment.create({
+      // Compare-and-swap the slot so two concurrent bookers cannot both win.
+      if (slot) {
+        const claimed = await tx.availabilitySlot.updateMany({
+          where: {
+            id: slot.id,
+            tenantId: principal.tenantId,
+            isBooked: false,
+          },
+          data: { isBooked: true },
+        });
+        if (claimed.count !== 1) {
+          throw new ConflictException('Availability slot was already booked');
+        }
+      }
+
+      // Reject overlapping active appointments for the same psychologist
+      // (BOOKED/CONFIRMED). Cancelled/no-show/completed do not block.
+      const overlap = await tx.appointment.findFirst({
+        where: {
+          tenantId: principal.tenantId,
+          psychologistId: input.psychologistId,
+          deletedAt: null,
+          status: { in: ['BOOKED', 'CONFIRMED'] },
+          startsAt: { lt: endsAt },
+          endsAt: { gt: startsAt },
+        },
+        select: { id: true },
+      });
+      if (overlap) {
+        throw new ConflictException('Psychologist already has an appointment overlapping this time');
+      }
+
+      return tx.appointment.create({
         data: {
           tenantId: principal.tenantId,
           assignmentId: assignment.id,
           clientId: input.clientId,
           psychologistId: input.psychologistId,
-          startsAt: new Date(input.startsAt),
-          endsAt: new Date(input.endsAt),
+          startsAt,
+          endsAt,
           timezone: input.timezone ?? 'UTC',
           format: input.format,
           isUrgent: input.isUrgent ?? false,
         },
         include: APPOINTMENT_INCLUDE,
       });
-      if (slot) {
-        await tx.availabilitySlot.update({ where: { id: slot.id }, data: { isBooked: true } });
-      }
-      return appt;
     });
 
     await this.audit.record({
@@ -242,13 +276,26 @@ export class SchedulingService {
     input: UpdateAppointmentStatusInput,
   ): Promise<AppointmentDto> {
     const existing = await this.prisma.appointment.findFirst({
-      where: { id: appointmentId, tenantId: principal.tenantId },
+      where: { id: appointmentId, tenantId: principal.tenantId, deletedAt: null },
     });
     if (!existing) throw new NotFoundException('Appointment not found');
 
-    const updated = await this.prisma.appointment.update({
-      where: { id: appointmentId },
+    // Compare-and-swap: refuse double-completion / status flapping races.
+    const claimed = await this.prisma.appointment.updateMany({
+      where: {
+        id: appointmentId,
+        tenantId: principal.tenantId,
+        status: existing.status,
+        deletedAt: null,
+      },
       data: { status: input.status },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictException('Appointment status was already changed');
+    }
+
+    const updated = await this.prisma.appointment.findFirstOrThrow({
+      where: { id: appointmentId },
       include: APPOINTMENT_INCLUDE,
     });
 

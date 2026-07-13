@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api, setToken, ApiError } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
 import { SkeletonStack } from '@/components/Skeleton';
 import { ErrorPanel } from '@/components/ErrorPanel';
@@ -27,11 +27,6 @@ export default function ReportsPage() {
   async function load() {
     setLive('loading'); setError(null);
     try {
-      try {
-        // Executive holds reports:read + national:read.
-        const tok = await api.login('exec@vpsy.health', 'Vpsy!2026');
-        setToken(tok.accessToken);
-      } catch { /* may already be signed in */ }
       const [e, m, n] = await Promise.all([
         api.reportExecutive().catch(() => null),
         api.reportManager().catch(() => null),
@@ -57,7 +52,7 @@ export default function ReportsPage() {
           <h1 className="mt-2 font-display text-2xl font-semibold text-mist">{t('analytics.title')}</h1>
         </div>
         <span role="status" className={`chip ${live === 'live' ? 'text-teal-soft/80' : 'chip-signal'}`}>
-          {live === 'live' ? t('common.liveData') : t('common.offlineDemo')}
+          {live === 'live' ? t('common.liveData') : t('common.connectionIssue')}
         </span>
       </div>
       <p className="mt-3 max-w-3xl text-mist/60">{t('analytics.intro')}</p>

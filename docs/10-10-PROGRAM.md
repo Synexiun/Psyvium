@@ -5,7 +5,27 @@
 
 **Legend:** `[ ]` open · `[~]` in progress · `[x]` done & verified · **(infra)** = needs a deploy target/credential; built as code + activate-on-deploy so it never blocks.
 
+> **Latest production-readiness audit:** [`PLATFORM-AUDIT-2026-07-12.md`](PLATFORM-AUDIT-2026-07-12.md) — overall **4/10** before Gate 0; engineering remediation wave in progress (infra deferred). Gate 0 closes stop-ship authorization/PHI/auth lifecycle issues before any pilot with real PHI.
+
 ---
+
+## GATE 0 — stop-ship remediation (from 2026-07-12 audit)
+- [x] **Remove demo privilege-escalation logins** from portal pages + public one-click admin accounts.
+- [x] **Tenant-aware registration + active status gates** (opt-in `Tenant.selfRegistrationEnabled` + slug).
+- [x] **Server-side refresh sessions** with rotation, family revoke on reuse, `authVersion` invalidation.
+- [x] **Central clinical ABAC** (`ClinicalAccessService` + guard) on notes/plans/diagnosis/outcomes/interventions/risk/documents/wearables; risk boards caseload-scoped; break-glass honored.
+- [x] **Realtime minimum-necessary** — no tenant-wide clinical broadcast; user + operational role rooms only.
+- [x] **Browser PHI isolation** — drafts/outbox keyed by tenant+user+client+session; legacy global keys purged; no auto patient select.
+- [x] **Crisis fail-safe UI** — risk board never renders empty after error; emergency card never substitutes US 988 without confirmed jurisdiction.
+- [x] **Instrument response validation + safety config fail-closed** (`response-validation.ts`).
+- [x] **Matching open-assignment uniqueness** + approve compare-and-swap + capacity check (no double caseload).
+- [x] **Payment capture compare-and-swap** (OPEN→PAID) + unique captured-payment index.
+- [x] **Audit chain serialization** (per-tenant advisory lock) + before/ip/ua in hash material; critical fail-closed retained.
+- [x] **Production PHI encryption mandatory** unless explicit plaintext allow; documents metadata-only disabled in prod; security headers + Swagger opt-in.
+- [ ] **Render/Docker JWT + public URL wiring** **(infra)**.
+- [x] **CI `prisma migrate deploy`** — replaces `db push` so raw SQL (RLS, partial uniques) installs in CI.
+- [x] **Shared Redis mandatory multi-instance** — production boot fails without `REDIS_URL` unless explicit single-instance allow.
+- [x] **Dependency high/critical vulns blocking policy** — `pnpm audit --audit-level high` is blocking in CI.
 
 ## Verified strong (keep as the template — audits credited these)
 - AI assists / clinicians decide; manager final authority; human-only risk resolution — architecturally enforced.
@@ -21,7 +41,7 @@
 
 ## WAVE A — P0 clinical-safety & security (build first)
 - [ ] **Safety-item scoring hook** (doc 07 §4): any questionnaire item flagged `safetyItems` (e.g. PHQ-9 item 9) routes to Risk on a qualifying answer. *Highest safety severity — a standalone assessment with active SI raises no flag today.*
-- [ ] **MFA/TOTP** (doc 06 §3): enrol + verify on login for mandatory roles; `User.mfaEnabled/mfaSecret` exist but are dead.
+- [x] **MFA/TOTP** — enroll + verify; mandatory clinical/admin roles get `mfaEnrollmentRequired` restricted sessions until TOTP is verified (`/security/mfa`).
 - [ ] **httpOnly cookie auth + server-side `middleware.ts`** (doc 06, 11 §9): move token out of `localStorage`; gate routes/roles server-side ("UI is not the security boundary").
 - [ ] **Rate limiting** (doc 04 §9, 06): Redis/`@nestjs/throttler` per-principal/tenant on login, register, AI, break-glass.
 - [ ] **Idempotency-Key** (doc 04 §8): dedup on money (`payInvoice`), assessment (`administer`), intake POSTs.
@@ -39,13 +59,17 @@
 ## WAVE C — Differentiators & core features
 - [ ] **IRT/CAT/DIF psychometrics** (doc 07 §5-6): `ItemParameter`, EAP θ, adaptive `startCat`/`nextItem`, norms/`NormSet`, `ItemTranslation`. *The flagship "data moat."*
 - [ ] **Instrument licensing + `LicenseGrant` 403 gate** (doc 07 §2).
-- [ ] **Wire the AI agents** (doc 05 §3): Differential-Hypothesis, Treatment-Plan, Session-Note, Outcome, Psychometric-Interpretation, and a real Allocation model (today it's a sort). All PENDING/human-gated, PHI-minimized, + input/output safety classifiers (§7).
-- [ ] **Intervention/Homework** module (patient-facing) — unblocks the home empty-state.
+- [x] **Wire the AI agents** (doc 05 §3): Differential-Hypothesis, Treatment-Plan, Session-Note, Outcome, Psychometric-Interpretation, and Allocation rationale. All PENDING/human-gated, PHI-minimized. **Human decision queue API** + **`/ai-queue` clinician UI** (accept / modify / reject) + FeatureFlagsService kill switch.
+- [x] **Intervention/Homework** patient home surface — list + complete homework from live API; empty state only when none assigned.
+- [x] **Diagnosis Support UI** — `/diagnosis` clinician surface for differentials + coded formulations (no AI write path).
+- [x] **Password reset** — request/complete API (enumeration-safe; digest-only tokens; session revoke on complete).
 - [ ] **Diagnosis Support** module (differential-hypothesis surface).
 - [ ] **Documents** module (upload/version/e-sign).
-- [ ] **Text-messaging threads** (doc 15) + STOP/opt-out + quiet-hours + templates.
+- [x] **SMS STOP/opt-out + quiet-hours** — `SmsOptOut` model, staff opt-out API, inbound keyword STOP/START, quiet-hours gate on staff + system SMS.
+- [x] **Twilio inbound SMS webhook** — signed `POST /comms/webhooks/twilio/sms-inbound` applies STOP/START and returns TwiML.
+- [ ] **SMS templates** (doc 15) still open.
 - [ ] **Comp-model composability** (doc 05): `computePayout` must read senior-override/supervisor/clinic/referral fields, not a flat pct.
-- [ ] **Audit-Read API** (doc 04/06): endpoint for the granted `AUDIT_READ` permission.
+- [x] **Audit-Read API** — `GET /audit/events` (cursor pagination, entity/actor filters) for `AUDIT_READ`.
 - [ ] **Central PolicyEngine (ABAC)** (doc 03/06 §4.4): consentState, emergencyOverride, deviceTrust, dataResidency + `obligations[]`.
 - [ ] **Refresh-token rotation/differentiation** + `/auth/refresh` + `sessionId` claim + reuse detection (doc 06 §3).
 
@@ -53,7 +77,7 @@
 - [ ] **OpenTelemetry** traces/metrics/logs, PHI-safe attrs, correlation ids (doc 10 §7).
 - [ ] **CI gates** (doc 10 §4): lint, typecheck, SAST/secret-scan, unit, clinical-safety, e2e, a11y, build.
 - [ ] **Dockerfile(s)** + `/healthz`/`/readyz` probes (doc 10 §5).
-- [ ] **Feature-flag/kill-switch service** (doc 10 §13, 14 §4 — EU AI Act staged rollout).
+- [x] **Feature-flag/kill-switch service** — `FeatureFlagsService` + AI_ASSISTED_ANALYSIS kill switch on every model path.
 - [ ] **Playwright E2E** + **axe a11y gate** (doc 12); Testcontainers integration; k6 load.
 - [ ] **IaC** (Terraform/render.yaml/Helm) **(infra)**; **backups/DR** PITR + restore tests **(infra)**.
 - [ ] **Field-level PHI encryption + KMS + crypto-shredding** (doc 06 §7) **(infra: KMS)**.

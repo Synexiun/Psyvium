@@ -39,7 +39,10 @@ function makeService(overrides: Partial<Record<string, unknown>> = {}) {
     payment: {
       create: jest.fn(async ({ data }: any) => ({ id: 'payment_1', ...data })),
     },
-    invoice: { update: jest.fn() },
+    invoice: {
+      update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     outboxEvent: { create: jest.fn() },
   };
 
@@ -144,7 +147,11 @@ describe('PaymentsService.payInvoice', () => {
     expect(result.amount).toBe('180.0000');
 
     // All three writes happen inside the same $transaction callback.
-    expect(prismaTx.invoice.update).toHaveBeenCalledWith({ where: { id: 'invoice_1' }, data: { status: 'PAID' } });
+    // Compare-and-swap on OPEN prevents concurrent double-capture.
+    expect(prismaTx.invoice.updateMany).toHaveBeenCalledWith({
+      where: { id: 'invoice_1', tenantId: 'tenant_demo', status: 'OPEN' },
+      data: { status: 'PAID' },
+    });
     expect(accounting.postBalancedEntry).toHaveBeenCalledWith(
       prismaTx,
       expect.objectContaining({ debitAccountCode: '1000', creditAccountCode: '4000', invoiceId: 'invoice_1' }),

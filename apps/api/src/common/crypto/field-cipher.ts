@@ -100,6 +100,15 @@ export class FieldCipherService implements OnModuleInit {
           'SafetyPlan writes are encrypted at rest (XChaCha20-Poly1305, tenant-bound AAD).',
       );
     } else {
+      // Production must never store clinical fields in cleartext by accident.
+      // Local/dev and test keep the honest passthrough so unit suites and
+      // offline demos still boot without a KMS key.
+      if (process.env.NODE_ENV === 'production' && process.env.VPSY_ALLOW_PLAINTEXT_PHI !== 'true') {
+        throw new Error(
+          'VPSY_FIELD_KEY is required in production (field-level PHI encryption). ' +
+            'Set VPSY_FIELD_KEY (openssl rand -base64 32) or, only for an explicit non-PHI demo, VPSY_ALLOW_PLAINTEXT_PHI=true.',
+        );
+      }
       this.logger.warn(
         '[security] Field-level PHI encryption DISABLED (VPSY_FIELD_KEY not set) — PHI fields are stored in ' +
           'cleartext. Set VPSY_FIELD_KEY to activate (see .env.example: openssl rand -base64 32).',

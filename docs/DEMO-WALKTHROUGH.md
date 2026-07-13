@@ -25,9 +25,9 @@ pnpm --filter @vpsy/web run dev           # http://localhost:3000
 | `dr.rivera@vpsy.health` | Psychologist | `/session` |
 | `alex.client@example.com` | Client | `/home` |
 
-> Each portal page auto-signs-in as the right demo role, so you can also just open the routes directly.
+> Sign in through `/login` with one of the demo buttons, then navigate to the route you want to inspect. Authenticated portal routes depend on the web build having the same `JWT_ACCESS_SECRET` as the API.
 
-## The tour (9 portals)
+## The tour (10 routes)
 
 ### 🏠 `/` — Public landing
 The category thesis, the six operating layers, the eight AI agents, the governance strip. Watch the **lifecycle waveform** (the signature). Use the **language switcher** (top right) → pick العربية to see full RTL; the waveform stays left-to-right (it's a chart, not prose).
@@ -52,6 +52,9 @@ A **pipeline board** (kanban) of leads, a **referrer registry** (doctors/schools
 
 ### ☎️ `/comms` — Communications Hub
 **Click-to-call** and **SMS** (logged to the unified timeline), an in-house **live video/voice** panel (grant camera/mic → your local preview appears; the second participant streams through the self-hosted SFU in a real deployment), and **async voice/video messages** — record with your mic/camera, and they upload and play back.
+
+### 💬 `/messages` — Secure messages
+Client↔clinician text threads inside the platform clinical record. The latest conversation opens by default, incoming unread messages are marked read once the signed-in user is known, and background thread-list refreshes no longer unmount the conversation pane.
 
 ### 🚨 `/risk` — Risk & Crisis
 Open **escalations** most-urgent-first (SEVERE in red/amber). **Assign** and **resolve** — resolve *requires a written resolution*; nothing is ever auto-resolved. Author an append-only **safety plan**. The **break-glass** panel grants time-boxed emergency access (reason required) — high-priority audited, alerts the DPO.

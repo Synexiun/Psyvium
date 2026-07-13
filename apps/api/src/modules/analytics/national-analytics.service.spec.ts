@@ -48,8 +48,10 @@ describe('NationalAnalyticsService.getNationalAnalytics', () => {
     expect(vt.cohortSize).toBe(3);
     expect(vt.suppressed).toBe(true);
     expect(vt.value).toBeNull();
-    // The suppressed row's underlying real value (33.0) must never appear anywhere in the response.
-    expect(JSON.stringify(result)).not.toContain('33');
+    // The suppressed row's underlying real value (33.0) must never appear in
+    // metric payloads. Exclude generatedAt — a wall-clock second of :33 would
+    // otherwise false-fail this check.
+    expect(JSON.stringify(result.metrics)).not.toContain('33');
 
     const ny = result.metrics.find((m) => m.region === 'US-NY')!;
     expect(ny.cohortSize).toBe(48210);

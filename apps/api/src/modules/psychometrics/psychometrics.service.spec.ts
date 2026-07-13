@@ -1,4 +1,4 @@
-import type { AuthPrincipal } from '@vpsy/contracts';
+import { Role, type AuthPrincipal } from '@vpsy/contracts';
 import { PsychometricsService } from './psychometrics.service';
 import { ScoringService } from './scoring.service';
 import { IrtScoringService } from './irt-scoring.service';
@@ -12,9 +12,9 @@ import { IrtScoringService } from './irt-scoring.service';
  */
 
 const principal: AuthPrincipal = {
-  userId: 'user_psy_a',
+  userId: 'user_client_1',
   tenantId: 'tenant_demo',
-  roles: [],
+  roles: [Role.CLIENT],
   permissions: [],
 };
 
@@ -28,6 +28,19 @@ const CUTOFFS_WITH_SAFETY_ITEM = {
   safetyItems: [{ itemId: 'q9', minAnswer: 1, category: 'suicidal_ideation' }],
 };
 
+const DEFAULT_ITEMS = ['q1', 'q2', 'q9'].map((linkId, index) => ({
+  id: `item_${linkId}`,
+  linkId,
+  responseOptions: [0, 1, 2, 3],
+  orderIndex: index,
+  parameters: [],
+}));
+
+const CUTOFFS_WITHOUT_SAFETY_ITEMS = {
+  bands: CUTOFFS_WITH_SAFETY_ITEM.bands,
+  safetyItems: [],
+};
+
 function makeService(versionOverrides: Record<string, unknown> = {}) {
   const createdRiskFlags: any[] = [];
   const createdEscalations: any[] = [];
@@ -38,9 +51,10 @@ function makeService(versionOverrides: Record<string, unknown> = {}) {
     id: 'qv_1',
     published: true,
     cutoffs: CUTOFFS_WITH_SAFETY_ITEM,
+    items: DEFAULT_ITEMS,
     ...versionOverrides,
   };
-  const client = { id: 'client_1', tenantId: 'tenant_demo', riskLevel: 'LOW' };
+  const client = { id: 'client_1', tenantId: 'tenant_demo', userId: 'user_client_1', riskLevel: 'LOW' };
 
   const tx = {
     questionnaireResponse: {
@@ -185,15 +199,18 @@ describe('PsychometricsService.administer — safety-item hook', () => {
     expect(bus.publishDurable).not.toHaveBeenCalledWith(tx, 'escalation.raised', expect.anything(), expect.anything());
   });
 
-  it('never raises a flag when the safety item is simply absent from the answers', async () => {
+  it('rejects an incomplete response when the safety item is absent', async () => {
     const { svc, tx } = makeService();
 
-    await svc.administer(principal, {
-      versionId: 'qv_1',
-      clientId: 'client_1',
-      answers: { q1: 1, q2: 1 }, // q9 never answered
-    });
+    await expect(
+      svc.administer(principal, {
+        versionId: 'qv_1',
+        clientId: 'client_1',
+        answers: { q1: 1, q2: 1 },
+      }),
+    ).rejects.toThrow(/incomplete.*q9/i);
 
+    expect(tx.questionnaireResponse.create).not.toHaveBeenCalled();
     expect(tx.riskFlag.create).not.toHaveBeenCalled();
     expect(tx.escalation.create).not.toHaveBeenCalled();
   });
@@ -208,12 +225,13 @@ describe('PsychometricsService.administer — safety-item hook', () => {
  */
 describe('PsychometricsService.administer — IRT latent-trait scoring', () => {
   const IRT_VERSION = {
+    cutoffs: CUTOFFS_WITHOUT_SAFETY_ITEMS,
     questionnaire: { scoringMethod: 'IRT' },
     items: [
       // GRM anxiety-style items, categories 0..3, answers keyed by linkId
-      { id: 'item_1', linkId: 'q1', parameters: [{ model: 'GRM', a: 1.8, b: 0, c: null, thresholds: [-1.2, 0, 1.1] }] },
-      { id: 'item_2', linkId: 'q2', parameters: [{ model: 'GRM', a: 1.4, b: 0, c: null, thresholds: [-0.8, 0.3, 1.5] }] },
-      { id: 'item_3', linkId: 'q3', parameters: [{ model: 'GRM', a: 2.1, b: 0, c: null, thresholds: [-1.5, -0.4, 0.7] }] },
+      { id: 'item_1', linkId: 'q1', responseOptions: [0, 1, 2, 3], parameters: [{ model: 'GRM', a: 1.8, b: 0, c: null, thresholds: [-1.2, 0, 1.1] }] },
+      { id: 'item_2', linkId: 'q2', responseOptions: [0, 1, 2, 3], parameters: [{ model: 'GRM', a: 1.4, b: 0, c: null, thresholds: [-0.8, 0.3, 1.5] }] },
+      { id: 'item_3', linkId: 'q3', responseOptions: [0, 1, 2, 3], parameters: [{ model: 'GRM', a: 2.1, b: 0, c: null, thresholds: [-1.5, -0.4, 0.7] }] },
     ],
   };
 
@@ -245,7 +263,7 @@ describe('PsychometricsService.administer — IRT latent-trait scoring', () => {
     const dto = await svc.administer(principal, {
       versionId: 'qv_1',
       clientId: 'client_1',
-      answers: { q1: 1, q2: 1 },
+      answers: { q1: 1, q2: 1, q9: 0 },
     });
 
     expect(createdScores[0].thetaEstimate).toBeNull();
@@ -258,8 +276,9 @@ describe('PsychometricsService.administer — IRT latent-trait scoring', () => {
 
   it('IRT-declared instrument WITHOUT calibrated parameters falls back to classical (theta null)', async () => {
     const { svc, createdScores } = makeService({
+      cutoffs: CUTOFFS_WITHOUT_SAFETY_ITEMS,
       questionnaire: { scoringMethod: 'IRT' },
-      items: [{ id: 'item_1', linkId: 'q1', parameters: [] }],
+      items: [{ id: 'item_1', linkId: 'q1', responseOptions: [0, 1, 2, 3], parameters: [] }],
     });
 
     await svc.administer(principal, { versionId: 'qv_1', clientId: 'client_1', answers: { q1: 1 } });
@@ -270,10 +289,11 @@ describe('PsychometricsService.administer — IRT latent-trait scoring', () => {
 
   it('refuses to score against a mis-calibrated parameter row (fails loudly, nothing persisted)', async () => {
     const { svc, tx } = makeService({
+      cutoffs: CUTOFFS_WITHOUT_SAFETY_ITEMS,
       questionnaire: { scoringMethod: 'IRT' },
       items: [
         // Unordered GRM thresholds — a wrong theta is worse than none.
-        { id: 'item_1', linkId: 'q1', parameters: [{ model: 'GRM', a: 1.8, b: 0, c: null, thresholds: [1.1, -0.2, 0.4] }] },
+        { id: 'item_1', linkId: 'q1', responseOptions: [0, 1, 2, 3], parameters: [{ model: 'GRM', a: 1.8, b: 0, c: null, thresholds: [1.1, -0.2, 0.4] }] },
       ],
     });
 

@@ -12,14 +12,13 @@
  * error (a real failure + retry), or the live data (which may itself be
  * empty, e.g. no next session yet). The mood check-in persists to the
  * outcome record (POST /outcomes) with localStorage kept only as a same-day
- * echo of the pick. Homework/exercises have no backend yet (Intervention
- * Tracking, context 19, is not built) so that section is an honest
- * "nothing here yet" placeholder — never fabricated content.
+ * echo of the pick. Homework loads from GET /interventions/client/:id and
+ * completes via PATCH /interventions/homework/:id/complete.
  *
  * Command Center flagship: the wearable rollup + quick links live in the
  * shell's context panel (<ContextPanel>); figures are mono/tabular.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/i18n';
 import { api, getPrincipal, ApiError } from '@/lib/api';
@@ -32,6 +31,15 @@ import { SkeletonCard, SkeletonStack } from '@/components/Skeleton';
 import { ErrorPanel } from '@/components/ErrorPanel';
 import { EmptyState } from '@/components/EmptyState';
 import { StatTile } from '@/components/StatTile';
+
+interface HomeworkItem {
+  id: string;
+  description: string;
+  dueDate: string | null;
+  completionPct: number;
+  difficulty: string | null;
+  clinicalTarget: string;
+}
 
 const MOOD_KEY_PREFIX = 'vpsy.mood.';
 
@@ -144,9 +152,54 @@ export default function PatientHomePage() {
   const apptFormatLabel = (fmt: string) =>
     /video|virtual|online/i.test(fmt) ? t('patient.videoSession') : t('patient.inPersonSession');
 
+  const [rescheduleBusy, setRescheduleBusy] = useState(false);
+  const [rescheduleMsg, setRescheduleMsg] = useState<string | null>(null);
+
+  async function requestReschedule() {
+    if (!nextAppt || rescheduleBusy) return;
+    if (typeof window !== 'undefined' && !window.confirm(t('patient.rescheduleConfirm'))) return;
+    setRescheduleBusy(true);
+    setRescheduleMsg(null);
+    try {
+      await api.schedSetStatus(nextAppt.id, 'CANCELLED');
+      setRescheduleMsg(t('patient.rescheduleDone'));
+      reload();
+    } catch {
+      setRescheduleMsg(t('patient.rescheduleFailed'));
+    } finally {
+      setRescheduleBusy(false);
+    }
+  }
+
   const goals = summary?.activePlan?.goals ?? [];
   const outcomeGroups = useMemo(() => (summary ? groupOutcomes(summary.outcomes) : []), [summary]);
   const wearable = summary?.wearable ?? null;
+
+  const clientId = summary?.client.id;
+  const fetchHomework = useCallback(async () => {
+    if (!clientId) return [] as HomeworkItem[];
+    const interventions = await api.interventionsForClient(clientId);
+    const items: HomeworkItem[] = [];
+    for (const iv of interventions) {
+      for (const hw of iv.homework ?? []) {
+        items.push({
+          id: hw.id,
+          description: hw.description,
+          dueDate: hw.dueDate,
+          completionPct: hw.completionPct,
+          difficulty: hw.difficulty,
+          clinicalTarget: iv.clinicalTarget,
+        });
+      }
+    }
+    return items;
+  }, [clientId]);
+  const {
+    data: homework,
+    loading: homeworkLoading,
+    error: homeworkError,
+    reload: reloadHomework,
+  } = useResource(fetchHomework, [clientId]);
   const moodWeek = useMemo(() => buildMoodWeek(summary?.outcomes ?? []), [summary]);
   const todayMood = localMood ?? moodWeek[moodWeek.length - 1] ?? null;
 
@@ -202,7 +255,19 @@ export default function PatientHomePage() {
                         entry surface, where this appointment's video session
                         is created/joined with the waiting-room flow. */}
                     <a href="/telehealth" className="btn-primary">{t('patient.join')}</a>
-                    <button className="btn-ghost">{t('patient.reschedule')}</button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      disabled={rescheduleBusy}
+                      onClick={() => void requestReschedule()}
+                    >
+                      {rescheduleBusy ? t('patient.rescheduling') : t('patient.reschedule')}
+                    </button>
+                    {rescheduleMsg && (
+                      <p role="status" className="max-w-[14rem] text-xs text-mist/60">
+                        {rescheduleMsg}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -332,8 +397,12 @@ export default function PatientHomePage() {
               </div>
             </section>
 
-            {/* Exercises / homework — no backend yet (Intervention Tracking, context 19, is not built) */}
-            <EmptyState eyebrow={t('patient.exercisesEyebrow')} body={t('patient.exercisesEmpty')} />
+            <HomeworkSection
+              items={homework ?? []}
+              loading={homeworkLoading}
+              error={!!homeworkError}
+              onReload={reloadHomework}
+            />
           </>
         )}
 
@@ -584,33 +653,124 @@ function MySafetyPlanCard() {
   );
 }
 
+function HomeworkSection({
+  items,
+  loading,
+  error,
+  onReload,
+}: {
+  items: HomeworkItem[];
+  loading: boolean;
+  error: boolean;
+  onReload: () => void;
+}) {
+  const { t, fmtDate } = useI18n();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [localDone, setLocalDone] = useState<Record<string, boolean>>({});
+
+  async function complete(id: string) {
+    setBusyId(id);
+    try {
+      await api.completeHomework(id, { completionPct: 100 });
+      setLocalDone((prev) => ({ ...prev, [id]: true }));
+      onReload();
+    } catch {
+      /* parent can still show empty; toast-level error stays quiet on home */
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (loading) return <SkeletonCard className="mt-0" />;
+  if (error) {
+    return (
+      <ErrorPanel className="mt-0" message={t('patient.homeworkFailed')} onRetry={onReload} />
+    );
+  }
+  if (items.length === 0) {
+    return <EmptyState eyebrow={t('patient.exercisesEyebrow')} body={t('patient.exercisesEmpty')} />;
+  }
+
+  const open = items.filter((h) => h.completionPct < 100 && !localDone[h.id]);
+  const done = items.filter((h) => h.completionPct >= 100 || localDone[h.id]);
+
+  return (
+    <section className="card p-5">
+      <p className="eyebrow">{t('patient.exercisesEyebrow')}</p>
+      <h2 className="mt-1.5 font-display text-lg font-medium text-mist">{t('patient.exercisesEyebrow')}</h2>
+      <p className="mt-1 text-xs text-mist/45">
+        {t('patient.progress', { done: done.length, total: items.length })}
+      </p>
+      <ul className="mt-4 space-y-3">
+        {items.map((hw) => {
+          const completed = hw.completionPct >= 100 || localDone[hw.id];
+          return (
+            <li key={hw.id} className="card-inset flex flex-col gap-2 p-3.5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-mist/90">{hw.description}</p>
+                <p className="mt-0.5 text-[11px] text-mist/45">{hw.clinicalTarget}</p>
+                {hw.dueDate && (
+                  <p className="mt-1 text-[11px] text-haze/90">
+                    {t('patient.homeworkDue', {
+                      date: fmtDate(new Date(hw.dueDate), { day: 'numeric', month: 'short' }),
+                    })}
+                  </p>
+                )}
+                {hw.difficulty && (
+                  <p className="mt-0.5 text-[11px] text-mist/40">
+                    {t('patient.homeworkDifficulty', { level: hw.difficulty })}
+                  </p>
+                )}
+              </div>
+              {completed ? (
+                <span className="chip text-teal-soft/90">{t('patient.homeworkCompleted')}</span>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-ghost shrink-0"
+                  disabled={busyId === hw.id}
+                  onClick={() => void complete(hw.id)}
+                >
+                  {busyId === hw.id ? t('patient.homeworkCompleting') : t('patient.homeworkComplete')}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {open.length === 0 && items.length > 0 && (
+        <p className="mt-3 text-sm text-mist/55" role="status">
+          {t('patient.done')}
+        </p>
+      )}
+    </section>
+  );
+}
+
 /**
  * Emergency help — jurisdiction-aware crisis resources (APA telepsychology
  * guidance: 988 is US-only, and this is a multi-country product). Resolves
  * GET /risk/crisis-resources (tenant countryCode → real national crisis
  * line) and renders the caller's own resolved entry.
  *
- * The previously-fixed 988 tel/chat links render ONLY when the API confirms
- * a US tenant, or when the lookup itself hasn't resolved yet (still
- * loading) or failed — a safe, never-blank last-resort default. A resolved
- * non-US country renders its OWN real number/links; an unregistered country
- * gets the API's honest generic fallback (local emergency number +
- * befrienders.org) — this card never shows a wrong or dead number.
+ * No telephone or chat destination renders until the API has resolved the
+ * signed-in tenant's jurisdiction. A failed/unfinished lookup stays visibly
+ * unavailable and directs the person to local emergency services; it never
+ * silently substitutes a US-only number.
  */
 function EmergencyCard() {
   const { t } = useI18n();
-  const { data: crisis } = useResource<CrisisResourcesDto | null>(
+  const { data: crisis, loading, error } = useResource<CrisisResourcesDto | null>(
     // No session on file — the page-level effect is redirecting to /login; skip the call.
     () => (getPrincipal() ? api.riskCrisisResources() : Promise.resolve(null)),
     [],
   );
 
-  // `crisis` is null while loading (or if there's no session) and stays null
-  // on a failed call — all three collapse to the same safe US default below,
-  // exactly matching the "US or the call fails" rule.
-  const entry = crisis && crisis.resolved.countryCode !== 'US' ? crisis.resolved : null;
-  const telHref = entry ? `tel:${entry.phone.replace(/[^\d+]/g, '')}` : null;
-  const smsHref = entry?.smsNumber ? `sms:${entry.smsNumber.replace(/[^\d+]/g, '')}` : null;
+  const entry = crisis?.resolved ?? null;
+  // The registry's `isFallback` entry is intentionally generic; do not turn
+  // its placeholder number into a one-click call outside a confirmed country.
+  const telHref = entry && !crisis?.isFallback ? `tel:${entry.phone.replace(/[^\d+]/g, '')}` : null;
+  const smsHref = entry?.smsNumber && !crisis?.isFallback ? `sms:${entry.smsNumber.replace(/[^\d+]/g, '')}` : null;
 
   return (
     <section className="rounded-md border border-signal/40 bg-signal/[0.06] p-5">
@@ -652,31 +812,9 @@ function EmergencyCard() {
           {entry.notes && <p className="mt-3 text-xs leading-relaxed text-mist/50">{entry.notes}</p>}
         </>
       ) : (
-        <div className="mt-4 flex flex-wrap gap-3">
-          <a
-            href="tel:988"
-            className="inline-flex items-center gap-2 rounded bg-signal px-4 py-2 text-sm font-medium text-ink transition hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
-              <path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 2 .7 2.9a2 2 0 01-.5 2.1L8 10a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.5c.9.3 1.9.6 2.9.7a2 2 0 011.7 2z" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            {t('patient.helpCall')}
-          </a>
-          {/* REAL crisis channel (clinical audit 2026-07-06, P0): this was a dead
-              <button> with no handler — a visible but non-functional crisis
-              control is a patient-safety hazard. Links to the 988 Suicide &
-              Crisis Lifeline's actual chat service — the US/loading/error
-              default; a resolved non-US jurisdiction renders its own link
-              above instead. */}
-          <a
-            href="https://988lifeline.org/chat"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded border border-signal/50 px-4 py-2 text-sm font-medium text-signal transition hover:bg-signal/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal"
-          >
-            {t('patient.helpChat')}
-          </a>
-        </div>
+        <p className="mt-4 rounded border border-signal/30 bg-signal/5 p-3 text-sm text-mist/75" role={error ? 'alert' : 'status'}>
+          {loading ? t('patient.helpResourcesLoading') : t('patient.helpResourcesUnavailable')}
+        </p>
       )}
 
       <p className="mt-4 text-xs text-mist/50">{t('patient.helpEmergency')}</p>

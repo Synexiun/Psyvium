@@ -23,6 +23,7 @@ import { AuditService } from '../../common/audit/audit.service';
 import { CatSelectionService, type CatCandidate } from './cat-selection.service';
 import { IrtScoringService } from './irt-scoring.service';
 import { PsychometricsService } from './psychometrics.service';
+import { validateSafetyConfiguration } from './response-validation';
 
 /**
  * Computerized Adaptive Testing session flow
@@ -73,7 +74,7 @@ interface LoadedCatVersion {
     id: string;
     cutoffs: unknown;
     questionnaire?: { scoringMethod: string } | null;
-    items?: Array<{ id: string; linkId?: string | null; parameters?: unknown[] }>;
+    items?: Array<{ id: string; linkId?: string | null; responseOptions: unknown; parameters?: unknown[] }>;
   };
   candidates: CatItemCandidate[];
 }
@@ -125,6 +126,7 @@ export class CatService {
     if (!cutoffsParsed.success) {
       throw new BadRequestException('Questionnaire version has no valid scoring cutoffs configured');
     }
+    validateSafetyConfiguration(version.cutoffs, version.items ?? []);
 
     const firstItem = this.selection.selectNextItem(candidates, PRIOR_THETA);
 

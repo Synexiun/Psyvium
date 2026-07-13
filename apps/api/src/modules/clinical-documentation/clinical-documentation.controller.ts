@@ -11,6 +11,8 @@ import {
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
 import { ClinicalWriteGuard } from '../../common/auth/clinical-write.guard';
+import { ClinicalAccessGuard } from '../../common/auth/clinical-access.guard';
+import { RequireClinicalAccess } from '../../common/auth/clinical-access.decorator';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -29,7 +31,8 @@ export class ClinicalDocumentationController {
    * jurisdiction-matched (Phase 2 DoD).
    */
   @Post()
-  @UseGuards(ClinicalWriteGuard)
+  @UseGuards(ClinicalWriteGuard, ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'session', source: 'body', key: 'sessionId' })
   @RequirePermissions(Permission.NOTE_WRITE)
   create(
     @CurrentUser() user: AuthPrincipal,
@@ -39,6 +42,8 @@ export class ClinicalDocumentationController {
   }
 
   @Get('session/:sessionId')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'session', source: 'params', key: 'sessionId' })
   @RequirePermissions(Permission.NOTE_READ)
   listBySession(@CurrentUser() user: AuthPrincipal, @Param('sessionId') sessionId: string) {
     return this.notes.listBySession(user, sessionId);
@@ -46,7 +51,8 @@ export class ClinicalDocumentationController {
 
   /** One-way transition; a signed note can never be re-signed or edited in place. */
   @Post(':id/sign')
-  @UseGuards(ClinicalWriteGuard)
+  @UseGuards(ClinicalWriteGuard, ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'note', source: 'params', key: 'id' })
   @RequirePermissions(Permission.NOTE_WRITE)
   sign(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
     return this.notes.sign(user, id);
@@ -60,6 +66,8 @@ export class ClinicalDocumentationController {
    * record mutation.
    */
   @Post('ai-assist')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'session', source: 'body', key: 'sessionId' })
   @RequirePermissions(Permission.NOTE_WRITE)
   aiAssist(
     @CurrentUser() user: AuthPrincipal,

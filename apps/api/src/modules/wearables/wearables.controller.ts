@@ -8,6 +8,8 @@ import {
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
+import { ClinicalAccessGuard } from '../../common/auth/clinical-access.guard';
+import { RequireClinicalAccess } from '../../common/auth/clinical-access.decorator';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -21,6 +23,8 @@ export class WearablesController {
   constructor(private readonly wearables: WearablesService) {}
 
   @Post('metrics')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'wearableDevice', source: 'body', key: 'deviceId' })
   @RequirePermissions(Permission.WEARABLE_WRITE)
   ingest(
     @CurrentUser() user: AuthPrincipal,
@@ -30,6 +34,8 @@ export class WearablesController {
   }
 
   @Get('client/:clientId/rollup')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'params', key: 'clientId' })
   @RequirePermissions(Permission.WEARABLE_READ)
   getRollup(
     @CurrentUser() user: AuthPrincipal,

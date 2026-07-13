@@ -10,6 +10,8 @@ import {
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
+import { ClinicalAccessGuard } from '../../common/auth/clinical-access.guard';
+import { RequireClinicalAccess } from '../../common/auth/clinical-access.decorator';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -23,6 +25,8 @@ export class OutcomesController {
   constructor(private readonly outcomes: OutcomesService) {}
 
   @Post()
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'body', key: 'clientId' })
   @RequirePermissions(Permission.OUTCOME_RECORD)
   record(
     @CurrentUser() user: AuthPrincipal,
@@ -32,6 +36,8 @@ export class OutcomesController {
   }
 
   @Get('client/:clientId')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'params', key: 'clientId' })
   @RequirePermissions(Permission.OUTCOME_READ)
   listForClient(@CurrentUser() user: AuthPrincipal, @Param('clientId') clientId: string) {
     return this.outcomes.listForClient(user, clientId);
@@ -43,6 +49,8 @@ export class OutcomesController {
    * recomputes it, never writes an OutcomeMeasure.
    */
   @Post('ai-assist')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'body', key: 'clientId' })
   @RequirePermissions(Permission.OUTCOME_READ)
   aiAssist(
     @CurrentUser() user: AuthPrincipal,

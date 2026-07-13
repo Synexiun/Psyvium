@@ -30,6 +30,11 @@ const CUTOFFS = {
     { band: 'HIGH', min: 10, max: 14 },
     { band: 'SEVERE', min: 15, max: 99 },
   ],
+  safetyItems: [],
+};
+
+const CUTOFFS_WITH_SAFETY_ITEM = {
+  ...CUTOFFS,
   safetyItems: [{ itemId: 'q9', minAnswer: 1, category: 'suicidal_ideation' }],
 };
 
@@ -216,6 +221,17 @@ describe('CatService.start — CAT opt-in gate + first-item selection', () => {
     );
   });
 
+  it('fails closed before opening a session when the published safety configuration is missing', async () => {
+    const { cat, prisma } = makeHarness({
+      items: grmBank(STRONG_BANK),
+      cutoffs: { bands: CUTOFFS.bands },
+    });
+    await expect(cat.start(principal, { versionId: 'qv_cat', clientId: 'client_1' })).rejects.toThrow(
+      /safety-item configuration/i,
+    );
+    expect(prisma.catSession.create).not.toHaveBeenCalled();
+  });
+
   it('selects the first item by maximum Fisher information at the prior mean theta=0 (rng pinned)', async () => {
     const { cat, irt, selection } = makeHarness({ items: grmBank(STRONG_BANK) });
     const state = await cat.start(principal, { versionId: 'qv_cat', clientId: 'client_1' });
@@ -356,7 +372,10 @@ describe('CatService.answer — stateful adaptive flow', () => {
       { linkId: 'q1', a: 1.2, thresholds: [-1, 0, 1] },
       { linkId: 'q9', a: 1.0, thresholds: [-0.5, 0.5, 1.5] },
     ];
-    const { cat, createdRiskFlags, createdEscalations, bus, tx } = makeHarness({ items: grmBank(bank) });
+    const { cat, createdRiskFlags, createdEscalations, bus, tx } = makeHarness({
+      items: grmBank(bank),
+      cutoffs: CUTOFFS_WITH_SAFETY_ITEM,
+    });
     const states = await runSession(cat, principal, () => 2); // every item answered 2 → q9 endorsed at 2
 
     expect(states[states.length - 1]!.status).toBe('COMPLETED');
@@ -385,7 +404,7 @@ describe('CatService.answer — stateful adaptive flow', () => {
       { linkId: 'q1', a: 1.2, thresholds: [-1, 0, 1] },
       { linkId: 'q9', a: 1.0, thresholds: [-0.5, 0.5, 1.5] },
     ];
-    const { cat, createdRiskFlags } = makeHarness({ items: grmBank(bank) });
+    const { cat, createdRiskFlags } = makeHarness({ items: grmBank(bank), cutoffs: CUTOFFS_WITH_SAFETY_ITEM });
     await runSession(cat, principal, () => 0); // q9 answered 0 < minAnswer 1
     expect(createdRiskFlags).toHaveLength(0);
   });

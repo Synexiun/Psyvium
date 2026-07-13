@@ -56,8 +56,13 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
   // unavailable during SSR; resolving it there would also risk a hydration mismatch).
   const [principal, setPrincipal] = useState<Principal | null>(null);
   useEffect(() => {
-    setPrincipal(getPrincipal());
-  }, [pathname]);
+    const p = getPrincipal();
+    setPrincipal(p);
+    // Mandatory clinical/admin MFA must complete before any portal surface.
+    if (p?.mfaEnrollmentRequired) {
+      router.replace('/security/mfa');
+    }
+  }, [pathname, router]);
 
   async function signOut() {
     await logout();
@@ -171,6 +176,18 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
                 </Link>
               );
             })}
+            {principal && (
+              <button
+                type="button"
+                onClick={signOut}
+                className="flex min-w-[64px] flex-col items-center gap-1 rounded-sm px-2 py-1.5 text-mist/55 transition hover:text-mist focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+                  <path d="M10 5H5v14h5M14 8l4 4-4 4m4-4H9" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="font-mono text-[9px] uppercase tracking-wider">{t('common.signOut')}</span>
+              </button>
+            )}
           </div>
         </nav>
 

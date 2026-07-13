@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { RealtimeEventType, type LiveEvent, type LiveEventEntityRef } from '@vpsy/contracts';
+import { RealtimeEventType, Role, type LiveEvent, type LiveEventEntityRef } from '@vpsy/contracts';
 import { EventBus, Events, type DomainEvent } from '../events/event-bus.service';
 import { RealtimeGateway } from './realtime.gateway';
 
@@ -9,13 +9,14 @@ type Mapper = (event: DomainEvent) => {
   entity: LiveEventEntityRef;
   status?: string;
   /** Present only when this event should ALSO be pushed to one user's private room. */
-  userId?: string;
+  userIds?: string[];
+  roles?: Role[];
   data?: Record<string, unknown>;
 } | null;
 
 /**
  * Bridges the in-process EventBus (see `common/events/event-bus.service.ts`)
- * to the authenticated, tenant-scoped Socket.IO rooms owned by
+ * to authenticated participant and explicit operational-role rooms owned by
  * `RealtimeGateway`. This is the ONLY place that translates internal domain
  * events into the public real-time contract — every mapper below hand-picks
  * ids/refs/status, never the raw event payload, so clinical free-text can
@@ -41,7 +42,7 @@ export class RealtimeBridgeService implements OnModuleInit {
       return {
         type: RealtimeEventType.RiskFlagRaised,
         entity: { type: 'RiskFlag', id: p.riskFlagId },
-        data: { clientId: p.clientId },
+        roles: [Role.MANAGER, Role.SUPERVISOR],
       };
     });
 
@@ -50,7 +51,7 @@ export class RealtimeBridgeService implements OnModuleInit {
       return {
         type: RealtimeEventType.EscalationRaised,
         entity: { type: 'Escalation', id: p.escalationId },
-        data: { riskFlagId: p.riskFlagId, clientId: p.clientId },
+        roles: [Role.MANAGER, Role.SUPERVISOR],
       };
     });
 
@@ -60,8 +61,8 @@ export class RealtimeBridgeService implements OnModuleInit {
         type: RealtimeEventType.EscalationAssigned,
         entity: { type: 'Escalation', id: p.escalationId },
         status: 'assigned',
-        userId: p.assignedTo,
-        data: { riskFlagId: p.riskFlagId, clientId: p.clientId },
+        userIds: [p.assignedTo],
+        roles: [Role.MANAGER, Role.SUPERVISOR],
       };
     });
 
@@ -71,7 +72,7 @@ export class RealtimeBridgeService implements OnModuleInit {
         type: RealtimeEventType.EscalationResolved,
         entity: { type: 'Escalation', id: p.escalationId },
         status: 'resolved',
-        data: { riskFlagId: p.riskFlagId, clientId: p.clientId },
+        roles: [Role.MANAGER, Role.SUPERVISOR],
       };
     });
 
@@ -82,7 +83,7 @@ export class RealtimeBridgeService implements OnModuleInit {
         type: RealtimeEventType.AssignmentProposed,
         entity: { type: 'Assignment', id: p.assignmentId },
         status: 'proposed',
-        data: { clientId: p.clientId },
+        roles: [Role.MANAGER],
       };
     });
 
@@ -92,7 +93,7 @@ export class RealtimeBridgeService implements OnModuleInit {
         type: RealtimeEventType.AssignmentApproved,
         entity: { type: 'Assignment', id: p.assignmentId },
         status: 'approved',
-        data: { clientId: p.clientId, psychologistId: p.psychologistId },
+        roles: [Role.MANAGER],
       };
     });
 
@@ -103,7 +104,8 @@ export class RealtimeBridgeService implements OnModuleInit {
         type: RealtimeEventType.AppointmentBooked,
         entity: { type: 'Appointment', id: p.appointmentId },
         status: 'BOOKED',
-        data: { clientId: p.clientId, psychologistId: p.psychologistId, startsAt: p.startsAt },
+        roles: [Role.MANAGER],
+        data: { startsAt: p.startsAt },
       };
     });
 
@@ -113,7 +115,7 @@ export class RealtimeBridgeService implements OnModuleInit {
         type: p.status === 'CANCELLED' ? RealtimeEventType.AppointmentCancelled : RealtimeEventType.AppointmentChanged,
         entity: { type: 'Appointment', id: p.appointmentId },
         status: p.status,
-        data: { clientId: p.clientId, psychologistId: p.psychologistId },
+        roles: [Role.MANAGER],
       };
     });
 
@@ -143,10 +145,11 @@ export class RealtimeBridgeService implements OnModuleInit {
     // (`RealtimeEventType` doc comment). The recipient's client reloads the
     // thread over the authenticated REST API to see the actual text.
     this.wire(Events.MessageSent, (e) => {
-      const p = e.payload as { messageId: string; threadId: string; senderId: string };
+      const p = e.payload as { messageId: string; threadId: string; senderId: string; recipientUserIds?: string[] };
       return {
         type: RealtimeEventType.CommsMessage,
         entity: { type: 'Message', id: p.messageId },
+        userIds: p.recipientUserIds ?? [],
         data: { threadId: p.threadId },
       };
     });
@@ -172,7 +175,7 @@ export class RealtimeBridgeService implements OnModuleInit {
     });
   }
 
-  /** Subscribes once to `eventName`; on publish, maps + emits to the tenant room (and user room if targeted). */
+  /** Subscribes once and emits only to explicitly declared users/roles. */
   private wire(eventName: string, map: Mapper): void {
     this.bus.subscribe(eventName, (event) => {
       try {
@@ -186,9 +189,11 @@ export class RealtimeBridgeService implements OnModuleInit {
           status: mapped.status,
           data: mapped.data,
         };
-        this.gateway.emitToTenant(event.tenantId, liveEvent);
-        if (mapped.userId) {
-          this.gateway.emitToUser(mapped.userId, { ...liveEvent, userId: mapped.userId });
+        if (mapped.roles?.length) {
+          this.gateway.emitToRoles(event.tenantId, mapped.roles, liveEvent);
+        }
+        for (const userId of new Set(mapped.userIds ?? [])) {
+          this.gateway.emitToUser(userId, { ...liveEvent, userId });
         }
       } catch (err) {
         this.logger.error(`bridge mapping failed for ${eventName}: ${(err as Error).message}`);

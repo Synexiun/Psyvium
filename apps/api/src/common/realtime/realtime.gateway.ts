@@ -3,12 +3,12 @@ import { JwtService } from '@nestjs/jwt';
 import { OnGatewayConnection, OnGatewayDisconnect, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import type { Server, Socket } from 'socket.io';
 import { jwtAccessSecret } from '../config/jwt-secrets';
-import { REALTIME_SOCKET_EVENT, type LiveEvent } from '@vpsy/contracts';
+import { REALTIME_SOCKET_EVENT, Role, type LiveEvent } from '@vpsy/contracts';
 
-/** A socket only ever joins its own tenant's room — this is the tenant-isolation boundary. */
-export const tenantRoom = (tenantId: string): string => `tenant:${tenantId}`;
 /** A socket also joins its own user room, so user-targeted events (e.g. "assigned to you") reach it. */
 export const userRoom = (userId: string): string => `user:${userId}`;
+/** Operational events are restricted to explicit role rooms, never the whole tenant. */
+export const roleRoom = (tenantId: string, role: Role): string => `tenant:${tenantId}:role:${role}`;
 
 /**
  * Real-time push gateway (docs/superpowers/specs/2026-07-06-live-data-command-center-design.md,
@@ -17,14 +17,13 @@ export const userRoom = (userId: string): string => `user:${userId}`;
  * and this gateway's room-emit API, so bounded contexts stay decoupled from
  * the transport (hexagonal: this module is infrastructure, not a context).
  *
- * SECURITY — tenant isolation is mandatory, not a nice-to-have:
+ * SECURITY — minimum-necessary delivery is mandatory, not a nice-to-have:
  *  - The handshake is authenticated with the SAME short-lived access token
  *    used for HTTP (verified with `jwtAccessSecret()`, the identical secret
  *    JwtAuthGuard uses). Any missing/invalid/expired token disconnects the
  *    socket immediately — there is no unauthenticated realtime channel.
- *  - A socket is joined ONLY to `tenant:{tenantId}` (from the verified
- *    token, never client-supplied) and `user:{userId}`. There is no
- *    broadcast-to-all path and no way for a socket to join another room.
+ *  - A socket joins only its `user:{userId}` room and verified role rooms.
+ *    There is deliberately no tenant-wide clinical broadcast room.
  */
 @WebSocketGateway({
   cors: { origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000', credentials: true },
@@ -46,12 +45,15 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
       const payload = await this.jwt.verifyAsync(token, { secret: jwtAccessSecret() });
       const userId: string | undefined = payload.sub;
       const tenantId: string | undefined = payload.tenantId;
+      const roles = Array.isArray(payload.roles)
+        ? payload.roles.filter((role: unknown): role is Role => Object.values(Role).includes(role as Role))
+        : [];
       if (!userId || !tenantId) throw new UnauthorizedException('Malformed token');
 
       client.data.userId = userId;
       client.data.tenantId = tenantId;
-      await client.join(tenantRoom(tenantId));
       await client.join(userRoom(userId));
+      await Promise.all(roles.map((role) => client.join(roleRoom(tenantId, role))));
       this.logger.debug(`socket ${client.id} connected (tenant=${tenantId})`);
     } catch (err) {
       this.logger.warn(`rejected unauthenticated socket ${client.id}: ${(err as Error).message}`);
@@ -72,13 +74,15 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     return header?.startsWith('Bearer ') ? header.slice(7) : undefined;
   }
 
-  /** Tenant-wide push — the default target for every curated real-time event. */
-  emitToTenant(tenantId: string, event: LiveEvent): void {
-    this.server?.to(tenantRoom(tenantId)).emit(REALTIME_SOCKET_EVENT, event);
-  }
-
   /** Additionally push to one user's private room (e.g. "an escalation was assigned to you"). */
   emitToUser(userId: string, event: LiveEvent): void {
     this.server?.to(userRoom(userId)).emit(REALTIME_SOCKET_EVENT, event);
+  }
+
+  /** Operational push for named roles only; clinical data is never tenant-broadcast. */
+  emitToRoles(tenantId: string, roles: Role[], event: LiveEvent): void {
+    for (const role of new Set(roles)) {
+      this.server?.to(roleRoom(tenantId, role)).emit(REALTIME_SOCKET_EVENT, event);
+    }
   }
 }

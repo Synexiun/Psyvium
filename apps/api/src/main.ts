@@ -11,6 +11,7 @@ import { IoAdapter } from '@nestjs/platform-socket.io';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { assertJwtSecretsPresent } from './common/config/jwt-secrets';
+import { ProblemDetailsFilter } from './common/filters/problem-details.filter';
 
 async function bootstrap() {
   // `rawBody: true` — needed ONLY by POST /finance/webhooks/stripe (Stripe
@@ -20,31 +21,73 @@ async function bootstrap() {
   // onto req.rawBody. See finance/webhooks/stripe-webhook.controller.ts.
   const app = await NestFactory.create(AppModule, { bufferLogs: false, rawBody: true });
   const logger = new Logger('Bootstrap');
+  const isProd = process.env.NODE_ENV === 'production';
 
   // Fail fast (before listening) if signing secrets are unset — never serve with
   // an insecure default (which would let anyone forge tokens for any user/role).
   // Runs after create() so ConfigModule has populated process.env from .env.
   assertJwtSecretsPresent();
 
+  // Multi-instance correctness: rate-limit + idempotency stores need shared Redis.
+  if (isProd && !process.env.REDIS_URL && process.env.VPSY_ALLOW_INMEMORY_RATE_LIMIT !== 'true') {
+    throw new Error(
+      'REDIS_URL is required in production (shared rate-limit/idempotency). ' +
+        'Set REDIS_URL or, only for an explicit single-instance demo, VPSY_ALLOW_INMEMORY_RATE_LIMIT=true.',
+    );
+  }
+
+  app.useGlobalFilters(new ProblemDetailsFilter());
+
+  // Behind Render/Cloudflare/etc the platform TLS terminator sets X-Forwarded-*.
+  // Trusting the first proxy hop makes rate-limit and audit IP attribution correct.
+  const httpAdapter = app.getHttpAdapter();
+  const instance = httpAdapter.getInstance?.() as { set?: (k: string, v: unknown) => void } | undefined;
+  instance?.set?.('trust proxy', 1);
+
+  // Baseline browser security headers (Helmet-equivalent without a new dep).
+  app.use((req: { method?: string }, res: { setHeader: (k: string, v: string) => void }, next: () => void) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+    if (isProd) {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    next();
+  });
+
   app.setGlobalPrefix('api/v1');
-  app.enableCors({ origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000', credentials: true });
+  app.enableCors({
+    origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000',
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Requested-With'],
+  });
   // Real-time layer (SP3): explicit Socket.IO adapter for RealtimeGateway.
   app.useWebSocketAdapter(new IoAdapter(app));
   // Validation is handled per-route by ZodValidationPipe against @vpsy/contracts
   // schemas (single source of truth), so no global class-validator pipe is needed.
 
-  const config = new DocumentBuilder()
-    .setTitle('VPSY OS API')
-    .setDescription('Clinical Psychology Operating System — modular monolith (28 bounded contexts)')
-    .setVersion('0.1.0')
-    .addBearerAuth()
-    .build();
-  const doc = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, doc);
+  // OpenAPI surface is a reconnaissance aid in production — keep it for
+  // local/dev and require an explicit opt-in when live.
+  if (!isProd || process.env.VPSY_ENABLE_SWAGGER === 'true') {
+    const config = new DocumentBuilder()
+      .setTitle('VPSY OS API')
+      .setDescription('Clinical Psychology Operating System — modular monolith (28 bounded contexts)')
+      .setVersion('0.1.0')
+      .addBearerAuth()
+      .build();
+    const doc = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, doc);
+  }
 
   const port = Number(process.env.PORT ?? 4000);
   await app.listen(port);
-  logger.log(`VPSY API listening on :${port} — docs at /api/docs`);
+  logger.log(
+    `VPSY API listening on :${port}${!isProd || process.env.VPSY_ENABLE_SWAGGER === 'true' ? ' — docs at /api/docs' : ''}`,
+  );
 }
 
 bootstrap();

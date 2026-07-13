@@ -1,16 +1,26 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import {
   AiAgent,
   HumanDecision,
+  type AiRecommendationDto,
   type AllocationRationale,
+  type AuthPrincipal,
+  type DecideAiRecommendationInput,
   type DifferentialDirection,
   type MatchCandidate,
   type SessionNoteDraftScaffold,
   type TreatmentPlanSuggestions,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { AuditService } from '../../common/audit/audit.service';
+import { FeatureFlagsService } from '../../common/feature-flags/feature-flags.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
 import { ConsentService } from '../consent/consent.service';
 
@@ -48,8 +58,107 @@ export class AiGatewayService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly bus: EventBus,
+    private readonly audit: AuditService,
     private readonly consents: ConsentService,
+    private readonly flags: FeatureFlagsService,
   ) {}
+
+  /**
+   * PENDING human-decision queue (ADR-007). Newest first. Output is returned
+   * only to authenticated clinicians with AI_DECISION — never over realtime.
+   */
+  async listPendingRecommendations(
+    principal: AuthPrincipal,
+    limit = 50,
+  ): Promise<AiRecommendationDto[]> {
+    const rows = await this.prisma.aIRecommendation.findMany({
+      where: { tenantId: principal.tenantId, humanDecision: HumanDecision.PENDING },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(limit, 1), 100),
+    });
+    return rows.map((row) => this.toRecommendationDto(row));
+  }
+
+  /**
+   * Record the clinician's terminal decision on a PENDING recommendation.
+   * Compare-and-swap so two concurrent decisions cannot both succeed.
+   */
+  async decideRecommendation(
+    principal: AuthPrincipal,
+    recommendationId: string,
+    input: DecideAiRecommendationInput,
+  ): Promise<AiRecommendationDto> {
+    const existing = await this.prisma.aIRecommendation.findFirst({
+      where: { id: recommendationId, tenantId: principal.tenantId },
+    });
+    if (!existing) throw new NotFoundException('AI recommendation not found');
+    if (existing.humanDecision !== HumanDecision.PENDING) {
+      throw new ConflictException(`Recommendation is already ${existing.humanDecision}`);
+    }
+
+    const claimed = await this.prisma.aIRecommendation.updateMany({
+      where: {
+        id: recommendationId,
+        tenantId: principal.tenantId,
+        humanDecision: HumanDecision.PENDING,
+      },
+      data: {
+        humanDecision: input.decision,
+        decidedBy: principal.userId,
+      },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictException('Recommendation was already decided');
+    }
+
+    const updated = await this.prisma.aIRecommendation.findFirstOrThrow({
+      where: { id: recommendationId, tenantId: principal.tenantId },
+    });
+
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'ai.recommendation.decided',
+      entityType: 'AIRecommendation',
+      entityId: updated.id,
+      before: { humanDecision: HumanDecision.PENDING },
+      after: {
+        humanDecision: input.decision,
+        modificationNote: input.modificationNote ?? null,
+        rationale: input.rationale ?? null,
+        agent: updated.agent,
+        linkedEntityType: updated.linkedEntityType,
+        linkedEntityId: updated.linkedEntityId,
+      },
+      critical: true,
+    });
+
+    return this.toRecommendationDto(updated);
+  }
+
+  private toRecommendationDto(row: {
+    id: string;
+    agent: string;
+    confidence: number;
+    humanDecision: string;
+    decidedBy: string | null;
+    linkedEntityType: string | null;
+    linkedEntityId: string | null;
+    output: unknown;
+    createdAt: Date;
+  }): AiRecommendationDto {
+    return {
+      id: row.id,
+      agent: row.agent,
+      confidence: row.confidence,
+      humanDecision: row.humanDecision as AiRecommendationDto['humanDecision'],
+      decidedBy: row.decidedBy,
+      linkedEntityType: row.linkedEntityType,
+      linkedEntityId: row.linkedEntityId,
+      output: row.output,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
 
   /**
    * WAVE CR gate check. Fails CLOSED: any lookup error is treated as "no
@@ -64,9 +173,31 @@ export class AiGatewayService {
     }
   }
 
-  /** True when a real model can be called. */
+  /**
+   * EU AI Act / staged-rollout kill switch. Feature flag key
+   * `AI_ASSISTED_ANALYSIS` defaults ON when no row exists so local demos
+   * keep working; admins set enabled=false to stop all model calls.
+   */
+  private async isAiEnabledForTenant(tenantId: string): Promise<boolean> {
+    return this.flags.isEnabled(tenantId, 'AI_ASSISTED_ANALYSIS', true);
+  }
+
+  /** True when a real model can be called (key present — flag checked per call). */
   get aiConfigured(): boolean {
     return this.apiKey.length > 0;
+  }
+
+  /** Combined gate: key + tenant kill-switch + client consent. */
+  private async mayCallModel(tenantId: string, clientId: string): Promise<{
+    allowed: boolean;
+    withheldReason?: 'no-ai-consent' | 'feature-disabled';
+  }> {
+    if (!this.aiConfigured) return { allowed: false };
+    const enabled = await this.isAiEnabledForTenant(tenantId);
+    if (!enabled) return { allowed: false, withheldReason: 'feature-disabled' };
+    const consented = await this.hasAiConsent(clientId);
+    if (!consented) return { allowed: false, withheldReason: 'no-ai-consent' };
+    return { allowed: true };
   }
 
   /** Model id, stripped of any `provider/` routing prefix. Defaults to Opus 4.8. */
@@ -97,15 +228,15 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled';
   }> {
     let summary: string;
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
 
-    const aiConsented = await this.hasAiConsent(params.clientId);
+    const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
-    if (this.aiConfigured && aiConsented) {
+    if (gate.allowed) {
       try {
         summary = await this.callModel(AiAgent.INTAKE, {
           severityBand: params.severityBand,
@@ -122,7 +253,7 @@ export class AiGatewayService {
     } else {
       summary = this.ruleBasedIntakeSummary(params);
       source = 'rule-based';
-      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
+      withheldReason = gate.withheldReason;
     }
 
     const recommendationId = await this.logRecommendation({
@@ -155,7 +286,7 @@ export class AiGatewayService {
     aiRationales?: AllocationRationale[];
     source?: 'ai' | 'rule-based';
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled';
   }> {
     // Deterministic scoring rationale is computed by the Matching context;
     // this order is FINAL — the AI layer only ever explains it.
@@ -163,7 +294,7 @@ export class AiGatewayService {
 
     let aiRationales: AllocationRationale[] | undefined;
     let source: 'ai' | 'rule-based' | undefined;
-    let withheldReason: 'no-ai-consent' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
 
     const top3 = ranked.slice(0, 3);
     if (top3.length > 0) {
@@ -174,9 +305,9 @@ export class AiGatewayService {
         caseloadUtilization: c.caseloadUtilization,
       }));
 
-      const aiConsented = await this.hasAiConsent(params.clientId);
+      const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
-      if (this.aiConfigured && aiConsented) {
+      if (gate.allowed) {
         try {
           aiRationales = await this.callAllocationModel(signals);
           source = 'ai';
@@ -188,7 +319,7 @@ export class AiGatewayService {
       } else {
         aiRationales = this.ruleBasedAllocationRationale(signals);
         source = 'rule-based';
-        if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
+        withheldReason = gate.withheldReason;
       }
     }
 
@@ -224,7 +355,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled';
   }> {
     const signals = {
       sessionType: params.sessionType,
@@ -234,11 +365,11 @@ export class AiGatewayService {
     };
     let draft: SessionNoteDraftScaffold;
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
 
-    const aiConsented = await this.hasAiConsent(params.clientId);
+    const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
-    if (this.aiConfigured && aiConsented) {
+    if (gate.allowed) {
       try {
         draft = await this.callSessionNoteModel(signals);
         source = 'ai';
@@ -250,7 +381,7 @@ export class AiGatewayService {
     } else {
       draft = this.ruleBasedSessionNoteDraft(signals);
       source = 'rule-based';
-      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
+      withheldReason = gate.withheldReason;
     }
 
     const recommendationId = await this.logRecommendation({
@@ -285,7 +416,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled';
   }> {
     const signals = {
       severityBand: params.severityBand,
@@ -294,11 +425,11 @@ export class AiGatewayService {
     };
     let suggestions: TreatmentPlanSuggestions;
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
 
-    const aiConsented = await this.hasAiConsent(params.clientId);
+    const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
-    if (this.aiConfigured && aiConsented) {
+    if (gate.allowed) {
       try {
         suggestions = await this.callTreatmentPlanModel(signals);
         source = 'ai';
@@ -310,7 +441,7 @@ export class AiGatewayService {
     } else {
       suggestions = this.ruleBasedTreatmentPlanSuggestions(signals);
       source = 'rule-based';
-      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
+      withheldReason = gate.withheldReason;
     }
 
     const recommendationId = await this.logRecommendation({
@@ -350,7 +481,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled';
   }> {
     const signals = {
       severityBand: params.severityBand,
@@ -359,11 +490,11 @@ export class AiGatewayService {
     };
     let directions: DifferentialDirection[];
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
 
-    const aiConsented = await this.hasAiConsent(params.clientId);
+    const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
-    if (this.aiConfigured && aiConsented) {
+    if (gate.allowed) {
       try {
         directions = await this.callDifferentialModel(signals);
         source = 'ai';
@@ -375,7 +506,7 @@ export class AiGatewayService {
     } else {
       directions = this.ruleBasedDifferentials(signals);
       source = 'rule-based';
-      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
+      withheldReason = gate.withheldReason;
     }
 
     const recommendationId = await this.logRecommendation({
@@ -410,7 +541,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled';
   }> {
     const signals = {
       construct: params.construct,
@@ -420,11 +551,11 @@ export class AiGatewayService {
     };
     let narrative: string;
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
 
-    const aiConsented = await this.hasAiConsent(params.clientId);
+    const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
-    if (this.aiConfigured && aiConsented) {
+    if (gate.allowed) {
       try {
         narrative = await this.callOutcomeModel(signals);
         source = 'ai';
@@ -436,7 +567,7 @@ export class AiGatewayService {
     } else {
       narrative = this.ruleBasedOutcomeNarrative(signals);
       source = 'rule-based';
-      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
+      withheldReason = gate.withheldReason;
     }
 
     const recommendationId = await this.logRecommendation({
@@ -480,7 +611,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled';
   }> {
     const signals = {
       instrumentCode: params.instrumentCode,
@@ -491,11 +622,11 @@ export class AiGatewayService {
     };
     let interpretation: string;
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
 
-    const aiConsented = await this.hasAiConsent(params.clientId);
+    const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
-    if (this.aiConfigured && aiConsented) {
+    if (gate.allowed) {
       try {
         interpretation = await this.callPsychometricModel(signals);
         source = 'ai';
@@ -507,7 +638,7 @@ export class AiGatewayService {
     } else {
       interpretation = this.ruleBasedScoreInterpretation(signals);
       source = 'rule-based';
-      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
+      withheldReason = gate.withheldReason;
     }
 
     const recommendationId = await this.logRecommendation({
@@ -551,7 +682,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled';
   }> {
     const signals = {
       severity: params.severity,
@@ -562,11 +693,11 @@ export class AiGatewayService {
     };
     let summary: string;
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
 
-    const aiConsented = await this.hasAiConsent(params.clientId);
+    const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
-    if (this.aiConfigured && aiConsented) {
+    if (gate.allowed) {
       try {
         summary = await this.callRiskContextModel(signals);
         source = 'ai';
@@ -578,7 +709,7 @@ export class AiGatewayService {
     } else {
       summary = this.ruleBasedRiskContext(signals);
       source = 'rule-based';
-      if (this.aiConfigured && !aiConsented) withheldReason = 'no-ai-consent';
+      withheldReason = gate.withheldReason;
     }
 
     const recommendationId = await this.logRecommendation({

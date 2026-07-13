@@ -188,7 +188,12 @@ describe('MessagingService', () => {
       expect(bus.publish).toHaveBeenCalledWith(
         'message.sent',
         'tenant_demo',
-        { messageId: 'msg_1', threadId: 'thread_1', senderId: 'user_client_1' },
+        {
+          messageId: 'msg_1',
+          threadId: 'thread_1',
+          senderId: 'user_client_1',
+          recipientUserIds: ['user_psy_a'],
+        },
       );
       const publishedPayload = (bus.publish as jest.Mock).mock.calls[0][2];
       expect(publishedPayload).not.toHaveProperty('body');

@@ -1,4 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Role } from '@vpsy/contracts';
 import type { AuthPrincipal, CreateDocumentInput, DocumentDto } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -35,6 +40,10 @@ type DocumentRow = {
  * blob storage/virus-scan pipeline wired up here; `storageKey` is accepted
  * and returned as an opaque string, and `virusScanStatus` is whatever the
  * DB default ('pending') leaves it at.
+ *
+ * Production honesty gate (audit Gate 0 §16): metadata-only registration is
+ * disabled unless `VPSY_ALLOW_DOCUMENT_METADATA_ONLY=true`. Prefer real blob
+ * storage + malware scan before enabling this path for PHI.
  */
 @Injectable()
 export class DocumentsService {
@@ -44,7 +53,52 @@ export class DocumentsService {
     private readonly bus: EventBus,
   ) {}
 
+  /** Honest capability status for UI/API consumers. */
+  capabilityStatus(): {
+    mode: 'disabled' | 'metadata-only' | 'blob';
+    canUpload: boolean;
+    canDownload: boolean;
+    virusScan: boolean;
+    message: string;
+  } {
+    const allowMeta =
+      process.env.NODE_ENV !== 'production' || process.env.VPSY_ALLOW_DOCUMENT_METADATA_ONLY === 'true';
+    const blobReady = process.env.VPSY_DOCUMENT_BLOB_BACKEND === 's3';
+    if (blobReady) {
+      return {
+        mode: 'blob',
+        canUpload: true,
+        canDownload: true,
+        virusScan: process.env.VPSY_DOCUMENT_VIRUS_SCAN === 'true',
+        message: 'Object storage backend is configured.',
+      };
+    }
+    if (allowMeta) {
+      return {
+        mode: 'metadata-only',
+        canUpload: false,
+        canDownload: false,
+        virusScan: false,
+        message:
+          'Metadata registration only — no blob storage or malware scan. Not for real PHI documents.',
+      };
+    }
+    return {
+      mode: 'disabled',
+      canUpload: false,
+      canDownload: false,
+      virusScan: false,
+      message:
+        'Document storage is disabled in production until blob storage + malware scan are configured.',
+    };
+  }
+
   async create(principal: AuthPrincipal, input: CreateDocumentInput): Promise<DocumentDto> {
+    const status = this.capabilityStatus();
+    if (status.mode === 'disabled') {
+      throw new ServiceUnavailableException(status.message);
+    }
+
     if (input.ownerType === CLIENT_OWNER_TYPE) {
       const client = await this.prisma.client.findFirst({
         where: { id: input.ownerId, tenantId: principal.tenantId },

@@ -103,22 +103,20 @@ const PRINCIPAL_HINT_KEY = 'vpsy.principalHint';
 
 export interface Principal {
   sub: string;
+  tenantId?: string;
   roles: string[];
   permissions: string[];
+  /** Mandatory clinical/admin role must enroll TOTP before full platform use. */
+  mfaEnrollmentRequired?: boolean;
 }
 
 /**
  * COMPAT SHIM — not part of the hardened auth path, kept only because a
- * handful of files outside this pass's scope still read/write a raw client
- * token directly and cannot be edited here:
+ * one realtime compatibility path still reads a raw client token:
  *   - `lib/live-events.tsx` puts it in the Socket.IO handshake `auth.token`,
  *     because `common/realtime/realtime.gateway.ts` (also out of scope this
  *     pass) authenticates sockets from a bearer-style token, not the httpOnly
  *     cookie — cookies aren't in the handshake payload it reads.
- *   - The per-page "quick sign-in" widgets (comms/crm/finance/home/intake/
- *     manager/reports/risk/schedule/session) call `setToken`/`getToken`
- *     directly around their own `api.login()` calls and client-side gates.
- *
  * `request()` below NEVER reads this — every real API call is authorized
  * solely by the httpOnly session cookie (or an `Authorization: Bearer`
  * header from a non-browser client). This value grants nothing there.
@@ -127,9 +125,7 @@ export interface Principal {
  * the tab/browser closing and isn't shared across tabs, which removes the
  * "steal once, replay indefinitely across restarts" exposure of the old
  * localStorage copy. It is still readable by an active same-page XSS like any
- * JS-reachable store — fully closing that gap means migrating the files
- * above off a client-held token (e.g. cookie-aware socket auth), which is
- * outside this pass's file scope and tracked as a follow-up.
+ * JS-reachable store — fully closing that gap means cookie-aware socket auth.
  */
 const LEGACY_TOKEN_KEY = 'vpsy.legacyToken';
 
@@ -166,8 +162,13 @@ function clearLegacyToken() {
  */
 export function rememberPrincipal(principal: Principal | null) {
   if (typeof window === 'undefined') return;
-  if (principal) localStorage.setItem(PRINCIPAL_HINT_KEY, JSON.stringify(principal));
-  else localStorage.removeItem(PRINCIPAL_HINT_KEY);
+  try {
+    if (principal) localStorage.setItem(PRINCIPAL_HINT_KEY, JSON.stringify(principal));
+    else localStorage.removeItem(PRINCIPAL_HINT_KEY);
+  } catch {
+    // Storage can be disabled by privacy policy. The server cookie remains
+    // authoritative; callers simply lose the non-sensitive routing hint.
+  }
 }
 
 /**
@@ -179,13 +180,14 @@ export function rememberPrincipal(principal: Principal | null) {
  */
 export function getPrincipal(): Principal | null {
   if (typeof window === 'undefined') return null;
-  const raw = localStorage.getItem(PRINCIPAL_HINT_KEY);
-  if (!raw) return null;
   try {
+    const raw = localStorage.getItem(PRINCIPAL_HINT_KEY);
+    if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed.sub !== 'string') return null;
     return {
       sub: parsed.sub,
+      tenantId: typeof parsed.tenantId === 'string' ? parsed.tenantId : undefined,
       roles: Array.isArray(parsed.roles) ? parsed.roles : [],
       permissions: Array.isArray(parsed.permissions) ? parsed.permissions : [],
     };
@@ -200,7 +202,49 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+const AUTH_PATHS_WITHOUT_REFRESH = new Set(['/auth/login', '/auth/register', '/auth/refresh', '/auth/logout']);
+let refreshInFlight: Promise<boolean> | null = null;
+
+/** Rotate the httpOnly refresh session once for all concurrent 401s. */
+async function refreshBrowserSession(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const response = await fetch('/api/backend/auth/refresh', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!response.ok) {
+        rememberPrincipal(null);
+        clearLegacyToken();
+        return false;
+      }
+      const tokens = (await response.json()) as AuthTokens;
+      if (tokens.principal) {
+        rememberPrincipal({
+          sub: tokens.principal.userId,
+          tenantId: tokens.principal.tenantId,
+          roles: tokens.principal.roles,
+          permissions: tokens.principal.permissions,
+          mfaEnrollmentRequired: tokens.principal.mfaEnrollmentRequired,
+        });
+      }
+      // The access token is retained only for the legacy Socket.IO handshake;
+      // normal HTTP requests continue to rely exclusively on httpOnly cookies.
+      setToken(tokens.accessToken);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
+async function request<T>(path: string, options: RequestInit = {}, allowRefresh = true): Promise<T> {
   const res = await fetch(`/api/backend${path}`, {
     ...options,
     // Same-origin (the Next rewrite proxies server-side), so this is enough
@@ -213,7 +257,18 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
   const isJson = res.headers.get('content-type')?.includes('application/json');
   const body = isJson ? await res.json() : await res.text();
-  if (!res.ok) throw new ApiError(res.status, body);
+  if (!res.ok) {
+    if (
+      res.status === 401 &&
+      allowRefresh &&
+      !AUTH_PATHS_WITHOUT_REFRESH.has(path) &&
+      getPrincipal() &&
+      await refreshBrowserSession()
+    ) {
+      return request<T>(path, options, false);
+    }
+    throw new ApiError(res.status, body);
+  }
   return body as T;
 }
 
@@ -229,10 +284,15 @@ export async function logout() {
 }
 
 export const api = {
-  login: (email: string, password: string, totp?: string) =>
+  login: (email: string, password: string, totp?: string, tenantSlug?: string) =>
     request<AuthTokens>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ email, password, ...(totp ? { totp } : {}) }),
+      body: JSON.stringify({
+        email,
+        password,
+        ...(totp ? { totp } : {}),
+        ...(tenantSlug ? { tenantSlug } : {}),
+      }),
     }),
   submitIntake: (payload: unknown) =>
     request('/intake', { method: 'POST', body: JSON.stringify(payload) }),
@@ -366,10 +426,182 @@ export const api = {
   financeComputePayout: (payload: ComputePayoutInput) =>
     request<PayoutDto>('/finance/payouts/compute', { method: 'POST', body: JSON.stringify(payload) }),
 
+  // ── Audit trail (AUDIT_READ) ──
+  auditEvents: (params: {
+    limit?: number;
+    cursor?: string;
+    entityType?: string;
+    entityId?: string;
+    actorId?: string;
+    action?: string;
+  } = {}) => {
+    const q = new URLSearchParams();
+    if (params.limit) q.set('limit', String(params.limit));
+    if (params.cursor) q.set('cursor', params.cursor);
+    if (params.entityType) q.set('entityType', params.entityType);
+    if (params.entityId) q.set('entityId', params.entityId);
+    if (params.actorId) q.set('actorId', params.actorId);
+    if (params.action) q.set('action', params.action);
+    const qs = q.toString();
+    return request<{
+      items: Array<{
+        id: string;
+        action: string;
+        entityType: string;
+        entityId: string | null;
+        actorId: string | null;
+        occurredAt: string;
+        ip: string | null;
+        hash: string;
+      }>;
+      nextCursor: string | null;
+    }>(`/audit/events${qs ? `?${qs}` : ''}`);
+  },
+
   // ── Reports + National Analytics (ctx 27-28 — see analytics-types.ts) ──
   reportExecutive: () => request<ExecutiveReportDto>('/reports/executive'),
   reportManager: () => request<ManagerReportDto>('/reports/manager'),
   nationalAnalytics: () => request<NationalAnalyticsDto>('/analytics/national'),
+
+  // ── Interventions / homework (context 15 — patient between-session tasks) ──
+  interventionsForClient: (clientId: string) =>
+    request<
+      Array<{
+        id: string;
+        clinicalTarget: string;
+        type: string;
+        homework?: Array<{
+          id: string;
+          description: string;
+          dueDate: string | null;
+          completionPct: number;
+          clientReport: string | null;
+          difficulty: string | null;
+          rationale: string | null;
+        }>;
+      }>
+    >(`/interventions/client/${clientId}`),
+  completeHomework: (id: string, payload: { completionPct?: number; clientReport?: string } = {}) =>
+    request<{ id: string; completionPct: number }>(`/interventions/homework/${id}/complete`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  // ── MFA enrollment (mandatory for clinical/admin roles) ──
+  mfaEnroll: (code?: string) =>
+    request<{ secret: string; otpauthUrl: string }>('/auth/mfa/enroll', {
+      method: 'POST',
+      body: JSON.stringify(code ? { code } : {}),
+    }),
+  mfaVerify: (code: string) =>
+    request<AuthTokens>('/auth/mfa/verify', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+
+  // ── Password reset ──
+  passwordResetRequest: (email: string, tenantSlug?: string) =>
+    request<{ ok: true; devResetToken?: string }>('/auth/password-reset/request', {
+      method: 'POST',
+      body: JSON.stringify({ email, tenantSlug }),
+    }),
+  passwordResetComplete: (token: string, newPassword: string) =>
+    request<{ ok: true }>('/auth/password-reset/complete', {
+      method: 'POST',
+      body: JSON.stringify({ token, newPassword }),
+    }),
+
+  // ── Diagnosis / formulation (clinician-only) ──
+  diagnosisList: (clientId: string) =>
+    request<
+      Array<{
+        id: string;
+        clientId: string;
+        hypothesis: string;
+        confidence: number;
+        evidence: string[];
+        referralFlags: string[];
+        clinicianConfirmed: boolean;
+        createdAt: string;
+      }>
+    >(`/diagnosis-hypotheses/client/${clientId}`),
+  diagnosisCreate: (payload: {
+    clientId: string;
+    hypothesis: string;
+    confidence?: number;
+    evidence?: string[];
+    referralFlags?: string[];
+  }) =>
+    request('/diagnosis-hypotheses', { method: 'POST', body: JSON.stringify(payload) }),
+  diagnosisConfirm: (hypothesisId: string, clinicianConfirmed: boolean) =>
+    request('/diagnosis-hypotheses/status', {
+      method: 'PATCH',
+      body: JSON.stringify({ hypothesisId, clinicianConfirmed }),
+    }),
+  formulationList: (clientId: string) =>
+    request<
+      Array<{
+        id: string;
+        clientId: string;
+        icdCode: string;
+        dsmCode: string | null;
+        description: string;
+        status: string;
+        createdAt: string;
+      }>
+    >(`/formulations/client/${clientId}`),
+  formulationCreate: (payload: {
+    clientId: string;
+    icdCode: string;
+    dsmCode?: string;
+    description: string;
+    status?: string;
+  }) => request('/formulations', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // ── Documents capability ──
+  documentsStatus: () =>
+    request<{
+      mode: 'disabled' | 'metadata-only' | 'blob';
+      canUpload: boolean;
+      canDownload: boolean;
+      virusScan: boolean;
+      message: string;
+    }>('/documents/status'),
+  documentsForClient: (clientId: string) =>
+    request<
+      Array<{
+        id: string;
+        category: string;
+        mimeType: string;
+        sizeBytes: number;
+        virusScanStatus: string;
+        createdAt: string;
+      }>
+    >(`/documents/client/${clientId}`),
+
+  // ── AI human-decision queue (ADR-007) ──
+  aiPendingRecommendations: (limit = 50) =>
+    request<
+      Array<{
+        id: string;
+        agent: string;
+        confidence: number;
+        humanDecision: string;
+        decidedBy: string | null;
+        linkedEntityType: string | null;
+        linkedEntityId: string | null;
+        output: unknown;
+        createdAt: string;
+      }>
+    >(`/ai/recommendations/pending?limit=${limit}`),
+  aiDecideRecommendation: (
+    id: string,
+    payload: { decision: 'ACCEPTED' | 'MODIFIED' | 'REJECTED'; modificationNote?: string; rationale?: string },
+  ) =>
+    request(`/ai/recommendations/${id}/decision`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
 
   // ── Messaging (context 14 — secure client↔clinician text threads) ──
   msgThreads: () => request<ThreadDto[]>('/messaging/threads'),

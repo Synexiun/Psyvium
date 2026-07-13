@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api, setToken, ApiError } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
 import { SkeletonStack } from '@/components/Skeleton';
 import { ErrorPanel } from '@/components/ErrorPanel';
@@ -31,13 +31,6 @@ export default function CrmPage() {
     setLive('loading');
     setError(null);
     try {
-      // Demo convenience: sign in as the manager if there's no session yet.
-      try {
-        const tok = await api.login('manager@vpsy.health', 'Vpsy!2026');
-        setToken(tok.accessToken);
-      } catch {
-        /* may already be signed in or offline */
-      }
       const data = await api.crmBoard();
       setBoard(data);
       setLive('live');
@@ -101,7 +94,7 @@ export default function CrmPage() {
           role="status"
           className={`chip ${live === 'live' ? 'text-teal-soft/80' : live === 'offline' ? 'chip-signal' : 'text-mist/50'}`}
         >
-          {live === 'live' ? t('common.liveData') : live === 'offline' ? t('common.offlineDemo') : t('common.loadingLive')}
+          {live === 'live' ? t('common.liveData') : live === 'offline' ? t('common.connectionIssue') : t('common.loadingLive')}
         </span>
       </div>
       <p className="mt-3 max-w-3xl text-mist/60">{t('crm.intro')}</p>

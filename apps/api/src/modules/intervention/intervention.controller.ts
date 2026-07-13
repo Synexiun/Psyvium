@@ -15,6 +15,8 @@ import {
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
 import { ClinicalWriteGuard } from '../../common/auth/clinical-write.guard';
+import { ClinicalAccessGuard } from '../../common/auth/clinical-access.guard';
+import { RequireClinicalAccess } from '../../common/auth/clinical-access.decorator';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -29,7 +31,8 @@ export class InterventionController {
 
   /** Always anchors to the client's current ACTIVE TreatmentPlan. Clinician-gated. */
   @Post()
-  @UseGuards(ClinicalWriteGuard)
+  @UseGuards(ClinicalWriteGuard, ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'body', key: 'clientId' })
   @RequirePermissions(Permission.INTERVENTION_WRITE)
   create(
     @CurrentUser() user: AuthPrincipal,
@@ -40,7 +43,8 @@ export class InterventionController {
 
   /** Assigns homework to an existing Intervention. Clinician-gated. */
   @Post('homework')
-  @UseGuards(ClinicalWriteGuard)
+  @UseGuards(ClinicalWriteGuard, ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'intervention', source: 'body', key: 'interventionId' })
   @RequirePermissions(Permission.INTERVENTION_WRITE)
   assignHomework(
     @CurrentUser() user: AuthPrincipal,
@@ -51,6 +55,8 @@ export class InterventionController {
 
   /** A client's own interventions + homework; clinician/manager may view any client's. */
   @Get('client/:clientId')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'params', key: 'clientId' })
   @RequirePermissions(Permission.CLIENT_READ)
   listForClient(@CurrentUser() user: AuthPrincipal, @Param('clientId') clientId: string) {
     return this.interventions.listForClient(user, clientId);
@@ -63,6 +69,8 @@ export class InterventionController {
    * `Permission.CLIENT_READ` reuse note in InterventionService.completeHomework.
    */
   @Patch('homework/:id/complete')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'homework', source: 'params', key: 'id' })
   @RequirePermissions(Permission.CLIENT_READ)
   completeHomework(
     @CurrentUser() user: AuthPrincipal,
@@ -81,7 +89,8 @@ export class InterventionController {
    * id; it overrides whatever `homeworkId` the body carries.
    */
   @Patch('homework/:id/review')
-  @UseGuards(ClinicalWriteGuard)
+  @UseGuards(ClinicalWriteGuard, ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'homework', source: 'params', key: 'id' })
   @RequirePermissions(Permission.INTERVENTION_WRITE)
   reviewHomework(
     @CurrentUser() user: AuthPrincipal,

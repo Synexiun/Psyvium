@@ -1,4 +1,11 @@
-import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import {
   AssignmentStatus,
   type ApproveAssignmentInput,
@@ -37,19 +44,36 @@ export class MatchingService implements OnModuleInit {
    * remains the final assignment authority.
    */
   async proposeForClient(tenantId: string, clientId: string, suggestedSpecialty: string) {
-    const client = await this.prisma.client.findUnique({ where: { id: clientId } });
+    const client = await this.prisma.client.findFirst({
+      where: { id: clientId, tenantId, status: 'active', deletedAt: null },
+      include: {
+        user: {
+          select: { roleAssignments: { select: { jurisdiction: true } } },
+        },
+      },
+    });
     if (!client) return;
+
+    const jurisdictions = this.clientJurisdictions(client);
+    if (jurisdictions.length === 0) {
+      this.logger.warn(`No assignment proposed for client ${clientId}: client jurisdiction is not configured`);
+    }
 
     const psychologists = await this.prisma.psychologist.findMany({
       where: { tenantId, acceptingClients: true, deletedAt: null },
       include: { user: true, credentials: true },
     });
 
-    const candidates: MatchCandidate[] = psychologists.map((psy) => {
+    const now = new Date();
+    const eligiblePsychologists = psychologists.flatMap((psychologist) => {
+      const credential = this.eligibleCredential(psychologist, jurisdictions, now);
+      return credential ? [{ psychologist, credential }] : [];
+    });
+
+    const candidates: MatchCandidate[] = eligiblePsychologists.map(({ psychologist: psy, credential }) => {
       const specialtyMatch = psy.specialties.some((s) => s.toLowerCase() === suggestedSpecialty.toLowerCase());
       const langMatch = psy.languages.includes(client.preferredLanguage);
       const utilization = psy.caseloadCap > 0 ? psy.currentCaseload / psy.caseloadCap : 1;
-      const jurisdiction = psy.credentials[0]?.jurisdiction ?? 'unknown';
 
       // Weighted deterministic score (0..100)
       let score = 0;
@@ -69,7 +93,7 @@ export class MatchingService implements OnModuleInit {
         displayName: psy.user.fullName,
         specialties: psy.specialties,
         languages: psy.languages,
-        jurisdiction,
+        jurisdiction: credential.jurisdiction,
         caseloadUtilization: Number(utilization.toFixed(2)),
         outcomeIndex: psy.outcomeIndex,
         score,
@@ -94,19 +118,60 @@ export class MatchingService implements OnModuleInit {
         : c,
     );
 
-    const assignment = await this.prisma.assignment.create({
-      data: {
-        tenantId,
-        clientId,
-        status: AssignmentStatus.PROPOSED,
-        proposedBy: 'AI',
-        candidates: candidatesWithRationale as any,
-        rank: 0,
-      },
-    });
+    let outcome: { assignment: any; created: boolean };
+    try {
+      outcome = await this.prisma.$transaction(async (tx) => {
+        const existing = await tx.assignment.findFirst({
+          where: {
+            tenantId,
+            clientId,
+            deletedAt: null,
+            status: { in: [AssignmentStatus.PROPOSED, AssignmentStatus.APPROVED, AssignmentStatus.ACTIVE] },
+          },
+        });
 
-    await this.bus.publish(Events.AssignmentProposed, tenantId, { assignmentId: assignment.id, clientId });
-    this.logger.log(`Proposed assignment ${assignment.id} with ${ranked.length} candidates`);
+        if (existing?.status === AssignmentStatus.PROPOSED) {
+          const refreshed = await tx.assignment.update({
+            where: { id: existing.id },
+            data: { candidates: candidatesWithRationale as any, rank: 0 },
+          });
+          return { assignment: refreshed, created: false };
+        }
+        if (existing) return { assignment: existing, created: false };
+
+        const created = await tx.assignment.create({
+          data: {
+            tenantId,
+            clientId,
+            status: AssignmentStatus.PROPOSED,
+            proposedBy: 'AI',
+            candidates: candidatesWithRationale as any,
+            rank: 0,
+          },
+        });
+        return { assignment: created, created: true };
+      });
+    } catch (error) {
+      // The partial unique index is the final arbiter when two intake events
+      // race. Return the winner rather than surfacing a duplicate proposal.
+      if (!this.isUniqueConstraintError(error)) throw error;
+      const winner = await this.prisma.assignment.findFirst({
+        where: {
+          tenantId,
+          clientId,
+          deletedAt: null,
+          status: { in: [AssignmentStatus.PROPOSED, AssignmentStatus.APPROVED, AssignmentStatus.ACTIVE] },
+        },
+      });
+      if (!winner) throw error;
+      outcome = { assignment: winner, created: false };
+    }
+
+    const { assignment } = outcome;
+    if (outcome.created) {
+      await this.bus.publish(Events.AssignmentProposed, tenantId, { assignmentId: assignment.id, clientId });
+      this.logger.log(`Proposed assignment ${assignment.id} with ${ranked.length} candidates`);
+    }
     return assignment;
   }
 
@@ -122,13 +187,23 @@ export class MatchingService implements OnModuleInit {
   /** MANAGER is the final assignment authority (ADR + product principle). */
   async approve(principal: AuthPrincipal, input: ApproveAssignmentInput) {
     const assignment = await this.prisma.assignment.findFirst({
-      where: { id: input.assignmentId, tenantId: principal.tenantId },
+      where: { id: input.assignmentId, tenantId: principal.tenantId, deletedAt: null },
     });
     if (!assignment) throw new NotFoundException('Assignment not found');
+    if (assignment.status !== AssignmentStatus.PROPOSED) {
+      throw new ConflictException(`Assignment is already ${assignment.status}`);
+    }
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      const a = await tx.assignment.update({
-        where: { id: assignment.id },
+      // Compare-and-swap: only one concurrent approval can move PROPOSED → APPROVED.
+      // A second racer sees count=0 and aborts without double-incrementing caseload.
+      const claimed = await tx.assignment.updateMany({
+        where: {
+          id: assignment.id,
+          tenantId: principal.tenantId,
+          status: AssignmentStatus.PROPOSED,
+          deletedAt: null,
+        },
         data: {
           psychologistId: input.psychologistId,
           approvedBy: principal.userId,
@@ -136,11 +211,35 @@ export class MatchingService implements OnModuleInit {
           status: AssignmentStatus.APPROVED,
         },
       });
-      await tx.psychologist.update({
-        where: { id: input.psychologistId },
+      if (claimed.count !== 1) {
+        throw new ConflictException('Assignment was already decided by another manager action');
+      }
+
+      // Capacity gate under the same transaction so two approvals cannot overfill.
+      const capacity = await tx.psychologist.updateMany({
+        where: {
+          id: input.psychologistId,
+          tenantId: principal.tenantId,
+          deletedAt: null,
+          acceptingClients: true,
+          // Prisma cannot express currentCaseload < caseloadCap directly; re-check
+          // with a raw filter after the row lock via findFirst under Serializable-ish
+          // updateMany by id, then reject if over capacity.
+        },
         data: { currentCaseload: { increment: 1 } },
       });
-      return a;
+      if (capacity.count !== 1) {
+        throw new UnprocessableEntityException('Psychologist is not accepting clients');
+      }
+      const psy = await tx.psychologist.findFirst({
+        where: { id: input.psychologistId, tenantId: principal.tenantId },
+        select: { currentCaseload: true, caseloadCap: true },
+      });
+      if (!psy || psy.caseloadCap <= 0 || psy.currentCaseload > psy.caseloadCap) {
+        throw new UnprocessableEntityException('Psychologist caseload is full');
+      }
+
+      return tx.assignment.findFirstOrThrow({ where: { id: assignment.id } });
     });
 
     await this.audit.record({
@@ -150,6 +249,7 @@ export class MatchingService implements OnModuleInit {
       entityType: 'Assignment',
       entityId: updated.id,
       after: { psychologistId: input.psychologistId, approvedBy: principal.userId },
+      critical: true,
     });
     await this.bus.publish(Events.AssignmentApproved, principal.tenantId, {
       assignmentId: updated.id,
@@ -157,5 +257,65 @@ export class MatchingService implements OnModuleInit {
       psychologistId: input.psychologistId,
     });
     return updated;
+  }
+
+  private isUniqueConstraintError(error: unknown): boolean {
+    // Prisma P2002 — unique constraint failed (partial unique open-assignment index).
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: string }).code === 'P2002'
+    );
+  }
+
+  private clientJurisdictions(client: {
+    user?: { roleAssignments?: Array<{ jurisdiction: string | null }> } | null;
+  }): string[] {
+    return [
+      ...new Set(
+        (client.user?.roleAssignments ?? [])
+          .map((assignment) => assignment.jurisdiction?.trim())
+          .filter((jurisdiction): jurisdiction is string => Boolean(jurisdiction)),
+      ),
+    ];
+  }
+
+  private eligibleCredential<
+    T extends {
+      acceptingClients: boolean;
+      currentCaseload: number;
+      caseloadCap: number;
+      deletedAt: Date | null;
+      user?: { status?: string; deletedAt?: Date | null } | null;
+      credentials: Array<{
+        jurisdiction: string;
+        verificationStatus: string;
+        malpracticeStatus: string;
+        expiresAt: Date | null;
+      }>;
+    },
+  >(psychologist: T, jurisdictions: string[], now: Date): T['credentials'][number] | null {
+    if (
+      psychologist.deletedAt !== null ||
+      !psychologist.acceptingClients ||
+      psychologist.caseloadCap <= 0 ||
+      psychologist.currentCaseload >= psychologist.caseloadCap ||
+      psychologist.user?.status !== 'ACTIVE' ||
+      psychologist.user?.deletedAt != null ||
+      jurisdictions.length === 0
+    ) {
+      return null;
+    }
+
+    return (
+      psychologist.credentials.find(
+        (credential) =>
+          jurisdictions.includes(credential.jurisdiction) &&
+          credential.verificationStatus === 'verified' &&
+          credential.malpracticeStatus === 'active' &&
+          (credential.expiresAt === null || credential.expiresAt > now),
+      ) ?? null
+    );
   }
 }

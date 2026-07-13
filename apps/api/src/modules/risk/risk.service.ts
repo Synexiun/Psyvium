@@ -22,6 +22,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
 import { FieldCipherService } from '../../common/crypto/field-cipher';
+import { ClinicalAccessService } from '../../common/auth/clinical-access.service';
 import { CRISIS_LINE_FALLBACK, resolveCrisisResource } from './crisis-lines';
 
 /** 1 hour, matching the roadmap's break-glass time-box (06-security-and-rbac.md §2.2). */
@@ -131,9 +132,12 @@ export class RiskService {
     private readonly audit: AuditService,
     private readonly bus: EventBus,
     private readonly cipher: FieldCipherService,
+    private readonly clinicalAccess: ClinicalAccessService = new ClinicalAccessService(prisma),
   ) {}
 
   async getBoard(principal: AuthPrincipal): Promise<RiskBoardDto> {
+    const clientScope = await this.clinicalAccess.listAccessibleClientIds(principal);
+    const scopedClient = clientScope === null ? {} : { clientId: { in: clientScope } };
     const [escalations, flags] = await Promise.all([
       this.prisma.escalation.findMany({
         // Open escalations PLUS resolved ones still awaiting their caring-contact
@@ -145,11 +149,12 @@ export class RiskService {
             { resolvedAt: null },
             { resolvedAt: { not: null }, followUpDueAt: { not: null }, followUpCompletedAt: null },
           ],
+          riskFlag: scopedClient,
         },
         include: { riskFlag: { include: { client: { include: { user: true } } } } },
       }),
       this.prisma.riskFlag.findMany({
-        where: { tenantId: principal.tenantId, status: { not: RiskStatus.RESOLVED } },
+        where: { tenantId: principal.tenantId, status: { not: RiskStatus.RESOLVED }, ...scopedClient },
         include: { client: { include: { user: true } } },
         orderBy: { createdAt: 'asc' },
       }),
@@ -576,14 +581,18 @@ export class RiskService {
     if (kind === IncidentReviewKind.BREAK_GLASS) {
       const grant = await this.prisma.breakGlassGrant.findFirst({
         where: { id: subjectId, tenantId: principal.tenantId },
+        select: { clientId: true },
       });
       if (!grant) throw new NotFoundException('Break-glass grant not found');
+      await this.clinicalAccess.assertCanAccessClient(principal, grant.clientId);
       return;
     }
     const escalation = await this.prisma.escalation.findFirst({
       where: { id: subjectId, tenantId: principal.tenantId },
+      select: { riskFlag: { select: { clientId: true } } },
     });
     if (!escalation) throw new NotFoundException('Escalation not found');
+    await this.clinicalAccess.assertCanAccessClient(principal, escalation.riskFlag.clientId);
   }
 
   /**
@@ -593,12 +602,14 @@ export class RiskService {
    * write-path gate on resolution — is the enforcement mechanism.
    */
   async listPendingIncidentReviews(principal: AuthPrincipal): Promise<PendingIncidentReviewsDto> {
+    const clientScope = await this.clinicalAccess.listAccessibleClientIds(principal);
+    const scopedClient = clientScope === null ? {} : { clientId: { in: clientScope } };
     const [severeResolved, reviewedEscalations, grants, reviewedGrants] = await Promise.all([
       this.prisma.escalation.findMany({
         where: {
           tenantId: principal.tenantId,
           resolvedAt: { not: null },
-          riskFlag: { severity: SeverityBand.SEVERE },
+          riskFlag: { severity: SeverityBand.SEVERE, ...scopedClient },
         },
         include: { riskFlag: { include: { client: { include: { user: true } } } } },
       }),
@@ -607,7 +618,7 @@ export class RiskService {
         select: { subjectId: true },
       }),
       this.prisma.breakGlassGrant.findMany({
-        where: { tenantId: principal.tenantId },
+        where: { tenantId: principal.tenantId, ...scopedClient },
         include: { client: { include: { user: true } } },
       }),
       this.prisma.incidentReview.findMany({
@@ -661,6 +672,19 @@ export class RiskService {
 
   /** All reviews recorded against one subject (an Escalation or a BreakGlassGrant), newest first. */
   async getIncidentReviewsForSubject(principal: AuthPrincipal, subjectId: string): Promise<IncidentReviewDto[]> {
+    const [escalation, grant] = await Promise.all([
+      this.prisma.escalation.findFirst({
+        where: { id: subjectId, tenantId: principal.tenantId },
+        select: { riskFlag: { select: { clientId: true } } },
+      }),
+      this.prisma.breakGlassGrant.findFirst({
+        where: { id: subjectId, tenantId: principal.tenantId },
+        select: { clientId: true },
+      }),
+    ]);
+    const clientId = escalation?.riskFlag.clientId ?? grant?.clientId;
+    if (!clientId) throw new NotFoundException('Incident-review subject not found');
+    await this.clinicalAccess.assertCanAccessClient(principal, clientId);
     const reviews = await this.prisma.incidentReview.findMany({
       where: { tenantId: principal.tenantId, subjectId, deletedAt: null },
       orderBy: { reviewedAt: 'desc' },

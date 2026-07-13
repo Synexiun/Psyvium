@@ -61,9 +61,42 @@ const bookInput = {
 
 function makeService(overrides: Partial<Record<string, unknown>> = {}, commsOverride?: { sendSystemSms: jest.Mock }) {
   const prismaTx = {
-    appointment: { create: jest.fn().mockResolvedValue(appointmentRow) },
-    availabilitySlot: { update: jest.fn() },
+    appointment: {
+      create: jest.fn().mockResolvedValue(appointmentRow),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    availabilitySlot: {
+      update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
   };
+
+  const appointmentOverride = (overrides.appointment ?? {}) as {
+    findFirst?: jest.Mock;
+    findFirstOrThrow?: jest.Mock;
+    findMany?: jest.Mock;
+    update?: jest.Mock;
+    updateMany?: jest.Mock;
+  };
+  const { appointment: _dropAppt, ...restOverrides } = overrides;
+
+  const findFirst =
+    appointmentOverride.findFirst ?? jest.fn().mockResolvedValue(appointmentRow);
+  // Track status transitions from updateMany so findFirstOrThrow returns the new status.
+  let lastStatus: string | undefined;
+  const updateMany =
+    appointmentOverride.updateMany ??
+    jest.fn().mockImplementation(async ({ data }: { data?: { status?: string } }) => {
+      if (data?.status) lastStatus = data.status;
+      return { count: 1 };
+    });
+  const findFirstOrThrow =
+    appointmentOverride.findFirstOrThrow ??
+    jest.fn().mockImplementation(async () => {
+      const current = await findFirst();
+      return { ...current, status: lastStatus ?? current.status };
+    });
+
   const prisma = {
     client: { findFirst: jest.fn().mockResolvedValue(clientRow) },
     psychologist: { findFirst: jest.fn().mockResolvedValue(psychologistRow) },
@@ -74,13 +107,15 @@ function makeService(overrides: Partial<Record<string, unknown>> = {}, commsOver
       create: jest.fn(),
     },
     appointment: {
-      findFirst: jest.fn().mockResolvedValue(appointmentRow),
-      findMany: jest.fn().mockResolvedValue([]),
-      update: jest.fn().mockResolvedValue(appointmentRow),
+      findFirst,
+      findFirstOrThrow,
+      findMany: appointmentOverride.findMany ?? jest.fn().mockResolvedValue([]),
+      update: appointmentOverride.update ?? jest.fn().mockResolvedValue(appointmentRow),
+      updateMany,
     },
     tenant: { findUnique: jest.fn().mockResolvedValue({ name: 'Serenity Clinic' }) },
     $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(prismaTx)),
-    ...overrides,
+    ...restOverrides,
   };
   const audit = { record: jest.fn() };
   const bus = { publish: jest.fn() };
@@ -126,8 +161,9 @@ describe('SchedulingService.bookAppointment', () => {
     await svc.bookAppointment(managerPrincipal, { ...bookInput, slotId: 'slot_1' });
 
     expect(prisma.availabilitySlot.findFirst).toHaveBeenCalled();
-    expect(prismaTx.availabilitySlot.update).toHaveBeenCalledWith({
-      where: { id: 'slot_1' },
+    // Compare-and-swap claim on isBooked=false → true (concurrent double-book guard).
+    expect(prismaTx.availabilitySlot.updateMany).toHaveBeenCalledWith({
+      where: { id: 'slot_1', tenantId: 'tenant_demo', isBooked: false },
       data: { isBooked: true },
     });
   });
@@ -154,7 +190,7 @@ describe('SchedulingService.updateAppointmentStatus', () => {
     const result = await svc.updateAppointmentStatus(psychologistPrincipal, 'appt_1', { status: 'NO_SHOW' as const });
 
     expect(result.status).toBe('NO_SHOW');
-    expect(prisma.appointment.update).toHaveBeenCalledWith(
+    expect(prisma.appointment.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: 'NO_SHOW' } }),
     );
     expect(bus.publish).toHaveBeenCalledWith(

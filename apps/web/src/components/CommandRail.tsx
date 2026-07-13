@@ -28,6 +28,8 @@ export const PORTAL_NAV: PortalNavEntry[] = [
   { href: '/home', key: 'nav.home', icon: 'M3 11l9-8 9 8M5 10v10h14V10' },
   { href: '/intake', key: 'nav.intake', icon: 'M12 4v16m8-8H4', anyOf: [Permission.INTAKE_SUBMIT, Permission.INTAKE_READ] },
   { href: '/session', key: 'nav.workspace', icon: 'M4 19V5a2 2 0 012-2h12a2 2 0 012 2v14M8 7h8M8 11h8M8 15h5', anyOf: [Permission.SESSION_HOST] },
+  { href: '/diagnosis', key: 'nav.diagnosis', icon: 'M12 3v18M3 12h18M8 8l8 8M16 8l-8 8', anyOf: [Permission.NOTE_READ] },
+  { href: '/ai-queue', key: 'nav.aiQueue', icon: 'M12 2l2 7h7l-5.5 4 2 7L12 16l-5.5 4 2-7L3 9h7z', anyOf: [Permission.AI_DECISION] },
   { href: '/manager', key: 'nav.triage', icon: 'M4 6h16M4 12h16M4 18h10', anyOf: [Permission.ASSIGNMENT_APPROVE] },
   { href: '/crm', key: 'nav.crm', icon: 'M3 5h18l-7 8v5l-4 2v-7z', anyOf: [Permission.CRM_READ] },
   { href: '/comms', key: 'nav.comms', icon: 'M4 4h16v12H7l-3 3z', anyOf: [Permission.COMMS_READ] },
@@ -39,6 +41,7 @@ export const PORTAL_NAV: PortalNavEntry[] = [
   { href: '/finance', key: 'nav.finance', icon: 'M3 6h18v12H3zM3 10h18M7 15h4', anyOf: [Permission.FINANCE_READ, Permission.FINANCE_MANAGE] },
   { href: '/reports', key: 'nav.reports', icon: 'M4 20V10M10 20V4M16 20v-7M20 20H3', anyOf: [Permission.REPORTS_READ] },
   { href: '/admin', key: 'nav.admin', icon: 'M4 8h9M17 8h3M13 5v6M4 16h3M11 16h9M7 13v6', anyOf: [Permission.ADMIN_CONFIG] },
+  { href: '/audit', key: 'nav.audit', icon: 'M9 5h6M9 9h6M9 13h4M5 3h14v18H5z', anyOf: [Permission.AUDIT_READ] },
 ];
 
 /**

@@ -20,6 +20,8 @@ import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { ScoringService, type ClassicalScoreResult, type SafetyItemHit } from './scoring.service';
 import { IrtScoringService, type IrtScorableItem } from './irt-scoring.service';
 import { ScoringMethod, type IrtScoreResult } from '@vpsy/contracts';
+import { assertAuthorizedAssessmentTarget } from './assessment-target-access';
+import { validateSafetyConfiguration, validateStaticResponses } from './response-validation';
 
 /** Marker embedded in `PsychometricScore.interpretation` by `buildScoreComputation` when demo/uncalibrated item parameters were used — no dedicated schema column exists (schema.prisma out of scope), so detection is string-based. */
 const SYNTHETIC_CALIBRATION_MARKER = 'SYNTHETIC CALIBRATION';
@@ -40,7 +42,7 @@ export type ResponseAdministrationMode = 'STATIC' | 'CAT';
 export interface ScorableVersion {
   cutoffs: unknown;
   questionnaire?: { scoringMethod: string } | null;
-  items?: Array<{ id: string; linkId?: string | null; parameters?: unknown[] }>;
+  items?: Array<{ id: string; linkId?: string | null; responseOptions: unknown; parameters?: unknown[] }>;
 }
 
 /** Deterministic scoring artifacts shared by the batch and CAT persistence paths. */
@@ -143,6 +145,9 @@ export class PsychometricsService {
     });
     if (!client) throw new NotFoundException('Client not found');
 
+    await assertAuthorizedAssessmentTarget(this.prisma, principal, client);
+    validateStaticResponses(version.items ?? [], input.answers);
+
     const computation = this.buildScoreComputation(version, input.answers);
 
     const result = await this.prisma.$transaction(async (tx) =>
@@ -171,6 +176,8 @@ export class PsychometricsService {
     if (!cutoffsParsed.success) {
       throw new BadRequestException('Questionnaire version has no valid scoring cutoffs configured');
     }
+
+    validateSafetyConfiguration(version.cutoffs, version.items ?? []);
 
     const computed = this.scoring.score(answers, cutoffsParsed.data);
     // Deterministic — same principle as Intake's safety screen (§06 core principle).

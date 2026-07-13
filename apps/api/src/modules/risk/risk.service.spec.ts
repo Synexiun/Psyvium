@@ -96,8 +96,12 @@ function makeService(overrides: Partial<Record<string, unknown>> = {}, cipher: F
   };
   const audit = { record: jest.fn() };
   const bus = { publish: jest.fn(), publishDurable: jest.fn() };
-  const svc = new RiskService(prisma as any, audit as any, bus as any, cipher);
-  return { svc, prisma, audit, bus, prismaTx };
+  const clinicalAccess = {
+    listAccessibleClientIds: jest.fn().mockResolvedValue(null),
+    assertCanAccessClient: jest.fn().mockResolvedValue(undefined),
+  };
+  const svc = new RiskService(prisma as any, audit as any, bus as any, cipher, clinicalAccess as any);
+  return { svc, prisma, audit, bus, prismaTx, clinicalAccess };
 }
 
 describe('RiskService.resolveEscalation', () => {

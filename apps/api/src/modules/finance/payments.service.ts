@@ -304,6 +304,17 @@ export class PaymentsService {
     opts: { method: string; status: 'captured'; pspRef: string | null },
   ): Promise<PaymentRow> {
     return this.prisma.$transaction(async (tx) => {
+      // Compare-and-swap: only one concurrent capture can flip OPEN → PAID.
+      // A second racer (webhook retry + direct charge, or double-click) aborts
+      // before creating a second Payment or balanced ledger pair.
+      const claimed = await tx.invoice.updateMany({
+        where: { id: invoice.id, tenantId, status: 'OPEN' },
+        data: { status: 'PAID' },
+      });
+      if (claimed.count !== 1) {
+        throw new ForbiddenException('Invoice is no longer open for capture');
+      }
+
       const created = await tx.payment.create({
         data: {
           tenantId,
@@ -316,7 +327,6 @@ export class PaymentsService {
           capturedAt: new Date(),
         },
       });
-      await tx.invoice.update({ where: { id: invoice.id }, data: { status: 'PAID' } });
       await this.accounting.postBalancedEntry(tx, {
         tenantId,
         debitAccountCode: '1000', // Cash

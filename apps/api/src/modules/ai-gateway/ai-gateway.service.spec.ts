@@ -58,7 +58,7 @@ describe('AiGatewayService.summarizeSessionNote (Session-Note Assistant, §3.4)'
     withNoKey();
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     expect(svc.aiConfigured).toBe(false);
 
@@ -105,7 +105,7 @@ describe('AiGatewayService.summarizeSessionNote (Session-Note Assistant, §3.4)'
     withNoKey();
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     await svc.summarizeSessionNote({
       tenantId: 'tenant_demo',
@@ -142,7 +142,7 @@ describe('AiGatewayService.summarizeSessionNote (Session-Note Assistant, §3.4)'
     });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.summarizeSessionNote({
       tenantId: 'tenant_demo',
@@ -178,7 +178,7 @@ describe('AiGatewayService.summarizeSessionNote (Session-Note Assistant, §3.4)'
     });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.summarizeSessionNote({
       tenantId: 'tenant_demo',
@@ -199,7 +199,7 @@ describe('AiGatewayService.suggestTreatmentPlan (Treatment-Plan Support, §3.3)'
     withNoKey();
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.suggestTreatmentPlan({
       tenantId: 'tenant_demo',
@@ -255,7 +255,7 @@ describe('AiGatewayService.suggestTreatmentPlan (Treatment-Plan Support, §3.3)'
     });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.suggestTreatmentPlan({
       tenantId: 'tenant_demo',
@@ -291,7 +291,7 @@ describe('AiGatewayService.suggestTreatmentPlan (Treatment-Plan Support, §3.3)'
     });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.suggestTreatmentPlan({
       tenantId: 'tenant_demo',
@@ -331,7 +331,7 @@ describe('AiGatewayService — WAVE CR AI-consent gate', () => {
       const prisma = makePrisma();
       const bus = { publish: jest.fn() };
       const consent = makeConsent(false);
-      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+      const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, consent as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
       const result = await svc.summarizeIntake(baseParams);
 
@@ -354,7 +354,7 @@ describe('AiGatewayService — WAVE CR AI-consent gate', () => {
       const prisma = makePrisma();
       const bus = { publish: jest.fn() };
       const consent = makeConsent(true);
-      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+      const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, consent as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
       const result = await svc.summarizeIntake(baseParams);
 
@@ -370,7 +370,7 @@ describe('AiGatewayService — WAVE CR AI-consent gate', () => {
       // Revoked consent surfaces the same way as "never granted" from the
       // gate's perspective — ConsentService.hasActiveAiConsent returns false.
       const consent = makeConsent(false);
-      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+      const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, consent as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
       const result = await svc.summarizeIntake(baseParams);
 
@@ -384,7 +384,7 @@ describe('AiGatewayService — WAVE CR AI-consent gate', () => {
       const prisma = makePrisma();
       const bus = { publish: jest.fn() };
       const consent = makeConsent(false);
-      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+      const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, consent as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
       const result = await svc.summarizeIntake(baseParams);
 
@@ -409,7 +409,7 @@ describe('AiGatewayService — WAVE CR AI-consent gate', () => {
       const prisma = makePrisma();
       const bus = { publish: jest.fn() };
       const consent = makeConsent(false);
-      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+      const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, consent as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
       const result = await svc.summarizeSessionNote(baseParams);
 
@@ -431,7 +431,7 @@ describe('AiGatewayService — WAVE CR AI-consent gate', () => {
       const prisma = makePrisma();
       const bus = { publish: jest.fn() };
       const consent = makeConsent(true);
-      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+      const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, consent as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
       const result = await svc.summarizeSessionNote(baseParams);
 
@@ -455,7 +455,7 @@ describe('AiGatewayService — WAVE CR AI-consent gate', () => {
       const prisma = makePrisma();
       const bus = { publish: jest.fn() };
       const consent = makeConsent(false);
-      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+      const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, consent as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
       const result = await svc.suggestTreatmentPlan(baseParams);
 
@@ -477,7 +477,7 @@ describe('AiGatewayService — WAVE CR AI-consent gate', () => {
       const prisma = makePrisma();
       const bus = { publish: jest.fn() };
       const consent = makeConsent(true);
-      const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+      const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, consent as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
       const result = await svc.suggestTreatmentPlan(baseParams);
 
@@ -508,7 +508,7 @@ describe('AiGatewayService.suggestDifferentials (Differential Hypothesis, §3.2)
     withNoKey();
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.suggestDifferentials(baseParams);
 
@@ -544,7 +544,7 @@ describe('AiGatewayService.suggestDifferentials (Differential Hypothesis, §3.2)
     });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.suggestDifferentials(baseParams);
 
@@ -565,7 +565,7 @@ describe('AiGatewayService.suggestDifferentials (Differential Hypothesis, §3.2)
     });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.suggestDifferentials(baseParams);
 
@@ -578,7 +578,7 @@ describe('AiGatewayService.suggestDifferentials (Differential Hypothesis, §3.2)
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
     const consent = makeConsent(false);
-    const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, consent as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.suggestDifferentials(baseParams);
 
@@ -602,7 +602,7 @@ describe('AiGatewayService.narrateOutcomeTrend (Outcome Intelligence, §3.5)', (
     withNoKey();
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.narrateOutcomeTrend(baseParams);
 
@@ -622,7 +622,7 @@ describe('AiGatewayService.narrateOutcomeTrend (Outcome Intelligence, §3.5)', (
     mockMessagesCreate.mockResolvedValue({ content: [{ type: 'text', text: 'Assistive trend narrative.' }] });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.narrateOutcomeTrend(baseParams);
 
@@ -640,7 +640,7 @@ describe('AiGatewayService.narrateOutcomeTrend (Outcome Intelligence, §3.5)', (
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
     const consent = makeConsent(false);
-    const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, consent as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.narrateOutcomeTrend(baseParams);
 
@@ -666,7 +666,7 @@ describe('AiGatewayService.interpretScore (Psychometric Interpretation, §3.7, C
     withNoKey();
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.interpretScore(baseParams);
 
@@ -689,7 +689,7 @@ describe('AiGatewayService.interpretScore (Psychometric Interpretation, §3.7, C
     withNoKey();
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.interpretScore({ ...baseParams, synthetic: true });
 
@@ -704,7 +704,7 @@ describe('AiGatewayService.interpretScore (Psychometric Interpretation, §3.7, C
     });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.interpretScore(baseParams);
 
@@ -724,7 +724,7 @@ describe('AiGatewayService.interpretScore (Psychometric Interpretation, §3.7, C
     });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.interpretScore({ ...baseParams, synthetic: true });
 
@@ -737,7 +737,7 @@ describe('AiGatewayService.interpretScore (Psychometric Interpretation, §3.7, C
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
     const consent = makeConsent(false);
-    const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, consent as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.interpretScore(baseParams);
 
@@ -763,7 +763,7 @@ describe('AiGatewayService.summarizeRiskContext (Crisis context-assembly, §3.6 
     withNoKey();
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.summarizeRiskContext(baseParams);
 
@@ -788,7 +788,7 @@ describe('AiGatewayService.summarizeRiskContext (Crisis context-assembly, §3.6 
     mockMessagesCreate.mockResolvedValue({ content: [{ type: 'text', text: 'Brief situational summary.' }] });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.summarizeRiskContext(baseParams);
 
@@ -807,7 +807,7 @@ describe('AiGatewayService.summarizeRiskContext (Crisis context-assembly, §3.6 
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
     const consent = makeConsent(false);
-    const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, consent as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.summarizeRiskContext(baseParams);
 
@@ -837,7 +837,7 @@ describe('AiGatewayService.rankCandidates (Allocation rationale extension, §3.8
     withNoKey();
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const candidates = [candidate({ psychologistId: 'psy_low', score: 40 }), candidate({ psychologistId: 'psy_high', score: 95 })];
     const result = await svc.rankCandidates({ tenantId: 'tenant_demo', clientId: 'client_1', candidates });
@@ -853,7 +853,7 @@ describe('AiGatewayService.rankCandidates (Allocation rationale extension, §3.8
     mockMessagesCreate.mockResolvedValue({ content: [{ type: 'text', text: '1: Strong specialty and score match.' }] });
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const candidates = [candidate({ psychologistId: 'psy_only' })];
     const result = await svc.rankCandidates({ tenantId: 'tenant_demo', clientId: 'client_1', candidates });
@@ -872,7 +872,7 @@ describe('AiGatewayService.rankCandidates (Allocation rationale extension, §3.8
     mockMessagesCreate.mockRejectedValue(new Error('provider down'));
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
-    const svc = new AiGatewayService(prisma as any, bus as any, makeConsent() as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.rankCandidates({ tenantId: 'tenant_demo', clientId: 'client_1', candidates: [candidate()] });
 
@@ -885,7 +885,7 @@ describe('AiGatewayService.rankCandidates (Allocation rationale extension, §3.8
     const prisma = makePrisma();
     const bus = { publish: jest.fn() };
     const consent = makeConsent(false);
-    const svc = new AiGatewayService(prisma as any, bus as any, consent as any);
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, consent as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
 
     const result = await svc.rankCandidates({ tenantId: 'tenant_demo', clientId: 'client_1', candidates: [candidate()] });
 
@@ -893,5 +893,122 @@ describe('AiGatewayService.rankCandidates (Allocation rationale extension, §3.8
     expect(result.source).toBe('rule-based');
     expect(result.withheldReason).toBe('no-ai-consent');
     expect(result.ranked).toHaveLength(1);
+  });
+});
+
+describe('AiGatewayService human-decision queue', () => {
+  const principal = {
+    userId: 'user_clin',
+    tenantId: 'tenant_demo',
+    roles: ['PSYCHOLOGIST'],
+    permissions: ['ai:decision'],
+  } as any;
+
+  it('lists only PENDING recommendations for the tenant', async () => {
+    const prisma = {
+      aIRecommendation: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'rec_1',
+            agent: 'SESSION_NOTE',
+            confidence: 0.7,
+            humanDecision: 'PENDING',
+            decidedBy: null,
+            linkedEntityType: 'Session',
+            linkedEntityId: 'sess_1',
+            output: { draft: 'x' },
+            createdAt: new Date('2026-07-01T00:00:00Z'),
+          },
+        ]),
+      },
+    };
+    const svc = new AiGatewayService(
+      prisma as any,
+      { publish: jest.fn() } as any,
+      { record: jest.fn() } as any,
+      makeConsent() as any,
+      { isEnabled: jest.fn().mockResolvedValue(true) } as any,
+    );
+
+    const rows = await svc.listPendingRecommendations(principal, 10);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.id).toBe('rec_1');
+    expect(rows[0]!.humanDecision).toBe('PENDING');
+    expect(prisma.aIRecommendation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId: 'tenant_demo', humanDecision: 'PENDING' },
+      }),
+    );
+  });
+
+  it('records ACCEPT via compare-and-swap and critical audit', async () => {
+    const prisma = {
+      aIRecommendation: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'rec_1',
+          tenantId: 'tenant_demo',
+          humanDecision: 'PENDING',
+          agent: 'INTAKE',
+          linkedEntityType: 'Intake',
+          linkedEntityId: 'in_1',
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findFirstOrThrow: jest.fn().mockResolvedValue({
+          id: 'rec_1',
+          agent: 'INTAKE',
+          confidence: 0.5,
+          humanDecision: 'ACCEPTED',
+          decidedBy: 'user_clin',
+          linkedEntityType: 'Intake',
+          linkedEntityId: 'in_1',
+          output: {},
+          createdAt: new Date('2026-07-01T00:00:00Z'),
+        }),
+      },
+    };
+    const audit = { record: jest.fn() };
+    const svc = new AiGatewayService(
+      prisma as any,
+      { publish: jest.fn() } as any,
+      audit as any,
+      makeConsent() as any,
+      { isEnabled: jest.fn().mockResolvedValue(true) } as any,
+    );
+
+    const result = await svc.decideRecommendation(principal, 'rec_1', { decision: 'ACCEPTED' });
+    expect(result.humanDecision).toBe('ACCEPTED');
+    expect(prisma.aIRecommendation.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ humanDecision: 'PENDING' }),
+        data: expect.objectContaining({ humanDecision: 'ACCEPTED', decidedBy: 'user_clin' }),
+      }),
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'ai.recommendation.decided', critical: true }),
+    );
+  });
+
+  it('rejects a second concurrent decision after CAS loses', async () => {
+    const prisma = {
+      aIRecommendation: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'rec_1',
+          tenantId: 'tenant_demo',
+          humanDecision: 'PENDING',
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    const svc = new AiGatewayService(
+      prisma as any,
+      { publish: jest.fn() } as any,
+      { record: jest.fn() } as any,
+      makeConsent() as any,
+      { isEnabled: jest.fn().mockResolvedValue(true) } as any,
+    );
+
+    await expect(svc.decideRecommendation(principal, 'rec_1', { decision: 'REJECTED' })).rejects.toThrow(
+      /already decided/i,
+    );
   });
 });

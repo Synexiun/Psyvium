@@ -95,6 +95,11 @@ describe('CommunicationsService', () => {
         findFirst: jest.fn(),
         update: jest.fn(),
       },
+      smsOptOut: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn(),
+        update: jest.fn(),
+      },
       client: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     const audit = { record: jest.fn().mockResolvedValue(undefined) };

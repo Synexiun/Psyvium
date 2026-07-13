@@ -6,8 +6,8 @@
  * Wired entirely to the live clinical read model: loads GET
  * /clinicians/me/caseload using whichever role's token is already on file
  * from a real /login sign-in (this page never signs anyone in itself — a
- * token carries exactly one role in production), picks the first client,
- * and renders GET /clients/:id/clinical-summary — real timeline (recent
+ * token carries exactly one role in production), requires an explicit
+ * patient selection, and renders GET /clients/:id/clinical-summary — real timeline (recent
  * notes + outcome measures), active plan with goal progress, the latest
  * assessment, and the wearable rollup. "File note" POSTs a structured note
  * against the client's session and "Sign" locks it via the API. There is no
@@ -35,10 +35,23 @@ import { ErrorPanel } from '@/components/ErrorPanel';
 import { EmptyState } from '@/components/EmptyState';
 import { StatTile } from '@/components/StatTile';
 import { DataTable, type DataColumn } from '@/components/DataTable';
-import { enqueue, remove as removeFromOutbox, list as listOutbox, OUTBOX_FLUSHED_EVENT, type FlushResult } from '@/lib/offline-outbox';
+import {
+  draftIdFor,
+  enqueue,
+  remove as removeFromOutbox,
+  list as listOutbox,
+  OUTBOX_FLUSHED_EVENT,
+  type FlushResult,
+  type OutboxOwner,
+} from '@/lib/offline-outbox';
 
-const NOTE_KEY = 'vpsy.session.note.draft';
-const NOTE_TS_KEY = 'vpsy.session.note.ts';
+function noteStorageKeys(draftId: string): { note: string; timestamp: string } {
+  const suffix = encodeURIComponent(draftId);
+  return {
+    note: `vpsy.session.note.draft.${suffix}`,
+    timestamp: `vpsy.session.note.ts.${suffix}`,
+  };
+}
 
 /**
  * A fetch-level failure (offline, DNS, connection reset) throws a TypeError
@@ -89,19 +102,44 @@ async function fetchCaseload(): Promise<CaseloadEntry[] | null> {
 export default function SessionWorkspacePage() {
   const { t, dict, fmtDate, fmtTime, fmtNumber, fmtPercent } = useI18n();
   const router = useRouter();
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [draftOwner, setDraftOwner] = useState<OutboxOwner | null>(null);
 
   // A real session is required — this page never signs anyone in itself.
   // See fetchCaseload() above for why this reads the persisted principal
   // hint rather than the per-tab legacy token.
   useEffect(() => {
-    if (!getPrincipal()) router.replace('/login');
+    const principal = getPrincipal();
+    if (!principal) {
+      router.replace('/login');
+      return;
+    }
+    // New sessions always include tenantId. Legacy hints without it may still
+    // use the live API, but local PHI persistence remains fail-closed.
+    if (principal.tenantId) {
+      setDraftOwner({ tenantId: principal.tenantId, userId: principal.sub });
+    }
+    // Remove the pre-hardening origin-global plaintext keys. Their patient
+    // and account ownership cannot be reconstructed safely.
+    try {
+      localStorage.removeItem('vpsy.session.note.draft');
+      localStorage.removeItem('vpsy.session.note.ts');
+    } catch {}
   }, [router]);
 
-  // ── Live caseload → clinical summary for the first client — no fallback-to-fake ──
+  // ── Live caseload → explicitly selected clinical summary — no fallback-to-fake ──
   const { data: caseload, loading: caseloadLoading, error: caseloadError, reload: reloadCaseload } =
     useResource(fetchCaseload, []);
 
-  const clientId = caseload && caseload.length > 0 ? caseload[0]!.clientId : null;
+  // Never default to the first patient. A deliberate patient choice is
+  // required before loading a chart or enabling note persistence/filing.
+  const clientId = selectedClientId;
+
+  useEffect(() => {
+    if (selectedClientId && caseload && !caseload.some((entry) => entry.clientId === selectedClientId)) {
+      setSelectedClientId(null);
+    }
+  }, [caseload, selectedClientId]);
 
   const fetchSummary = useCallback(async (): Promise<ClinicalSummary | null> => {
     if (!clientId) return null;
@@ -111,10 +149,11 @@ export default function SessionWorkspacePage() {
   const { data: summary, loading: summaryLoading, error: summaryError, reload: reloadSummary } =
     useResource(fetchSummary, [clientId]);
 
-  const loading = caseloadLoading || summaryLoading;
+  const loading = caseloadLoading || (!!clientId && summaryLoading);
   const error = caseloadError ?? summaryError;
   const caseloadSize = caseload?.length ?? 0;
   const emptyCaseload = !loading && !error && caseloadSize === 0;
+  const selectionRequired = !loading && !error && caseloadSize > 0 && !clientId;
 
   function reloadAll() {
     reloadCaseload();
@@ -133,19 +172,11 @@ export default function SessionWorkspacePage() {
   const [justSynced, setJustSynced] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [ackedAt, setAckedAt] = useState<Date | null>(null);
-
-  useEffect(() => {
-    try {
-      const draft = localStorage.getItem(NOTE_KEY);
-      if (draft) setNote(draft);
-      const ts = localStorage.getItem(NOTE_TS_KEY);
-      if (ts) setSavedAt(new Date(ts));
-    } catch {}
-  }, []);
-
   // The session to attach the note to: the client's session from the summary.
   const sessionId = summary?.nextAppointment?.id ?? null;
+  const draftId = draftOwner && clientId && sessionId
+    ? draftIdFor(draftOwner, clientId, sessionId)
+    : null;
 
   // Reconcile against the IndexedDB outbox once the session is known — it
   // survives a tab close even in cases where localStorage doesn't (private
@@ -153,24 +184,56 @@ export default function SessionWorkspacePage() {
   // reopen we recover whichever copy is actually newer, and re-surface an
   // unfinished offline "file note" attempt so it isn't silently forgotten.
   useEffect(() => {
-    if (!sessionId) return;
+    // Reset all patient/session-specific editor state before recovering the
+    // newly selected scope. This prevents a prior patient's plaintext from
+    // flashing in, being edited, or being filed against the next chart.
+    setNote('');
+    setSavedAt(null);
+    setFiled(null);
+    setOutboxPending(false);
+    setJustSynced(false);
+    setNoteError(null);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    if (!draftId || !draftOwner) return;
+
+    const keys = noteStorageKeys(draftId);
+    try {
+      const localDraft = localStorage.getItem(keys.note);
+      const localTimestamp = localStorage.getItem(keys.timestamp);
+      if (localDraft) setNote(localDraft);
+      if (localTimestamp) setSavedAt(new Date(localTimestamp));
+    } catch {}
+
     let cancelled = false;
-    listOutbox().then((drafts) => {
-      if (cancelled) return;
-      const mine = drafts.find((d) => d.id === sessionId);
-      if (!mine) return;
-      const outboxUpdatedAt = new Date(mine.updatedAt);
-      if (!savedAt || outboxUpdatedAt > savedAt) {
-        setNote(mine.narrative);
-        setSavedAt(outboxUpdatedAt);
-      }
-      if (mine.status === 'pending-file') setOutboxPending(true);
-    });
+    listOutbox(draftOwner)
+      .then((drafts) => {
+        if (cancelled) return;
+        const mine = drafts.find((d) => d.id === draftId);
+        if (!mine) return;
+        const outboxUpdatedAt = new Date(mine.updatedAt);
+        const localTimestamp = (() => {
+          try {
+            const value = localStorage.getItem(keys.timestamp);
+            return value ? new Date(value) : null;
+          } catch {
+            return null;
+          }
+        })();
+        if (!localTimestamp || outboxUpdatedAt > localTimestamp) {
+          setNote(mine.narrative);
+          setSavedAt(outboxUpdatedAt);
+        }
+        if (mine.status === 'pending-file') setOutboxPending(true);
+      })
+      .catch(() => {
+        // IndexedDB may be unavailable (private mode/storage policy). The
+        // scoped localStorage copy remains the same-session recovery path.
+      });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  }, [draftId, draftOwner]);
 
   // React to a background/foreground outbox flush for THIS session — mirrors
   // the online-path outcome of fileNote(): look up the note the flush just
@@ -179,14 +242,15 @@ export default function SessionWorkspacePage() {
   useEffect(() => {
     function onFlushed(e: Event) {
       const detail = (e as CustomEvent<FlushResult>).detail;
-      if (!sessionId || !detail?.syncedIds.includes(sessionId)) return;
+      if (!sessionId || !draftId || !detail?.syncedIds.includes(draftId)) return;
       setOutboxPending(false);
       setJustSynced(true);
       setNote('');
       setSavedAt(null);
       try {
-        localStorage.removeItem(NOTE_KEY);
-        localStorage.removeItem(NOTE_TS_KEY);
+        const keys = noteStorageKeys(draftId);
+        localStorage.removeItem(keys.note);
+        localStorage.removeItem(keys.timestamp);
       } catch {}
       api
         .listSessionNotes(sessionId)
@@ -201,7 +265,7 @@ export default function SessionWorkspacePage() {
     }
     window.addEventListener(OUTBOX_FLUSHED_EVENT, onFlushed);
     return () => window.removeEventListener(OUTBOX_FLUSHED_EVENT, onFlushed);
-  }, [sessionId, reloadSummary]);
+  }, [draftId, sessionId, reloadSummary]);
 
   function onNoteChange(v: string) {
     setNote(v);
@@ -211,15 +275,35 @@ export default function SessionWorkspacePage() {
   }
 
   function saveDraft(v = note) {
+    if (!draftId || !draftOwner || !clientId || !sessionId) return;
     const now = new Date();
+    const keys = noteStorageKeys(draftId);
+    if (!v.trim()) {
+      try {
+        localStorage.removeItem(keys.note);
+        localStorage.removeItem(keys.timestamp);
+      } catch {}
+      void removeFromOutbox(draftId);
+      setSavedAt(null);
+      return;
+    }
     try {
-      localStorage.setItem(NOTE_KEY, v);
-      localStorage.setItem(NOTE_TS_KEY, now.toISOString());
+      localStorage.setItem(keys.note, v);
+      localStorage.setItem(keys.timestamp, now.toISOString());
       setSavedAt(now);
     } catch {}
     // Durable copy — never auto-filed (see offline-outbox.ts), just recoverable across a tab close.
-    if (sessionId && v.trim().length > 0) {
-      void enqueue({ id: sessionId, sessionId, narrative: v, status: 'draft', updatedAt: now.toISOString() });
+    if (v.trim().length > 0) {
+      void enqueue({
+        id: draftId,
+        tenantId: draftOwner.tenantId,
+        userId: draftOwner.userId,
+        clientId,
+        sessionId,
+        narrative: v,
+        status: 'draft',
+        updatedAt: now.toISOString(),
+      });
     }
   }
 
@@ -239,7 +323,14 @@ export default function SessionWorkspacePage() {
       // Filed — remove the outbox copy rather than re-enqueueing it via
       // saveDraft() (which would immediately resurrect a 'draft' record for
       // a note that's already on the server).
-      await removeFromOutbox(sessionId);
+      if (draftId) await removeFromOutbox(draftId);
+      if (draftId) {
+        try {
+          const keys = noteStorageKeys(draftId);
+          localStorage.removeItem(keys.note);
+          localStorage.removeItem(keys.timestamp);
+        } catch {}
+      }
       setOutboxPending(false);
       setSavedAt(new Date());
       reloadSummary();
@@ -248,7 +339,20 @@ export default function SessionWorkspacePage() {
         // Never a hard failure when it's purely a connectivity problem — the
         // filing intent is durably queued and completes automatically via
         // the offline outbox once the browser is back online.
-        await enqueue({ id: sessionId, sessionId, narrative, status: 'pending-file', updatedAt: new Date().toISOString() });
+        if (!draftId || !draftOwner || !clientId) {
+          setNoteError(t('workspace.noteFailed'));
+          return;
+        }
+        await enqueue({
+          id: draftId,
+          tenantId: draftOwner.tenantId,
+          userId: draftOwner.userId,
+          clientId,
+          sessionId,
+          narrative,
+          status: 'pending-file',
+          updatedAt: new Date().toISOString(),
+        });
         setOutboxPending(true);
       } else {
         setNoteError(t('workspace.noteFailed'));
@@ -385,6 +489,26 @@ export default function SessionWorkspacePage() {
         </p>
       </div>
 
+      {!caseloadLoading && caseloadSize > 0 && (
+        <label htmlFor="workspace-client" className="mt-5 block max-w-md">
+          <span className="field-label">{t('workspace.selectClient')}</span>
+          <select
+            id="workspace-client"
+            className="field"
+            value={selectedClientId ?? ''}
+            onChange={(event) => setSelectedClientId(event.target.value || null)}
+            disabled={noteBusy !== 'idle'}
+          >
+            <option value="">{t('workspace.selectClientPlaceholder')}</option>
+            {caseload?.map((entry) => (
+              <option key={entry.clientId} value={entry.clientId}>
+                {entry.displayName}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
       {loading && (
         <div className="mt-5 grid gap-4 lg:grid-cols-[300px_1fr]" aria-hidden>
           <SkeletonCard className="h-64" />
@@ -395,6 +519,7 @@ export default function SessionWorkspacePage() {
       {!loading && !!error && <ErrorPanel className="mt-5" message={errorMessage} onRetry={reloadAll} />}
 
       {emptyCaseload && <EmptyState className="mt-5" body={t('workspace.emptyCaseload')} />}
+      {selectionRequired && <EmptyState className="mt-5" body={t('workspace.selectionRequired')} />}
 
       {!loading && !error && summary && (
         <>
@@ -426,7 +551,7 @@ export default function SessionWorkspacePage() {
               {/* Risk banner — only when the live record actually flags high/severe risk */}
               {highRisk && (
                 <section className="rounded-md border border-signal/45 bg-signal/[0.07] p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
                     <div className="flex items-start gap-3">
                       <svg viewBox="0 0 24 24" className="mt-0.5 h-5 w-5 shrink-0 text-signal" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
                         <path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" strokeLinecap="round" strokeLinejoin="round" />
@@ -438,18 +563,6 @@ export default function SessionWorkspacePage() {
                         </p>
                       </div>
                     </div>
-                    {ackedAt ? (
-                      <span className="chip" role="status">
-                        ✓ {t('workspace.acked', { time: fmtTime(ackedAt) })}
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => setAckedAt(new Date())}
-                        className="rounded border border-signal/60 px-3.5 py-1.5 text-sm font-medium text-signal transition hover:bg-signal/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal"
-                      >
-                        {t('workspace.ack')}
-                      </button>
-                    )}
                   </div>
                 </section>
               )}
@@ -462,7 +575,11 @@ export default function SessionWorkspacePage() {
                     <h2 className="mt-1 font-display text-lg font-medium text-mist">{t('workspace.notesTitle')}</h2>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <button onClick={() => saveDraft()} className="btn-ghost">
+                    <button
+                      onClick={() => saveDraft()}
+                      disabled={!draftId}
+                      className="btn-ghost disabled:cursor-not-allowed disabled:opacity-50"
+                    >
                       {t('workspace.saveDraft')}
                     </button>
                     {!filed && (

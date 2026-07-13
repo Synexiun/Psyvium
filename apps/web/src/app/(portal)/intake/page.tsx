@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { api, setToken, ApiError } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
 import { LOCALES, LOCALE_META } from '@/i18n/config';
 
@@ -80,21 +80,10 @@ export default function IntakePage() {
     setStep((s) => Math.max(s - 1, 0));
   }
 
-  async function ensureSession() {
-    // Demo convenience: sign in as the seeded client if no token yet.
-    try {
-      const tok = await api.login('alex.client@example.com', 'Vpsy!2026');
-      setToken(tok.accessToken);
-    } catch {
-      /* API may be offline; submit will surface the error */
-    }
-  }
-
   async function submit() {
     setBusy(true);
     setError(null);
     setResult(null);
-    await ensureSession();
     try {
       const payload = {
         presentingProblem: form.presentingProblem.trim(),

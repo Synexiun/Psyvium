@@ -11,7 +11,9 @@ import type {
   RtcTokenDto,
   RtcTokenInput,
   SendSmsInput,
+  SetSmsOptOutInput,
   SmsMessageDto,
+  SmsOptOutDto,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
@@ -429,6 +431,113 @@ export class CommunicationsService {
   // ── SMS ──
 
   /**
+   * Record STOP/START (or staff-initiated) SMS preference for an E.164.
+   * Active opt-outs (`optedInAt` null) block every outbound SMS path.
+   */
+  async setSmsOptOut(principal: AuthPrincipal, input: SetSmsOptOutInput): Promise<SmsOptOutDto> {
+    this.assertStaffRole(principal, 'manage SMS opt-out');
+    const e164 = normalizeE164(input.e164);
+    if (input.optedOut) {
+      const row = await this.prisma.smsOptOut.upsert({
+        where: { tenantId_e164: { tenantId: principal.tenantId, e164 } },
+        create: {
+          tenantId: principal.tenantId,
+          e164,
+          source: 'STAFF',
+          reason: input.reason,
+          optedOutAt: new Date(),
+          optedInAt: null,
+        },
+        update: {
+          source: 'STAFF',
+          reason: input.reason,
+          optedOutAt: new Date(),
+          optedInAt: null,
+        },
+      });
+      await this.audit.record({
+        tenantId: principal.tenantId,
+        actorId: principal.userId,
+        action: 'comms.sms.opt_out',
+        entityType: 'SmsOptOut',
+        entityId: row.id,
+        after: { e164, source: 'STAFF' },
+        critical: true,
+      });
+      return this.toOptOutDto(row);
+    }
+
+    const existing = await this.prisma.smsOptOut.findUnique({
+      where: { tenantId_e164: { tenantId: principal.tenantId, e164 } },
+    });
+    if (!existing) {
+      return { e164, optedOut: false, source: 'STAFF', reason: null, optedOutAt: null, optedInAt: null };
+    }
+    const row = await this.prisma.smsOptOut.update({
+      where: { id: existing.id },
+      data: { optedInAt: new Date(), source: 'STAFF', reason: input.reason },
+    });
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'comms.sms.opt_in',
+      entityType: 'SmsOptOut',
+      entityId: row.id,
+      after: { e164, source: 'STAFF' },
+      critical: true,
+    });
+    return this.toOptOutDto(row);
+  }
+
+  /**
+   * Inbound keyword processing for STOP/START/UNSUBSCRIBE/HELP (doc 15 §4).
+   * Returns whether an opt-out state change was applied.
+   */
+  async applyInboundSmsKeyword(
+    tenantId: string,
+    fromE164: string,
+    body: string,
+  ): Promise<{ handled: boolean; action?: 'opt_out' | 'opt_in' }> {
+    const keyword = body.trim().toUpperCase().split(/\s+/)[0] ?? '';
+    const e164 = normalizeE164(fromE164);
+    if (['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT'].includes(keyword)) {
+      await this.prisma.smsOptOut.upsert({
+        where: { tenantId_e164: { tenantId, e164 } },
+        create: { tenantId, e164, source: 'KEYWORD', reason: keyword, optedOutAt: new Date(), optedInAt: null },
+        update: { source: 'KEYWORD', reason: keyword, optedOutAt: new Date(), optedInAt: null },
+      });
+      await this.audit.record({
+        tenantId,
+        action: 'comms.sms.opt_out',
+        entityType: 'SmsOptOut',
+        after: { e164, source: 'KEYWORD', keyword },
+        critical: true,
+      });
+      return { handled: true, action: 'opt_out' };
+    }
+    if (['START', 'YES', 'UNSTOP'].includes(keyword)) {
+      const existing = await this.prisma.smsOptOut.findUnique({
+        where: { tenantId_e164: { tenantId, e164 } },
+      });
+      if (existing) {
+        await this.prisma.smsOptOut.update({
+          where: { id: existing.id },
+          data: { optedInAt: new Date(), source: 'KEYWORD', reason: keyword },
+        });
+      }
+      await this.audit.record({
+        tenantId,
+        action: 'comms.sms.opt_in',
+        entityType: 'SmsOptOut',
+        after: { e164, source: 'KEYWORD', keyword },
+        critical: true,
+      });
+      return { handled: true, action: 'opt_in' };
+    }
+    return { handled: false };
+  }
+
+  /**
    * Send an SMS through the offline stub's deterministic
    * QUEUED → SENT → DELIVERED lifecycle (`15` §4.3). Gated to
    * PSYCHOLOGIST/MANAGER, same as click-to-call.
@@ -436,6 +545,8 @@ export class CommunicationsService {
   async sendSms(principal: AuthPrincipal, input: SendSmsInput): Promise<SmsMessageDto> {
     this.assertStaffRole(principal, 'send an SMS');
     const tenantId = principal.tenantId;
+
+    await this.assertSmsAllowed(tenantId, input.toE164);
 
     const fromNumber = await this.prisma.phoneNumber.findFirst({
       where: { tenantId, capabilities: { has: 'SMS' } },
@@ -510,6 +621,19 @@ export class CommunicationsService {
     body: string,
     opts?: { clientId?: string },
   ): Promise<{ sent: boolean; smsId?: string; reason?: string }> {
+    try {
+      await this.assertSmsAllowed(tenantId, toE164);
+    } catch (err) {
+      const reason =
+        err instanceof ForbiddenException && String(err.message).includes('opted out')
+          ? 'opted-out'
+          : err instanceof ForbiddenException && String(err.message).includes('quiet hours')
+            ? 'quiet-hours'
+            : 'blocked';
+      this.logger.warn(`sendSystemSms blocked for ${toE164}: ${reason}`);
+      return { sent: false, reason };
+    }
+
     const fromNumber = await this.prisma.phoneNumber.findFirst({
       where: { tenantId, capabilities: { has: 'SMS' } },
     });
@@ -725,13 +849,47 @@ export class CommunicationsService {
     };
   }
 
-  // ── ABAC ──
+  // ── ABAC + SMS compliance ──
 
   private assertStaffRole(principal: AuthPrincipal, action: string): void {
     const allowed = principal.roles.includes(Role.PSYCHOLOGIST) || principal.roles.includes(Role.MANAGER);
     if (!allowed) {
       throw new ForbiddenException(`Only an assigned psychologist or manager may ${action}`);
     }
+  }
+
+  /** Opt-out + quiet-hours gate shared by staff and system SMS senders. */
+  private async assertSmsAllowed(tenantId: string, rawE164: string): Promise<void> {
+    const e164 = normalizeE164(rawE164);
+    const optOut = await this.prisma.smsOptOut.findUnique({
+      where: { tenantId_e164: { tenantId, e164 } },
+    });
+    if (optOut && optOut.optedInAt === null) {
+      throw new ForbiddenException('Recipient has opted out of SMS (STOP)');
+    }
+
+    if (isWithinQuietHours()) {
+      throw new ForbiddenException(
+        'SMS quiet hours are in effect (default 21:00–08:00 UTC; set VPSY_SMS_QUIET_HOURS_START/END to override)',
+      );
+    }
+  }
+
+  private toOptOutDto(row: {
+    e164: string;
+    source: string;
+    reason: string | null;
+    optedOutAt: Date;
+    optedInAt: Date | null;
+  }): SmsOptOutDto {
+    return {
+      e164: row.e164,
+      optedOut: row.optedInAt === null,
+      source: row.source,
+      reason: row.reason,
+      optedOutAt: row.optedOutAt.toISOString(),
+      optedInAt: row.optedInAt?.toISOString() ?? null,
+    };
   }
 
   // ── Mappers ──
@@ -819,4 +977,28 @@ export class CommunicationsService {
       occurredAt: message.createdAt.toISOString(),
     };
   }
+}
+
+/** Digits-only E.164 (leading + stripped) for equality on opt-out rows. */
+function normalizeE164(raw: string): string {
+  const digits = raw.replace(/[^\d+]/g, '');
+  return digits.startsWith('+') ? digits.slice(1) : digits;
+}
+
+/**
+ * Quiet hours default 21:00–08:00 UTC. Override with:
+ *   VPSY_SMS_QUIET_HOURS_START=21
+ *   VPSY_SMS_QUIET_HOURS_END=8
+ * Set VPSY_SMS_QUIET_HOURS_DISABLED=true to skip (emergency-only use).
+ */
+function isWithinQuietHours(now = new Date()): boolean {
+  if (process.env.VPSY_SMS_QUIET_HOURS_DISABLED === 'true') return false;
+  const start = Number(process.env.VPSY_SMS_QUIET_HOURS_START ?? 21);
+  const end = Number(process.env.VPSY_SMS_QUIET_HOURS_END ?? 8);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  const hour = now.getUTCHours();
+  if (start === end) return false;
+  // Window crosses midnight (e.g. 21→8): quiet if hour >= start OR hour < end.
+  if (start > end) return hour >= start || hour < end;
+  return hour >= start && hour < end;
 }

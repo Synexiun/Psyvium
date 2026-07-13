@@ -209,7 +209,7 @@ export class MessagingService {
    * changes. No PHI scrubbing: the body is stored and delivered verbatim.
    */
   async sendMessage(principal: AuthPrincipal, threadId: string, input: SendMessageInput): Promise<MessageDto> {
-    const { thread } = await this.resolveParticipantThread(principal, threadId);
+    const { thread, client, psychologist } = await this.resolveParticipantThread(principal, threadId);
 
     const message = (await this.prisma.message.create({
       data: { threadId: thread.id, senderId: principal.userId, body: input.body },
@@ -245,6 +245,9 @@ export class MessagingService {
       messageId: message.id,
       threadId: message.threadId,
       senderId: message.senderId,
+      recipientUserIds: [client.userId, psychologist?.userId].filter(
+        (userId): userId is string => Boolean(userId) && userId !== principal.userId,
+      ),
     });
 
     return this.toMessageDto(message);

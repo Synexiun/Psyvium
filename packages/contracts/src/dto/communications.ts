@@ -47,6 +47,25 @@ export const smsMessageSchema = z.object({
 });
 export type SmsMessageDto = z.infer<typeof smsMessageSchema>;
 
+/** Staff or system records a STOP/START style opt-out for an E.164 number. */
+export const setSmsOptOutSchema = z.object({
+  e164: z.string().min(8).max(20),
+  /** When true, the number is suppressed; when false, START/re-consent. */
+  optedOut: z.boolean(),
+  reason: z.string().max(500).optional(),
+});
+export type SetSmsOptOutInput = z.infer<typeof setSmsOptOutSchema>;
+
+export const smsOptOutSchema = z.object({
+  e164: z.string(),
+  optedOut: z.boolean(),
+  source: z.string(),
+  reason: z.string().nullable().optional(),
+  optedOutAt: z.string().nullable().optional(),
+  optedInAt: z.string().nullable().optional(),
+});
+export type SmsOptOutDto = z.infer<typeof smsOptOutSchema>;
+
 export const mediaMessageSchema = z.object({
   id: z.string(),
   threadId: z.string(),

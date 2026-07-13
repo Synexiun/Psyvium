@@ -4,10 +4,11 @@ import { CommunicationsController } from './communications.controller';
 import { CommunicationsService } from './communications.service';
 import { OfflineStubAdapter } from './adapters/offline-stub.adapter';
 import { TwilioVoiceWebhookController } from './webhooks/twilio-voice-webhook.controller';
+import { TwilioSmsWebhookController } from './webhooks/twilio-sms-webhook.controller';
 
 @Module({
   imports: [JwtModule.register({})],
-  controllers: [CommunicationsController, TwilioVoiceWebhookController],
+  controllers: [CommunicationsController, TwilioVoiceWebhookController, TwilioSmsWebhookController],
   providers: [CommunicationsService, OfflineStubAdapter],
 })
 export class CommunicationsModule {}

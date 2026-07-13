@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, setToken, ApiError } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
 import { SkeletonStack } from '@/components/Skeleton';
 import { ErrorPanel } from '@/components/ErrorPanel';
@@ -49,9 +49,6 @@ export default function ManagerPage() {
     setLoading(true);
     setError(null);
     try {
-      // Demo convenience: authenticate as the seeded clinical director.
-      const tok = await api.login('manager@vpsy.health', 'Vpsy!2026');
-      setToken(tok.accessToken);
       setProposals(await api.listProposals());
     } catch (e) {
       setError(e instanceof ApiError ? t('manager.errStatus', { status: e.status }) : t('manager.errNetwork'));

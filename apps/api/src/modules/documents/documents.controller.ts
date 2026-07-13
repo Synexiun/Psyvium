@@ -8,6 +8,8 @@ import {
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
+import { ClinicalAccessGuard } from '../../common/auth/clinical-access.guard';
+import { RequireClinicalAccess } from '../../common/auth/clinical-access.decorator';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -28,8 +30,20 @@ import { DocumentsService } from './documents.service';
 export class DocumentsController {
   constructor(private readonly documents: DocumentsService) {}
 
+  /**
+   * Capability probe for the UI: reports whether blob storage is live or
+   * metadata-only / disabled. Never pretends uploads work when they do not.
+   */
+  @Get('status')
+  @RequirePermissions(Permission.CLIENT_READ)
+  status() {
+    return this.documents.capabilityStatus();
+  }
+
   /** Registers document METADATA only — see honesty note in documents.service.ts. */
   @Post()
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'body', key: 'ownerId' })
   @RequirePermissions(Permission.CLIENT_WRITE)
   create(
     @CurrentUser() user: AuthPrincipal,
@@ -39,12 +53,16 @@ export class DocumentsController {
   }
 
   @Get('client/:clientId')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'params', key: 'clientId' })
   @RequirePermissions(Permission.CLIENT_READ)
   listForClient(@CurrentUser() user: AuthPrincipal, @Param('clientId') clientId: string) {
     return this.documents.listForClient(user, clientId);
   }
 
   @Get(':id')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'document', source: 'params', key: 'id' })
   @RequirePermissions(Permission.CLIENT_READ)
   getById(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
     return this.documents.getById(user, id);

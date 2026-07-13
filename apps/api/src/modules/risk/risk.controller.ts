@@ -19,6 +19,8 @@ import {
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
+import { ClinicalAccessGuard } from '../../common/auth/clinical-access.guard';
+import { RequireClinicalAccess } from '../../common/auth/clinical-access.decorator';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -43,12 +45,16 @@ export class RiskController {
   }
 
   @Patch('flags/:id/acknowledge')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'riskFlag', source: 'params', key: 'id' })
   @RequirePermissions(Permission.ESCALATION_HANDLE)
   acknowledgeFlag(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
     return this.risk.acknowledgeFlag(user, id);
   }
 
   @Post('escalations/:id/assign')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'escalation', source: 'params', key: 'id' })
   @RequirePermissions(Permission.ESCALATION_HANDLE)
   assignEscalation(
     @CurrentUser() user: AuthPrincipal,
@@ -59,6 +65,8 @@ export class RiskController {
   }
 
   @Post('escalations/:id/resolve')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'escalation', source: 'params', key: 'id' })
   @RequirePermissions(Permission.ESCALATION_HANDLE)
   resolveEscalation(
     @CurrentUser() user: AuthPrincipal,
@@ -69,6 +77,8 @@ export class RiskController {
   }
 
   @Patch('escalations/:id/follow-up')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'escalation', source: 'params', key: 'id' })
   @RequirePermissions(Permission.ESCALATION_HANDLE)
   completeFollowUp(
     @CurrentUser() user: AuthPrincipal,
@@ -79,6 +89,8 @@ export class RiskController {
   }
 
   @Post('safety-plans')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'body', key: 'clientId' })
   @RequirePermissions(Permission.SAFETYPLAN_WRITE)
   createSafetyPlan(
     @CurrentUser() user: AuthPrincipal,
@@ -98,6 +110,8 @@ export class RiskController {
   }
 
   @Get('safety-plans/client/:clientId')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'params', key: 'clientId' })
   @RequirePermissions(Permission.RISK_READ)
   getLatestSafetyPlan(@CurrentUser() user: AuthPrincipal, @Param('clientId') clientId: string) {
     return this.risk.getLatestSafetyPlan(user, clientId);

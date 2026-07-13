@@ -1,9 +1,11 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
+  decideAiRecommendationSchema,
   riskContextAiAssistRequestSchema,
   Permission,
   type AuthPrincipal,
+  type DecideAiRecommendationInput,
   type RiskContextAiAssistInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
@@ -43,5 +45,26 @@ export class AiRiskContextController {
       hasActiveSafetyPlan: body.hasActiveSafetyPlan,
       slaDueInMinutes: body.slaDueInMinutes,
     });
+  }
+
+  /** PENDING human-decision queue — clinicians decide; AI never self-accepts. */
+  @Get('recommendations/pending')
+  @RequirePermissions(Permission.AI_DECISION)
+  listPending(
+    @CurrentUser() user: AuthPrincipal,
+    @Query('limit') limit?: string,
+  ) {
+    const parsed = limit ? Number(limit) : 50;
+    return this.ai.listPendingRecommendations(user, Number.isFinite(parsed) ? parsed : 50);
+  }
+
+  @Patch('recommendations/:id/decision')
+  @RequirePermissions(Permission.AI_DECISION)
+  decide(
+    @CurrentUser() user: AuthPrincipal,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(decideAiRecommendationSchema)) body: DecideAiRecommendationInput,
+  ) {
+    return this.ai.decideRecommendation(user, id, body);
   }
 }

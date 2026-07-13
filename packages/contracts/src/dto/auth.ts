@@ -8,11 +8,14 @@ import { Role } from '../enums';
  * never drift.
  */
 export const ACCESS_TOKEN_COOKIE = 'vpsy_at';
+export const REFRESH_TOKEN_COOKIE = 'vpsy_rt';
 
 export const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8).max(200),
   totp: z.string().length(6).optional(),
+  /** Required only when the same email belongs to more than one tenant. */
+  tenantSlug: z.string().trim().min(2).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).optional(),
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
@@ -30,6 +33,11 @@ export const registerSchema = z
     fullName: z.string().min(2).max(120),
     locale: z.string().default('en'),
     timezone: z.string().default('UTC'),
+    /**
+     * Public, non-secret tenant routing identifier. It may be omitted only
+     * when exactly one active tenant explicitly enables public registration.
+     */
+    tenantSlug: z.string().trim().min(2).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).optional(),
   })
   .strict(); // reject unknown keys (e.g. a smuggled `role`) rather than silently drop them
 export type RegisterInput = z.infer<typeof registerSchema>;
@@ -42,8 +50,15 @@ export type RegisterInput = z.infer<typeof registerSchema>;
  */
 export const authPrincipalSummarySchema = z.object({
   userId: z.string(),
+  tenantId: z.string(),
   roles: z.array(z.string()),
   permissions: z.array(z.string()),
+  /**
+   * True when the principal holds a mandatory clinical/admin role and has not
+   * yet completed TOTP enrollment. The API permits only auth/MFA endpoints
+   * until this becomes false.
+   */
+  mfaEnrollmentRequired: z.boolean().optional(),
 });
 export type AuthPrincipalSummary = z.infer<typeof authPrincipalSummarySchema>;
 
@@ -51,16 +66,30 @@ export const authTokensSchema = z.object({
   accessToken: z.string(),
   refreshToken: z.string(),
   expiresIn: z.number(),
+  refreshExpiresIn: z.number().optional(),
   // Optional so any older consumer of this schema keeps working unchanged.
   principal: authPrincipalSummarySchema.optional(),
 });
 export type AuthTokens = z.infer<typeof authTokensSchema>;
+
+export const refreshInputSchema = z
+  .object({
+    /** API clients send this; browsers use the httpOnly refresh cookie. */
+    refreshToken: z.string().min(1).optional(),
+  })
+  .strict();
+export type RefreshInput = z.infer<typeof refreshInputSchema>;
+
+export const logoutInputSchema = refreshInputSchema;
+export type LogoutInput = RefreshInput;
 
 export interface AuthPrincipal {
   userId: string;
   tenantId: string;
   roles: Role[];
   permissions: string[];
+  /** See authPrincipalSummarySchema.mfaEnrollmentRequired. */
+  mfaEnrollmentRequired?: boolean;
   clinicId?: string;
   jurisdiction?: string;
 }
@@ -75,13 +104,41 @@ export interface AuthPrincipal {
 export const MfaErrorCode = {
   MFA_REQUIRED: 'MFA_REQUIRED',
   MFA_INVALID: 'MFA_INVALID',
+  /** Mandatory clinical/admin role must complete TOTP enrollment before full access. */
+  MFA_ENROLLMENT_REQUIRED: 'MFA_ENROLLMENT_REQUIRED',
 } as const;
 export type MfaErrorCode = (typeof MfaErrorCode)[keyof typeof MfaErrorCode];
+
+/**
+ * Roles that must enroll TOTP before using the platform in production
+ * (doc 06-security-and-rbac.md §3). CLIENT is intentionally excluded —
+ * patient adoption must not be gated by authenticator apps.
+ */
+export const MFA_MANDATORY_ROLES = [
+  Role.PSYCHOLOGIST,
+  Role.MANAGER,
+  Role.SUPERVISOR,
+  Role.ADMIN,
+  Role.EXECUTIVE,
+] as const;
 
 export const mfaVerifyInputSchema = z.object({
   code: z.string().length(6),
 });
 export type MfaVerifyInput = z.infer<typeof mfaVerifyInputSchema>;
+
+/** Public password-reset request. Always returns 200 to avoid account enumeration. */
+export const passwordResetRequestSchema = z.object({
+  email: z.string().email(),
+  tenantSlug: z.string().trim().min(2).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).optional(),
+});
+export type PasswordResetRequestInput = z.infer<typeof passwordResetRequestSchema>;
+
+export const passwordResetCompleteSchema = z.object({
+  token: z.string().min(20).max(200),
+  newPassword: z.string().min(8).max(200),
+});
+export type PasswordResetCompleteInput = z.infer<typeof passwordResetCompleteSchema>;
 
 export interface MfaEnrollResponse {
   /** Base32 secret — shown to the user for manual entry as a fallback to the QR code. */

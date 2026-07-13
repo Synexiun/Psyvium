@@ -30,6 +30,7 @@ Honest limitation (stated once): Claude Code has no per-prompt model switch on t
 - `pnpm build` (turbo: contracts → database → api + web). Web build needs the heap flag — already baked into its script via `cross-env`.
 - `pnpm test` runs clinical-safety unit tests. Prisma: `pnpm --filter @vpsy/database exec prisma db push` + `run seed`.
 - Local demo DB is an isolated `vpsy` database/role in local Postgres; demo password `Vpsy!2026`.
+- Current handoff note (2026-07-09): `/messages` has secure text-thread UI wired to the messaging API. The latest fix keeps the conversation mounted during background thread refreshes to stop visible flicker, and guards read-receipt marking until `myUserId` is loaded. Targeted TS check for `apps/web/src/app/(portal)/messages/page.tsx` passed; a full browser regression was blocked by the known web middleware build requirement that `JWT_ACCESS_SECRET` be present at `next build` time.
 
 ## Conventions (match a sibling file before writing)
 - Modules are hexagonal (`domain → application ← infrastructure`, `interface` for controllers/subscribers); contexts interact only via `@vpsy/contracts` + the `EventBus`, never cross-imports.

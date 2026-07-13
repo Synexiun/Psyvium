@@ -47,6 +47,9 @@ export default function MessagesPage() {
 
   const threadsRes = useResource<ThreadDto[]>(() => api.msgThreads(), []);
   const threads = threadsRes.data;
+  const hasThreadsData = threads !== null;
+  const showInitialThreadsLoading = threadsRes.loading && !hasThreadsData;
+  const showBlockingThreadsError = !!threadsRes.error && !hasThreadsData;
 
   // Caseload → display names for a clinician's thread list (client sees
   // "Your clinician"). Managers/others simply get the honest id fallback.
@@ -124,12 +127,12 @@ export default function MessagesPage() {
       <p className="mt-3 max-w-3xl text-sm leading-relaxed text-mist/60">{t('messages.intro')}</p>
       <p className="mt-2 max-w-3xl text-xs leading-relaxed text-mist/45">{t('messages.notMonitored')}</p>
 
-      {threadsRes.loading && <SkeletonStack count={3} className="mt-6 space-y-3" />}
-      {!threadsRes.loading && !!threadsRes.error && (
+      {showInitialThreadsLoading && <SkeletonStack count={3} className="mt-6 space-y-3" />}
+      {showBlockingThreadsError && (
         <ErrorPanel className="mt-6 max-w-md" message={errorMessage} onRetry={threadsRes.reload} />
       )}
 
-      {!threadsRes.loading && !threadsRes.error && threads && (
+      {hasThreadsData && (
         <div className="mt-6 grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
           {/* ── Thread list ── */}
           <div className="space-y-4">
@@ -305,7 +308,7 @@ function Conversation({
   // Mark incoming unread messages read (idempotent server-side; a sender can
   // never mark their own). Then let the thread list refresh its badges.
   useEffect(() => {
-    if (!messages) return;
+    if (!messages || !myUserId) return;
     const unread = messages.filter(
       (m) => m.senderId !== myUserId && !m.readAt && !markedRef.current.has(m.id),
     );

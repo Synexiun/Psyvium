@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api, setToken, ApiError } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
 import type { InvoiceDto, LedgerEntryDto, PayoutDto, FinanceSummaryDto, InvoiceLineDto } from '@/lib/finance-types';
 import { SkeletonStack } from '@/components/Skeleton';
@@ -33,10 +33,6 @@ export default function FinancePage() {
     setLive('loading');
     setError(null);
     try {
-      try {
-        const tok = await api.login('manager@vpsy.health', 'Vpsy!2026');
-        setToken(tok.accessToken);
-      } catch { /* may already be signed in */ }
       const [s, inv, led, po] = await Promise.all([api.financeSummary(), api.financeInvoices(), api.financeLedger(), api.financePayouts()]);
       setSummary(s); setInvoices(inv); setLedger(led); setPayouts(po);
       setLive('live');
@@ -62,7 +58,7 @@ export default function FinancePage() {
           <h1 className="mt-2 font-display text-2xl font-semibold text-mist">{t('finance.title')}</h1>
         </div>
         <span role="status" className={`chip ${live === 'offline' ? 'chip-signal' : ''}`}>
-          {live === 'live' ? t('common.liveData') : live === 'offline' ? t('common.offlineDemo') : t('common.loadingLive')}
+          {live === 'live' ? t('common.liveData') : live === 'offline' ? t('common.connectionIssue') : t('common.loadingLive')}
         </span>
       </div>
       <p className="mt-3 max-w-3xl text-mist/60">{t('finance.intro')}</p>

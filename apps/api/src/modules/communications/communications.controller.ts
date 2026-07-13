@@ -6,11 +6,13 @@ import {
   Permission,
   rtcTokenRequestSchema,
   sendSmsSchema,
+  setSmsOptOutSchema,
   type AuthPrincipal,
   type ClickToCallInput,
   type CreateMediaMessageInput,
   type RtcTokenInput,
   type SendSmsInput,
+  type SetSmsOptOutInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
@@ -39,6 +41,16 @@ export class CommunicationsController {
   @RequirePermissions(Permission.COMMS_WRITE)
   sendSms(@CurrentUser() user: AuthPrincipal, @Body(new ZodValidationPipe(sendSmsSchema)) body: SendSmsInput) {
     return this.comms.sendSms(user, body);
+  }
+
+  /** Staff STOP/START preference management (TCPA-style suppression list). */
+  @Post('sms/opt-out')
+  @RequirePermissions(Permission.COMMS_WRITE)
+  setSmsOptOut(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(setSmsOptOutSchema)) body: SetSmsOptOutInput,
+  ) {
+    return this.comms.setSmsOptOut(user, body);
   }
 
   @Get('log')

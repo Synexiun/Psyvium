@@ -5,11 +5,10 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { MfaErrorCode } from '@vpsy/contracts';
 import { api, rememberPrincipal, getPrincipal, setToken, ApiError } from '@/lib/api';
+import { flush as flushClinicalOutbox } from '@/lib/offline-outbox';
 import { useI18n } from '@/i18n';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { ThemeToggle } from '@/components/ThemeToggle';
-
-const DEMO_PASSWORD = 'Vpsy!2026';
 
 /** Every real user has exactly one primary role in production — this maps that
  * role (as carried in the access-token payload) to its landing space. Unknown
@@ -28,56 +27,64 @@ function destinationForPrincipal(): string {
   return role ? ROLE_ROUTE[role]! : '/home';
 }
 
-/** Demo accounts — real seeded logins, one per role, password is the same demo secret. */
-const DEMO: { email: string; roleKey: 'login.roleManager' | 'login.rolePsychologist' | 'login.roleClient' | 'login.roleExecutive' | 'login.roleAdmin' }[] = [
-  { email: 'alex.client@example.com', roleKey: 'login.roleClient' },
-  { email: 'dr.rivera@vpsy.health', roleKey: 'login.rolePsychologist' },
-  { email: 'manager@vpsy.health', roleKey: 'login.roleManager' },
-  { email: 'exec@vpsy.health', roleKey: 'login.roleExecutive' },
-  { email: 'admin@vpsy.health', roleKey: 'login.roleAdmin' },
-];
-
 export default function LoginPage() {
   const { t } = useI18n();
   const router = useRouter();
-  const [email, setEmail] = useState('manager@vpsy.health');
-  const [password, setPassword] = useState(DEMO_PASSWORD);
+  const [tenantSlug, setTenantSlug] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
 
   // MFA (doc 06-security-and-rbac.md §3): shown only once the API tells us
-  // this account has TOTP enrolled — most accounts (incl. every demo login)
-  // never see this, since MFA is opt-in per user, not globally required.
+  // this account has TOTP enrolled.
   const [mfaPrompt, setMfaPrompt] = useState(false);
   const [totp, setTotp] = useState('');
 
-  /** Real login for any email/password pair — used by the form submit AND
-   * by each one-click demo button (those are real logins, not fake sessions). */
-  async function doLogin(loginEmail: string, loginPassword: string, loginTotp?: string) {
+  /** Authenticate only the credentials explicitly entered by this visitor. */
+  async function doLogin() {
     setBusy(true);
     setMsg(null);
-    setEmail(loginEmail);
-    setPassword(loginPassword);
     // A fresh attempt (no code carried over) starts clean — only the
     // MFA_REQUIRED/MFA_INVALID branch below re-opens the code prompt.
-    if (!loginTotp) {
+    if (!mfaPrompt) {
       setMfaPrompt(false);
       setTotp('');
     }
     try {
-      const tok = await api.login(loginEmail, loginPassword, loginTotp);
+      const tok = await api.login(
+        email,
+        password,
+        mfaPrompt ? totp : undefined,
+        tenantSlug.trim() || undefined,
+      );
       rememberPrincipal(
         tok.principal
-          ? { sub: tok.principal.userId, roles: tok.principal.roles, permissions: tok.principal.permissions }
+          ? {
+              sub: tok.principal.userId,
+              tenantId: tok.principal.tenantId,
+              roles: tok.principal.roles,
+              permissions: tok.principal.permissions,
+              mfaEnrollmentRequired: tok.principal.mfaEnrollmentRequired,
+            }
           : null,
       );
       // Compat only: the real session is the httpOnly cookie the API just set.
-      // This also populates the legacy client-token shim a few out-of-scope
-      // pages/the realtime socket handshake still read (see lib/api.ts).
+      // This also populates the legacy client-token shim that the realtime
+      // Socket.IO handshake still reads (see lib/api.ts).
       setToken(tok.accessToken);
+      // Resume only filing actions that this exact tenant/user explicitly
+      // queued earlier. The outbox rejects all other account scopes.
+      void flushClinicalOutbox();
       setMsg({ text: t('login.success'), ok: true });
-      router.push(destinationForPrincipal());
+      // Mandatory clinical/admin roles that have not enrolled TOTP land on a
+      // dedicated enroll step before any clinical surface.
+      if (tok.principal?.mfaEnrollmentRequired) {
+        router.push('/security/mfa');
+      } else {
+        router.push(destinationForPrincipal());
+      }
     } catch (err) {
       const mfaCode = err instanceof ApiError && (err.body as { code?: string } | undefined)?.code;
       if (mfaCode === MfaErrorCode.MFA_REQUIRED || mfaCode === MfaErrorCode.MFA_INVALID) {
@@ -105,7 +112,7 @@ export default function LoginPage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    await doLogin(email, password, mfaPrompt ? totp : undefined);
+    await doLogin();
   }
 
   return (
@@ -127,7 +134,18 @@ export default function LoginPage() {
           <p className="eyebrow">{t('login.eyebrow')}</p>
           <h1 className="mt-2 font-display text-2xl font-semibold text-mist">{t('login.title')}</h1>
 
-          <label htmlFor="login-email" className="field-label mt-6">{t('login.emailLabel')}</label>
+          <label htmlFor="login-tenant" className="field-label mt-6">{t('login.tenantLabel')}</label>
+          <input
+            id="login-tenant"
+            type="text"
+            autoComplete="organization"
+            className="field"
+            value={tenantSlug}
+            onChange={(e) => setTenantSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+            placeholder={t('login.tenantPlaceholder')}
+          />
+
+          <label htmlFor="login-email" className="field-label mt-4">{t('login.emailLabel')}</label>
           <input
             id="login-email"
             type="email"
@@ -192,31 +210,18 @@ export default function LoginPage() {
             {busy ? t('login.submitting') : t('login.submit')}
           </button>
 
+          <p className="mt-3 text-center text-sm">
+            <Link href="/login/reset" className="text-teal/90 hover:underline">
+              {t('login.forgotPassword')}
+            </Link>
+          </p>
+
           {msg && (
             <p role="status" className={`mt-4 text-sm ${msg.ok ? 'text-teal-soft' : 'text-risk'}`}>
               {msg.text}
             </p>
           )}
 
-          <div className="hairline-t mt-6 pt-5">
-            <p className="font-mono text-[10px] uppercase tracking-wider text-haze/90">
-              {t('login.demoTitle', { pw: DEMO_PASSWORD })}
-            </p>
-            <div className="mt-3 space-y-1">
-              {DEMO.map((d) => (
-                <button
-                  key={d.email}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => doLogin(d.email, DEMO_PASSWORD)}
-                  className="flex w-full items-center justify-between gap-2 rounded-sm border border-line/15 px-2.5 py-2 text-start text-sm text-mist/70 transition hover:border-line/35 hover:bg-line/5 hover:text-mist focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal disabled:opacity-60"
-                >
-                  <span dir="ltr" className="truncate font-mono text-xs">{d.email}</span>
-                  <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-haze">{t(d.roleKey)}</span>
-                </button>
-              ))}
-            </div>
-          </div>
         </form>
         <p className="mt-5 text-center text-xs text-mist/40">{t('common.aiMotto')}</p>
       </div>

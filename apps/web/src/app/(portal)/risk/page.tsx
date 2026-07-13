@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api, setToken, getToken, ApiError } from '@/lib/api';
+import { api, getPrincipal, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
 import { useLiveRefresh } from '@/lib/live-events';
 import { RealtimeEventType } from '@vpsy/contracts';
@@ -42,15 +42,9 @@ function requiresFollowUp(level: Severity | ''): boolean {
   return level === 'HIGH' || level === 'SEVERE';
 }
 
-/** Decode the JWT `sub` (userId) for "assign to me" — demo only. */
+/** Current signed-in user for the explicit "assign to me" action. */
 function currentUserId(): string {
-  try {
-    const t = getToken();
-    if (!t) return '';
-    return JSON.parse(atob(t.split('.')[1]!)).sub ?? '';
-  } catch {
-    return '';
-  }
+  return getPrincipal()?.sub ?? '';
 }
 
 /**
@@ -90,17 +84,13 @@ export default function RiskPage() {
     setLive('loading');
     setError(null);
     try {
-      try {
-        // Psychologist holds every risk permission (board, escalation-handle,
-        // safety-plan authoring, break-glass) — so the demo board is fully usable.
-        const tok = await api.login('dr.rivera@vpsy.health', 'Vpsy!2026');
-        setToken(tok.accessToken);
-      } catch { /* may already be signed in */ }
       setBoard(await api.riskBoard());
       setLive('live');
     } catch (e) {
       setError(e instanceof ApiError ? t('risk.errStatus', { status: e.status }) : t('risk.errNetwork'));
-      setBoard({ escalations: [], openFlags: [] });
+      // A failed clinical-risk read must never be rendered as an empty board:
+      // "unknown" and "no active risk" are materially different states.
+      setBoard(null);
       setLive('offline');
     }
   }
@@ -109,7 +99,11 @@ export default function RiskPage() {
   // changes anywhere in the tenant — no polling, no manual refresh.
   useLiveRefresh(RISK_BOARD_LIVE_EVENTS, load);
 
-  if (!board) return <SkeletonStack count={4} className="mt-6 space-y-3" />;
+  if (!board) {
+    return error
+      ? <ErrorPanel className="mt-6 max-w-xl" message={error} onRetry={load} />
+      : <SkeletonStack count={4} className="mt-6 space-y-3" />;
+  }
 
   // Open escalations vs resolved ones awaiting their caring-contact follow-up
   // (Zero Suicide). The board may carry both; the split keeps each lane honest.
@@ -129,7 +123,7 @@ export default function RiskPage() {
           <h1 className="mt-2 font-display text-2xl font-semibold text-mist">{t('risk.title')}</h1>
         </div>
         <span role="status" className={`chip ${live === 'offline' ? 'chip-signal' : ''}`}>
-          {live === 'live' ? t('common.liveData') : live === 'offline' ? t('common.offlineDemo') : t('common.loadingLive')}
+          {live === 'live' ? t('common.liveData') : live === 'offline' ? t('common.connectionIssue') : t('common.loadingLive')}
         </span>
       </div>
       <p className="mt-3 max-w-3xl text-mist/60">{t('risk.intro')}</p>

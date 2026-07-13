@@ -60,6 +60,7 @@ export default function AdminPage() {
           <TenantCard tenant={tenant.data} onSaved={tenant.reload} />
           <FlagsCard flags={flags} />
           <ClinicsCard clinics={clinics} />
+          <DocumentsCapabilityCard />
         </div>
       )}
 
@@ -152,6 +153,52 @@ function TenantCard({ tenant, onSaved }: { tenant: TenantDto; onSaved: () => voi
 }
 
 /* ────────────────────── Feature flags (kill switch) ────────────────────── */
+
+function DocumentsCapabilityCard() {
+  const { t } = useI18n();
+  const status = useResource(() => api.documentsStatus(), []);
+  const modeLabel =
+    status.data?.mode === 'blob'
+      ? t('documents.modeBlob')
+      : status.data?.mode === 'metadata-only'
+        ? t('documents.modeMetadata')
+        : t('documents.modeDisabled');
+
+  return (
+    <section className="card p-5">
+      <p className="eyebrow">{t('documents.eyebrow')}</p>
+      <h2 className="mt-1.5 font-display text-lg text-mist">{t('documents.title')}</h2>
+      <p className="mt-2 text-xs leading-relaxed text-mist/55">{t('documents.honesty')}</p>
+      {status.loading && <SkeletonCard className="mt-4" />}
+      {!!status.error && (
+        <ErrorPanel className="mt-4" message={t('adminPortal.errNetwork')} onRetry={status.reload} />
+      )}
+      {status.data && (
+        <div className="mt-4 space-y-2">
+          <p className="text-sm text-mist/85">
+            <span className="font-mono text-xs uppercase tracking-wider text-haze/90">mode · </span>
+            {modeLabel}
+          </p>
+          <p className="text-sm text-mist/70">{status.data.message}</p>
+          <ul className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px]">
+            <li className="card-inset p-2">
+              <p className="text-mist/50">{t('documents.canUpload')}</p>
+              <p className="mt-1 font-medium text-mist">{status.data.canUpload ? t('documents.yes') : t('documents.no')}</p>
+            </li>
+            <li className="card-inset p-2">
+              <p className="text-mist/50">{t('documents.canDownload')}</p>
+              <p className="mt-1 font-medium text-mist">{status.data.canDownload ? t('documents.yes') : t('documents.no')}</p>
+            </li>
+            <li className="card-inset p-2">
+              <p className="text-mist/50">{t('documents.virusScan')}</p>
+              <p className="mt-1 font-medium text-mist">{status.data.virusScan ? t('documents.yes') : t('documents.no')}</p>
+            </li>
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
 
 function FlagsCard({ flags }: { flags: ReturnType<typeof useResource<FeatureFlagDto[]>> }) {
   const { t, fmtDate } = useI18n();
