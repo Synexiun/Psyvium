@@ -8,10 +8,13 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
 import { IoAdapter } from '@nestjs/platform-socket.io';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { assertJwtSecretsPresent } from './common/config/jwt-secrets';
+import { assertProductionSecurityPosture } from './common/config/production-security';
 import { ProblemDetailsFilter } from './common/filters/problem-details.filter';
+import type { Request, Response, NextFunction } from 'express';
 
 async function bootstrap() {
   // `rawBody: true` — needed ONLY by POST /finance/webhooks/stripe (Stripe
@@ -19,7 +22,10 @@ async function bootstrap() {
   // reserialized req.body would never match). Nest still parses req.body as
   // usual for every route; this additionally captures the original buffer
   // onto req.rawBody. See finance/webhooks/stripe-webhook.controller.ts.
-  const app = await NestFactory.create(AppModule, { bufferLogs: false, rawBody: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: false,
+    rawBody: true,
+  });
   const logger = new Logger('Bootstrap');
   const isProd = process.env.NODE_ENV === 'production';
 
@@ -36,7 +42,15 @@ async function bootstrap() {
     );
   }
 
+  // Production PHI posture: demo seed, swagger, virus stub, plaintext PHI, etc.
+  assertProductionSecurityPosture();
+
   app.useGlobalFilters(new ProblemDetailsFilter());
+
+  // Bound JSON/urlencoded bodies (DoS). Blob PUT has its own virus-scan max.
+  const jsonLimit = process.env.VPSY_JSON_BODY_LIMIT ?? '1mb';
+  app.useBodyParser('json', { limit: jsonLimit });
+  app.useBodyParser('urlencoded', { limit: jsonLimit, extended: true });
 
   // Behind Render/Cloudflare/etc the platform TLS terminator sets X-Forwarded-*.
   // Trusting the first proxy hop makes rate-limit and audit IP attribution correct.
@@ -45,13 +59,16 @@ async function bootstrap() {
   instance?.set?.('trust proxy', 1);
 
   // Baseline browser security headers (Helmet-equivalent without a new dep).
-  app.use((req: { method?: string }, res: { setHeader: (k: string, v: string) => void }, next: () => void) => {
+  app.use((_req: Request, res: Response, next: NextFunction) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
     res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+    // API returns JSON only — deny script execution if a browser ever navigates here.
+    res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
     if (isProd) {
       res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     }

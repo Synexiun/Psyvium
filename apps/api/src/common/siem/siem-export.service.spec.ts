@@ -20,6 +20,7 @@ describe('SiemExportService', () => {
   it('logs only when no export channel configured', async () => {
     delete process.env.VPSY_SIEM_WEBHOOK_URL;
     delete process.env.VPSY_SIEM_LOCAL_DIR;
+    delete process.env.VPSY_SIEM_S3_BUCKET;
     const svc = new SiemExportService();
     const result = await svc.emit({
       type: 'test.event',

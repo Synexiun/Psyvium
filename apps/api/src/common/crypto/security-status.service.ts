@@ -1,13 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import type { AuthPrincipal } from '@vpsy/contracts';
 import { AuditService } from '../audit/audit.service';
+import {
+  evaluatePenTestReadiness,
+  evaluateProductionSecurity,
+} from '../config/production-security';
 import { SiemExportService } from '../siem/siem-export.service';
 import { FieldCipherService } from './field-cipher';
 import { FieldReencryptService } from './field-reencrypt.service';
 
 /**
  * Ops-facing security posture for ADMIN (PHI staging readiness).
- * Aggregates cipher, re-encrypt, SIEM, documents blob env, and audit chain tip.
+ * Aggregates cipher, re-encrypt, SIEM, documents blob env, audit chain tip,
+ * pen-test readiness, and production config findings.
  */
 @Injectable()
 export class SecurityStatusService {
@@ -23,6 +28,8 @@ export class SecurityStatusService {
     const chain = await this.audit.verifyChain(principal.tenantId, 200);
     const docs = documentCapabilityFromEnv();
     const reenc = await this.reencrypt.status();
+    const penTest = evaluatePenTestReadiness();
+    const productionFindings = evaluateProductionSecurity();
 
     const restoreDrill = this.restoreDrillChecklist({
       cipherActive: this.cipher.isActive,
@@ -31,6 +38,9 @@ export class SecurityStatusService {
       chainOk: chain.ok,
       virusScan: docs.virusScan,
     });
+
+    const penPass = penTest.filter((i) => i.status === 'pass').length;
+    const penFail = penTest.filter((i) => i.status === 'fail').length;
 
     return {
       fieldCipher: {
@@ -44,6 +54,7 @@ export class SecurityStatusService {
         configured: this.siem.isConfigured,
         webhook: this.siem.webhookConfigured,
         local: this.siem.localConfigured,
+        s3: this.siem.s3Configured,
       },
       documents: docs,
       auditChain: {
@@ -55,6 +66,13 @@ export class SecurityStatusService {
         reason: chain.reason ?? null,
       },
       restoreDrill,
+      penTest: {
+        items: penTest,
+        pass: penPass,
+        fail: penFail,
+        ready: penFail === 0,
+      },
+      productionFindings,
     };
   }
 

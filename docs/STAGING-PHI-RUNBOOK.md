@@ -141,10 +141,25 @@ VPSY_SIEM_WEBHOOK_URL=https://siem.example/ingest
 VPSY_SIEM_WEBHOOK_SECRET=<hmac secret>
 # and/or append-only JSONL:
 VPSY_SIEM_LOCAL_DIR=./data/siem-export
+# and/or immutable per-event S3 objects (enable Object Lock on the bucket for true WORM):
+VPSY_SIEM_S3_BUCKET=vpsy-siem-archive
+# VPSY_SIEM_S3_OBJECT_LOCK_MODE=GOVERNANCE
+# VPSY_SIEM_S3_OBJECT_LOCK_DAYS=2555
 DPO_ALERT_EMAIL=security@example.com
 ```
 
 Emitted (PHI-minimized): break-glass, escalation assigned, SLA breach, daily audit anchors, chain broken.
+
+## 4e. Production boot refusals
+
+In `NODE_ENV=production` the API refuses to start when:
+
+- `ALLOW_DEMO_SEED=true` without `VPSY_ALLOW_DEMO_SEED_IN_PROD=true`
+- Swagger enabled without `VPSY_ALLOW_SWAGGER_IN_PROD=true`
+- Virus-scan stub without `VPSY_ALLOW_VIRUS_SCAN_STUB_IN_PROD=true`
+- `VPSY_ALLOW_PLAINTEXT_PHI=true`
+
+See `apps/api/src/common/config/production-security.ts` and [`PEN-TEST-READINESS.md`](PEN-TEST-READINESS.md).
 
 ---
 
@@ -211,9 +226,9 @@ See [`RESTORE-DRILL-CHECKLIST.md`](RESTORE-DRILL-CHECKLIST.md) and Admin → Sec
 ## 8. Still required for production PHI GA
 
 - BAAs (host, email, SMS, video, AI, storage)  
-- External pen test + remediation  
+- External pen test execution + remediation (readiness pack: [`PEN-TEST-READINESS.md`](PEN-TEST-READINESS.md))  
 - Dedicated stream worker for multi-GB fleets (API in-process S3→ClamAV is fine for staging/single-node)  
-- True WORM (S3 Object Lock / immutable SIEM) — JSONL + webhook are staging-grade  
+- Bucket-level Object Lock / compliance mode on SIEM S3 (app can send lock headers when enabled)  
 - Operator-attested PITR restore drill (checklist + automated probes are live)  
 - Clinical algorithm sign-off for marketed claims  
 - No shared demo seed on any public DB 

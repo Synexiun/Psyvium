@@ -755,7 +755,7 @@ export const api = {
         sealPlaintextDefault: boolean;
         tables: string[];
       };
-      siem: { configured: boolean; webhook: boolean; local: boolean };
+      siem: { configured: boolean; webhook: boolean; local: boolean; s3?: boolean };
       documents: {
         mode: string;
         canUpload: boolean;
@@ -782,6 +782,13 @@ export const api = {
         automatedTotal: number;
         readyForAttestation: boolean;
       };
+      penTest?: {
+        items: Array<{ id: string; label: string; status: string; detail: string }>;
+        pass: number;
+        fail: number;
+        ready: boolean;
+      };
+      productionFindings?: Array<{ id: string; severity: string; message: string }>;
     }>('/admin/security/status'),
   adminFieldReencrypt: (opts?: { scope?: 'tenant' | 'all'; sealPlaintext?: boolean }) => {
     const q = new URLSearchParams();

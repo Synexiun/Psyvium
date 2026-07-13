@@ -187,6 +187,8 @@ function SecurityStatusCard() {
   const chain = status.data?.auditChain;
   const cipher = status.data?.fieldCipher;
   const siem = status.data?.siem;
+  const pen = status.data?.penTest;
+  const findings = status.data?.productionFindings ?? [];
 
   return (
     <section className="card p-5 xl:col-span-2">
@@ -201,7 +203,7 @@ function SecurityStatusCard() {
 
       {status.data && (
         <div className="mt-4 space-y-4">
-          <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-[11px]">
+          <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5 text-[11px]">
             <li className="card-inset p-3">
               <p className="text-mist/50">{t('security.cipher')}</p>
               <p className="mt-1 font-medium text-mist">
@@ -218,7 +220,13 @@ function SecurityStatusCard() {
                 {siem?.configured ? t('security.configured') : t('security.notConfigured')}
               </p>
               <p className="mt-0.5 text-mist/45">
-                {[siem?.webhook ? 'webhook' : null, siem?.local ? 'local' : null].filter(Boolean).join(' · ') || '—'}
+                {[
+                  siem?.webhook ? 'webhook' : null,
+                  siem?.local ? 'local' : null,
+                  siem?.s3 ? 's3' : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ') || '—'}
               </p>
             </li>
             <li className="card-inset p-3">
@@ -239,7 +247,62 @@ function SecurityStatusCard() {
                 {drill?.readyForAttestation ? t('security.readyAttest') : t('security.notReadyAttest')}
               </p>
             </li>
+            <li className="card-inset p-3">
+              <p className="text-mist/50">{t('security.penTest')}</p>
+              <p className={`mt-1 font-medium ${pen?.ready ? 'text-teal-soft' : 'text-risk'}`}>
+                {pen ? `${pen.pass} pass · ${pen.fail} fail` : '—'}
+              </p>
+              <p className="mt-0.5 text-mist/45">
+                {pen?.ready ? t('security.penReady') : t('security.penNotReady')}
+              </p>
+            </li>
           </ul>
+
+          {findings.length > 0 && (
+            <div>
+              <p className="eyebrow text-risk">{t('security.prodFindings')}</p>
+              <ul className="mt-2 space-y-1.5">
+                {findings.map((f) => (
+                  <li key={f.id} className="card-inset px-3 py-2 text-xs text-risk">
+                    <span className="font-mono text-[10px] uppercase">{f.severity}</span>
+                    <span className="ms-2 text-mist/80">{f.message}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {pen && pen.items.length > 0 && (
+            <div>
+              <p className="eyebrow">{t('security.penEyebrow')}</p>
+              <ul className="mt-2 space-y-1.5">
+                {pen.items.map((item) => (
+                  <li
+                    key={item.id}
+                    className="flex flex-wrap items-start justify-between gap-2 card-inset px-3 py-2 text-xs"
+                  >
+                    <span className="min-w-0">
+                      <span className="text-mist/80">{item.label}</span>
+                      <span className="mt-0.5 block text-[11px] text-mist/45">{item.detail}</span>
+                    </span>
+                    <span
+                      className={`chip shrink-0 ${
+                        item.status === 'pass'
+                          ? 'border-teal/40 text-teal-soft'
+                          : item.status === 'fail'
+                            ? 'border-risk/40 text-risk'
+                            : item.status === 'warn'
+                              ? 'chip-signal'
+                              : ''
+                      }`}
+                    >
+                      {t(`security.status.${item.status as 'pass' | 'fail' | 'warn' | 'manual'}`)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {drill && (
             <div>

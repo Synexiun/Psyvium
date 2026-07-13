@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Injectable, Logger } from '@nestjs/common';
+import { SiemS3Archive } from './siem-s3-archive';
 
 export interface SiemEvent {
   type: string;
@@ -18,13 +19,15 @@ export interface SiemEvent {
  * Activate-on-config (any combination):
  *   VPSY_SIEM_WEBHOOK_URL     — HTTPS POST JSON (optional VPSY_SIEM_WEBHOOK_SECRET HMAC)
  *   VPSY_SIEM_LOCAL_DIR       — append-only JSONL files (staging / air-gapped)
+ *   VPSY_SIEM_S3_BUCKET       — one immutable object per event (+ optional Object Lock headers)
  *
- * When neither is set, emit() is a structured log only (honest no-export).
+ * When none is set, emit() is a structured log only (honest no-export).
  * Never blocks the clinical path on SIEM failure (log + continue).
  */
 @Injectable()
 export class SiemExportService {
   private readonly logger = new Logger(SiemExportService.name);
+  private s3: SiemS3Archive | null | undefined;
 
   get webhookConfigured(): boolean {
     return Boolean(process.env.VPSY_SIEM_WEBHOOK_URL?.trim());
@@ -34,8 +37,23 @@ export class SiemExportService {
     return Boolean(process.env.VPSY_SIEM_LOCAL_DIR?.trim());
   }
 
+  get s3Configured(): boolean {
+    return Boolean(process.env.VPSY_SIEM_S3_BUCKET?.trim());
+  }
+
   get isConfigured(): boolean {
-    return this.webhookConfigured || this.localConfigured;
+    return this.webhookConfigured || this.localConfigured || this.s3Configured;
+  }
+
+  private getS3(): SiemS3Archive | null {
+    if (this.s3 !== undefined) return this.s3;
+    try {
+      this.s3 = SiemS3Archive.fromEnv();
+    } catch (err) {
+      this.logger.error(`SIEM S3 archive misconfigured: ${(err as Error).message}`);
+      this.s3 = null;
+    }
+    return this.s3;
   }
 
   async emit(event: SiemEvent): Promise<{ delivered: boolean; channels: string[] }> {
@@ -70,6 +88,20 @@ export class SiemExportService {
         delivered = true;
       } catch (err) {
         this.logger.error(`SIEM webhook failed: ${(err as Error).message}`);
+      }
+    }
+
+    if (this.s3Configured) {
+      try {
+        const archive = this.getS3();
+        if (archive) {
+          const key = await archive.putEvent(json);
+          channels.push('s3');
+          delivered = true;
+          this.logger.debug(`SIEM S3 archived key=${key}`);
+        }
+      } catch (err) {
+        this.logger.error(`SIEM S3 archive failed: ${(err as Error).message}`);
       }
     }
 

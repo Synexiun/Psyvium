@@ -669,7 +669,13 @@ const en = {
       fail: 'Fail',
       warn: 'Warn',
       manual: 'Manual',
+      info: 'Info',
     },
+    penTest: 'Pen-test readiness',
+    penReady: 'No failing probes',
+    penNotReady: 'Failing probes remain',
+    penEyebrow: 'Pen-test readiness probes',
+    prodFindings: 'Production config findings',
   },
   documents: {
     eyebrow: 'Documents',

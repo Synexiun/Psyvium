@@ -20,6 +20,7 @@ describe('SecurityStatusService', () => {
       isConfigured: true,
       webhookConfigured: true,
       localConfigured: false,
+      s3Configured: false,
     };
     const audit = {
       verifyChain: jest.fn().mockResolvedValue({
