@@ -28,6 +28,7 @@ import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { DocumentsService } from './documents.service';
+import { DocumentVirusScanService } from './document-virus-scan.service';
 
 /**
  * Documents (context 23 — Generic kind, not a clinical-write DoD item like
@@ -42,7 +43,10 @@ import { DocumentsService } from './documents.service';
 @Controller('documents')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class DocumentsController {
-  constructor(private readonly documents: DocumentsService) {}
+  constructor(
+    private readonly documents: DocumentsService,
+    private readonly virusScan: DocumentVirusScanService,
+  ) {}
 
   /**
    * Capability probe for the UI: reports whether blob storage is live or
@@ -63,6 +67,15 @@ export class DocumentsController {
   @RequirePermissions(Permission.CLIENT_READ)
   listPendingVirusScan(@CurrentUser() user: AuthPrincipal) {
     return this.documents.listPendingVirusScan(user);
+  }
+
+  /** Trigger a single-document malware scan (ops / staging). */
+  @Post(':id/virus-scan')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'document', source: 'params', key: 'id' })
+  @RequirePermissions(Permission.CLIENT_WRITE)
+  runVirusScan(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
+    return this.virusScan.scanDocument(user.tenantId, id);
   }
 
   /** Presign upload (local/S3 backend). Then PUT bytes and POST metadata. */

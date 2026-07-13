@@ -12,6 +12,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus } from '../../common/events/event-bus.service';
 import { LocalBlobAdapter } from './adapters/local-blob.adapter';
+import { S3BlobAdapter } from './adapters/s3-blob.adapter';
 import type { BlobStorageProvider, PresignUploadInput } from './ports/blob-storage.port';
 
 /**
@@ -52,15 +53,20 @@ type DocumentRow = {
 @Injectable()
 export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name);
-  private readonly blob: LocalBlobAdapter | null;
+  private readonly blob: BlobStorageProvider | null;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly bus: EventBus,
   ) {
-    this.blob = LocalBlobAdapter.fromEnv();
+    this.blob = S3BlobAdapter.fromEnv() ?? LocalBlobAdapter.fromEnv();
     if (this.blob) this.logger.log(`Document blob backend: ${this.blob.backend}`);
+    else if (process.env.VPSY_DOCUMENT_BLOB_BACKEND === 's3') {
+      this.logger.warn(
+        'VPSY_DOCUMENT_BLOB_BACKEND=s3 but AWS credentials/bucket incomplete — blob disabled.',
+      );
+    }
   }
 
   /**
