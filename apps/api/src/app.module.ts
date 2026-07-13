@@ -11,6 +11,7 @@ import { RateLimitModule } from './common/rate-limit/rate-limit.module';
 import { IdempotencyModule } from './common/idempotency/idempotency.module';
 import { ClinicalAccessModule } from './common/auth/clinical-access.module';
 import { FeatureFlagsModule } from './common/feature-flags/feature-flags.module';
+import { EmailModule } from './common/email/email.module';
 import { TenantContextMiddleware } from './common/tenant-context.interceptor';
 import { AiGatewayModule } from './modules/ai-gateway/ai-gateway.module';
 import { AuthModule } from './auth/auth.module';
@@ -81,6 +82,7 @@ import { HealthModule } from './health/health.module';
     IdempotencyModule,
     ClinicalAccessModule,
     FeatureFlagsModule,
+    EmailModule,
     // Bounded contexts (Phase 1)
     AuthModule,
     // Bounded contexts (Phase 2)

@@ -9,6 +9,7 @@ import {
   isSeverityEscalation,
   stampAlgorithm,
 } from '../../common/clinical';
+import { FieldCipherService } from '../../common/crypto/field-cipher';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { ConsentService } from '../consent/consent.service';
 import { ScreeningService } from './screening.service';
@@ -24,6 +25,7 @@ export class IntakeService {
     private readonly audit: AuditService,
     private readonly bus: EventBus,
     private readonly consents: ConsentService,
+    private readonly cipher: FieldCipherService,
   ) {}
 
   /**
@@ -43,15 +45,24 @@ export class IntakeService {
 
     const computed = this.screening.compute(input);
 
+    // Field-encrypt free-text PHI when VPSY_FIELD_KEY is active (passthrough otherwise).
+    const tenantId = principal.tenantId;
+    const sealedProblem =
+      (await this.cipher.encryptString(input.presentingProblem, tenantId)) ?? input.presentingProblem;
+    const sealedHistory =
+      (await this.cipher.encryptString(input.symptomHistory, tenantId)) ?? input.symptomHistory;
+    const sealedMeds =
+      (await this.cipher.encryptString(input.medicationHistory, tenantId)) ?? input.medicationHistory;
+
     const result = await this.prisma.$transaction(async (tx) => {
       const intake = await tx.intake.create({
         data: {
-          tenantId: principal.tenantId,
+          tenantId,
           clientId: client.id,
-          presentingProblem: input.presentingProblem,
-          symptomHistory: input.symptomHistory,
+          presentingProblem: sealedProblem ?? input.presentingProblem,
+          symptomHistory: sealedHistory,
           symptomDurationWeeks: input.symptomDurationWeeks,
-          medicationHistory: input.medicationHistory,
+          medicationHistory: sealedMeds,
           substanceUseScreen: input.substanceUse as any,
           traumaExposure: input.traumaExposure,
           previousTherapy: input.previousTherapy,

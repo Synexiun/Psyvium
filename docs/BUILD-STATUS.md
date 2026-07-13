@@ -11,7 +11,7 @@ Living traceability of every bounded context against the roadmap (`technical/13-
 > **Engineering wave (2026-07-13):** Gate 0 + remaining code gates closed — `InstrumentLicenseGrant` 403 on administer/CAT, treatment-plan client acknowledgment API+UI, SMS templates, PolicyEngine skeleton, middleware matcher expansion, render.yaml web JWT notes. Prior Gate 0/1 items retained (auth/ABAC/MFA/password reset/SMS STOP/AI queue/CI migrate+audit).
 >
 > **Independent re-audit (2026-07-13):** see [`PLATFORM-AUDIT-2026-07-13.md`](PLATFORM-AUDIT-2026-07-13.md).  
-> **Clinical excellence wave (same day):** shared `common/clinical` foundation (severity lattice, algorithm provenance stamps, psychometrics RCI registry, ICD-10 format validation, Stanley–Brown SPI completeness, MBC schedules) wired across outcomes, risk, diagnosis, psychometrics catalog, matching reject/hold, scheduling state machine, credential expiry board, telehealth join consent re-check, finance refund fail-closed/Stripe, registry invite activation, AI provenance, national k-anon meta, wearables non-diagnostic stamp, and more. **592 API tests green.** Production PHI still needs SMTP/blob/BAAs/pen-test/clinical validation (infra & people).
+> **Clinical excellence + staging-PHI wave (2026-07-13):** shared `common/clinical` + email (Resend activate-on-key), local document blob backend, intake/SMS field encryption, DIF Mantel–Haenszel skeleton, manager minimum-necessary mode, DPO email alerts. **595 API tests green.** Remaining for true PHI GA: cloud S3/KMS, BAAs, pen test, clinical validation studies.
 
 ## Context status (30 contexts)
 

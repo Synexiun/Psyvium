@@ -20,6 +20,7 @@ import type {
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { FieldCipherService } from '../../common/crypto/field-cipher';
 import { EventBus, Events } from '../../common/events/event-bus.service';
 import { OfflineStubAdapter } from './adapters/offline-stub.adapter';
 import { TwilioSmsAdapter } from './adapters/twilio-sms.adapter';
@@ -108,6 +109,7 @@ export class CommunicationsService {
     private readonly audit: AuditService,
     private readonly bus: EventBus,
     private readonly offlineStub: OfflineStubAdapter,
+    private readonly cipher: FieldCipherService,
   ) {
     // Provider selection seam (`15` §2, §8), activate-on-key: a real adapter is
     // selected when its credentials are present; otherwise we keep the offline
@@ -674,13 +676,17 @@ export class CommunicationsService {
     });
     if (!fromNumber) throw new ConflictException('No SMS-capable phone number provisioned for this tenant');
 
+    // Persist ciphertext when field encryption is active; always send plaintext to carrier.
+    const sealedBody =
+      (await this.cipher.encryptString(input.body, tenantId)) ?? input.body;
+
     let sms = await this.prisma.smsMessage.create({
       data: {
         tenantId,
         direction: 'OUTBOUND',
         toE164: input.toE164,
         fromE164: fromNumber.e164,
-        body: input.body,
+        body: sealedBody ?? input.body,
         clientId: input.clientId,
         templateId: input.templateId,
         status: 'QUEUED',
@@ -728,7 +734,7 @@ export class CommunicationsService {
       await this.bus.publish(Events.SmsDelivered, tenantId, { smsId: sms.id, clientId: sms.clientId });
     }
 
-    return this.toSmsMessageDto(sms as SmsMessageRow);
+    return this.toSmsMessageDto(sms as SmsMessageRow, tenantId);
   }
 
   /** Replace `{key}` placeholders; unknown keys left intact. */
@@ -1047,13 +1053,17 @@ export class CommunicationsService {
     };
   }
 
-  private toSmsMessageDto(sms: SmsMessageRow): SmsMessageDto {
+  private async toSmsMessageDto(sms: SmsMessageRow, tenantId?: string): Promise<SmsMessageDto> {
+    const body =
+      tenantId != null
+        ? ((await this.cipher.decryptString(sms.body, tenantId)) ?? sms.body)
+        : sms.body;
     return {
       id: sms.id,
       direction: sms.direction as SmsMessageDto['direction'],
       toE164: sms.toE164,
       fromE164: sms.fromE164,
-      body: sms.body,
+      body,
       status: sms.status as SmsMessageDto['status'],
       createdAt: sms.createdAt.toISOString(),
     };

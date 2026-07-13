@@ -19,9 +19,32 @@ export class ClinicalAccessService {
     if (!client) throw new NotFoundException('Client not found');
 
     if (principal.roles.includes(Role.CLIENT) && client.userId === principal.userId) return;
-    if (principal.roles.includes(Role.MANAGER)) return;
+
+    // Professional minimum-necessary mode: managers no longer get tenant-wide
+    // PHI by default. Opt in with VPSY_MANAGER_MINIMUM_NECESSARY=true — managers
+    // then need an operational assignment path or break-glass like clinicians.
+    // Default remains tenant-wide manager access (clinic ops reality) until set.
+    const managerMinimumNecessary = process.env.VPSY_MANAGER_MINIMUM_NECESSARY === 'true';
+    if (principal.roles.includes(Role.MANAGER) && !managerMinimumNecessary) return;
 
     const now = new Date();
+
+    // Managers in minimum-necessary mode: break-glass only (ops still use
+    // de-identified matching boards that do not call this method).
+    if (principal.roles.includes(Role.MANAGER) && managerMinimumNecessary) {
+      const grant = await this.prisma.breakGlassGrant.findFirst({
+        where: {
+          tenantId: principal.tenantId,
+          clientId,
+          invokedBy: principal.userId,
+          expiresAt: { gt: now },
+        },
+        select: { id: true },
+      });
+      if (grant) return;
+      throw new ForbiddenException('Client access denied — manager minimum-necessary mode requires break-glass');
+    }
+
     if (principal.roles.includes(Role.PSYCHOLOGIST)) {
       const [assignment, breakGlass] = await Promise.all([
         this.prisma.assignment.findFirst({

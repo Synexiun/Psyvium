@@ -18,6 +18,7 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 import { PsychometricsService } from './psychometrics.service';
 import { CatService } from './cat.service';
+import { DifService, type DifAnalysisRequest } from './dif.service';
 
 @ApiTags('psychometrics')
 @ApiBearerAuth()
@@ -27,6 +28,7 @@ export class PsychometricsController {
   constructor(
     private readonly psychometrics: PsychometricsService,
     private readonly cat: CatService,
+    private readonly dif: DifService,
   ) {}
 
   /**
@@ -37,6 +39,16 @@ export class PsychometricsController {
   @RequirePermissions(Permission.ASSESSMENT_ADMINISTER)
   listCatalog(@CurrentUser() user: AuthPrincipal) {
     return this.psychometrics.listCatalog(user);
+  }
+
+  /**
+   * Differential Item Functioning (Mantel–Haenszel) research endpoint.
+   * Sample-size gated; never drives automated clinical decisions.
+   */
+  @Post('dif/analyze')
+  @RequirePermissions(Permission.ASSESSMENT_INTERPRET)
+  analyzeDif(@Body() body: DifAnalysisRequest) {
+    return this.dif.analyze(body);
   }
 
   /**

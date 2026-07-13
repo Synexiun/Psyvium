@@ -86,13 +86,18 @@ function makeHarness() {
     verifyAsync: jest.fn(),
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
+  const email = {
+    isLive: false,
+    sendPasswordReset: jest.fn().mockResolvedValue({ delivered: false, provider: 'console' }),
+    send: jest.fn(),
+  };
   const cipher = {
     isActive: true,
     encryptString: jest.fn(async (value: string) => `encrypted:${value}`),
     decryptString: jest.fn(async (value: string) => value.replace(/^encrypted:/, '')),
   };
-  const svc = new AuthService(prisma as never, jwt as never, audit as never, cipher as never);
-  return { svc, prisma, jwt, audit, cipher };
+  const svc = new AuthService(prisma as never, jwt as never, audit as never, cipher as never, email as never);
+  return { svc, prisma, jwt, audit, cipher, email };
 }
 
 describe('AuthService — tenant-aware onboarding', () => {

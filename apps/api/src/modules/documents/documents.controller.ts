@@ -1,10 +1,24 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Put,
+  Query,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import type { Request, Response } from 'express';
 import {
   createDocumentSchema,
   Permission,
+  presignDocumentUploadSchema,
   type AuthPrincipal,
   type CreateDocumentInput,
+  type PresignDocumentUploadInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
@@ -49,6 +63,55 @@ export class DocumentsController {
   @RequirePermissions(Permission.CLIENT_READ)
   listPendingVirusScan(@CurrentUser() user: AuthPrincipal) {
     return this.documents.listPendingVirusScan(user);
+  }
+
+  /** Presign upload (local/S3 backend). Then PUT bytes and POST metadata. */
+  @Post('presign-upload')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'client', source: 'body', key: 'ownerId' })
+  @RequirePermissions(Permission.CLIENT_WRITE)
+  presignUpload(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(presignDocumentUploadSchema)) body: PresignDocumentUploadInput,
+  ) {
+    return this.documents.presignUpload(user, body);
+  }
+
+  @Post(':id/presign-download')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'document', source: 'params', key: 'id' })
+  @RequirePermissions(Permission.CLIENT_READ)
+  presignDownload(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
+    return this.documents.presignDownload(user, id);
+  }
+
+  /**
+   * Local blob PUT target (signed query). No JWT — signature is the credential.
+   * Only active when VPSY_DOCUMENT_BLOB_BACKEND=local.
+   */
+  @Put('blob/upload')
+  async blobUpload(
+    @Query('key') key: string,
+    @Query('exp') exp: string,
+    @Query('sig') sig: string,
+    @Req() req: Request,
+  ) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return this.documents.localUpload(key, exp, sig, Buffer.concat(chunks));
+  }
+
+  @Get('blob/download')
+  async blobDownload(
+    @Query('key') key: string,
+    @Query('exp') exp: string,
+    @Query('sig') sig: string,
+    @Res() res: Response,
+  ) {
+    const body = await this.documents.localDownload(key, exp, sig);
+    res.status(200).setHeader('Content-Type', 'application/octet-stream').send(body);
   }
 
   /** Registers document METADATA only — see honesty note in documents.service.ts. */

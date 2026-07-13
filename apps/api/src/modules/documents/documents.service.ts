@@ -1,14 +1,18 @@
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Role } from '@vpsy/contracts';
 import type { AuthPrincipal, CreateDocumentInput, DocumentDto } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus } from '../../common/events/event-bus.service';
+import { LocalBlobAdapter } from './adapters/local-blob.adapter';
+import type { BlobStorageProvider, PresignUploadInput } from './ports/blob-storage.port';
 
 /**
  * Canonical event name for context 23 (Documents), per
@@ -47,11 +51,17 @@ type DocumentRow = {
  */
 @Injectable()
 export class DocumentsService {
+  private readonly logger = new Logger(DocumentsService.name);
+  private readonly blob: LocalBlobAdapter | null;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly bus: EventBus,
-  ) {}
+  ) {
+    this.blob = LocalBlobAdapter.fromEnv();
+    if (this.blob) this.logger.log(`Document blob backend: ${this.blob.backend}`);
+  }
 
   /**
    * Honest capability status for UI/API consumers.
@@ -79,7 +89,10 @@ export class DocumentsService {
   } {
     const allowMeta =
       process.env.NODE_ENV !== 'production' || process.env.VPSY_ALLOW_DOCUMENT_METADATA_ONLY === 'true';
-    const blobReady = process.env.VPSY_DOCUMENT_BLOB_BACKEND === 's3';
+    const blobReady =
+      Boolean(this.blob) ||
+      process.env.VPSY_DOCUMENT_BLOB_BACKEND === 's3' ||
+      process.env.VPSY_DOCUMENT_BLOB_BACKEND === 'local';
     const virusScanEnabled = process.env.VPSY_DOCUMENT_VIRUS_SCAN === 'true';
     const statuses = ['pending', 'clean', 'infected', 'error', 'skipped'] as const;
 
@@ -90,8 +103,8 @@ export class DocumentsService {
         canDownload: true,
         virusScan: virusScanEnabled,
         message: virusScanEnabled
-          ? 'Object storage + malware scan configured. Downloads should only serve virusScanStatus=clean.'
-          : 'Object storage configured but malware scan is OFF (VPSY_DOCUMENT_VIRUS_SCAN≠true) — treat all as untrusted.',
+          ? `Object storage (${this.blob?.backend ?? process.env.VPSY_DOCUMENT_BLOB_BACKEND}) + malware scan configured.`
+          : `Object storage (${this.blob?.backend ?? process.env.VPSY_DOCUMENT_BLOB_BACKEND}) live; enable VPSY_DOCUMENT_VIRUS_SCAN for production PHI.`,
         virusScanWorkflow: {
           statuses: [...statuses],
           defaultOnCreate: virusScanEnabled ? 'pending' : 'skipped',
@@ -149,6 +162,82 @@ export class DocumentsService {
     return documents.map((d) => this.toDto(d));
   }
 
+  /**
+   * Presign an upload when blob backend is local (or future S3). Caller then
+   * PUTs bytes and POSTs metadata with the returned storageKey.
+   */
+  async presignUpload(
+    principal: AuthPrincipal,
+    input: Omit<PresignUploadInput, 'tenantId'>,
+  ) {
+    if (!this.blob) {
+      throw new ServiceUnavailableException(
+        'Blob storage not configured — set VPSY_DOCUMENT_BLOB_BACKEND=local (staging) or s3 (production).',
+      );
+    }
+    if (input.ownerType === CLIENT_OWNER_TYPE) {
+      const client = await this.prisma.client.findFirst({
+        where: { id: input.ownerId, tenantId: principal.tenantId },
+      });
+      if (!client) throw new NotFoundException('Client not found');
+    }
+    const result = await this.blob.presignUpload({ ...input, tenantId: principal.tenantId });
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'document.upload_presigned',
+      entityType: 'Document',
+      after: { storageKey: result.storageKey, backend: result.backend },
+    });
+    return result;
+  }
+
+  async presignDownload(principal: AuthPrincipal, documentId: string) {
+    if (!this.blob) {
+      throw new ServiceUnavailableException('Blob storage not configured');
+    }
+    const document = await this.prisma.document.findFirst({
+      where: { id: documentId, tenantId: principal.tenantId, deletedAt: null },
+    });
+    if (!document) throw new NotFoundException('Document not found');
+    if (document.virusScanStatus === 'infected') {
+      throw new ForbiddenException('Document is quarantined (malware scan infected)');
+    }
+    const result = await this.blob.presignDownload(document.storageKey, document.mimeType);
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'document.download_presigned',
+      entityType: 'Document',
+      entityId: document.id,
+      critical: true,
+    });
+    return result;
+  }
+
+  /** Local-backend only: verify signed PUT and store bytes. */
+  async localUpload(key: string, exp: string, sig: string, body: Buffer): Promise<{ ok: true; sizeBytes: number }> {
+    if (!this.blob || !(this.blob instanceof LocalBlobAdapter)) {
+      throw new ServiceUnavailableException('Local blob backend not active');
+    }
+    if (!this.blob.verifySignature('PUT', key, exp, sig)) {
+      throw new UnauthorizedException('Invalid or expired upload signature');
+    }
+    await this.blob.putObject(key, body);
+    return { ok: true, sizeBytes: body.length };
+  }
+
+  /** Local-backend only: verify signed GET and return bytes. */
+  async localDownload(key: string, exp: string, sig: string): Promise<Buffer> {
+    if (!this.blob || !(this.blob instanceof LocalBlobAdapter)) {
+      throw new ServiceUnavailableException('Local blob backend not active');
+    }
+    if (!this.blob.verifySignature('GET', key, exp, sig)) {
+      throw new UnauthorizedException('Invalid or expired download signature');
+    }
+    return this.blob.getObject(key);
+  }
+
   async create(principal: AuthPrincipal, input: CreateDocumentInput): Promise<DocumentDto> {
     const status = this.capabilityStatus();
     if (status.mode === 'disabled') {
@@ -162,6 +251,13 @@ export class DocumentsService {
       if (!client) throw new NotFoundException('Client not found');
     }
 
+    const virusScanStatus =
+      status.mode === 'blob' && process.env.VPSY_DOCUMENT_VIRUS_SCAN === 'true'
+        ? 'pending'
+        : status.mode === 'blob'
+          ? 'skipped'
+          : 'skipped';
+
     const document = await this.prisma.document.create({
       data: {
         tenantId: principal.tenantId,
@@ -171,6 +267,7 @@ export class DocumentsService {
         storageKey: input.storageKey,
         mimeType: input.mimeType,
         sizeBytes: input.sizeBytes,
+        virusScanStatus,
       },
     });
 
@@ -180,7 +277,13 @@ export class DocumentsService {
       action: 'document.registered',
       entityType: 'Document',
       entityId: document.id,
-      after: { ownerType: document.ownerType, ownerId: document.ownerId, category: document.category },
+      after: {
+        ownerType: document.ownerType,
+        ownerId: document.ownerId,
+        category: document.category,
+        virusScanStatus,
+      },
+      critical: true,
     });
     await this.bus.publish(DOCUMENT_UPLOADED, principal.tenantId, {
       documentId: document.id,

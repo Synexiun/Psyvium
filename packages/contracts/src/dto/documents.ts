@@ -28,6 +28,17 @@ export const createDocumentSchema = z.object({
 });
 export type CreateDocumentInput = z.infer<typeof createDocumentSchema>;
 
+/** Request a presigned upload URL before registering metadata. */
+export const presignDocumentUploadSchema = z.object({
+  ownerType: z.string().min(2).max(50).default('client'),
+  ownerId: z.string(),
+  category: z.string().min(2).max(100),
+  mimeType: z.string().min(3).max(200),
+  sizeBytes: z.number().int().nonnegative().max(50 * 1024 * 1024),
+  fileName: z.string().max(200).optional(),
+});
+export type PresignDocumentUploadInput = z.infer<typeof presignDocumentUploadSchema>;
+
 export const documentSchema = z.object({
   id: z.string(),
   ownerType: z.string(),

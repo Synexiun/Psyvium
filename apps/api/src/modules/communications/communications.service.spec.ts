@@ -128,7 +128,12 @@ describe('CommunicationsService', () => {
     const bus = { publish: jest.fn().mockResolvedValue(undefined) };
     const stub = new OfflineStubAdapter();
 
-    const service = new CommunicationsService(prisma as any, audit as any, bus as any, stub);
+    const cipher = {
+      encryptString: jest.fn(async (v: string) => v),
+      decryptString: jest.fn(async (v: string) => v),
+      isActive: false,
+    };
+    const service = new CommunicationsService(prisma as any, audit as any, bus as any, stub, cipher as any);
     return { service, prisma, audit, bus, smsStatuses };
   }
 
@@ -245,7 +250,12 @@ describe('CommunicationsService', () => {
     const bus = { publish: jest.fn().mockResolvedValue(undefined) };
     const stub = new OfflineStubAdapter();
 
-    const service = new CommunicationsService(prisma as any, audit as any, bus as any, stub);
+    const cipher = {
+      encryptString: jest.fn(async (v: string) => v),
+      decryptString: jest.fn(async (v: string) => v),
+      isActive: false,
+    };
+    const service = new CommunicationsService(prisma as any, audit as any, bus as any, stub, cipher as any);
     return { service, prisma, audit, bus, rows };
   }
 

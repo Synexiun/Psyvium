@@ -24,6 +24,7 @@ import { generateSecret as generateTotpSecret, generateURI as generateTotpURI, v
 import { AuditService } from '../common/audit/audit.service';
 import { jwtAccessSecret, jwtRefreshSecret } from '../common/config/jwt-secrets';
 import { FieldCipherService } from '../common/crypto/field-cipher';
+import { EmailService } from '../common/email/email.service';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { TenantContext } from '../common/prisma/tenant-context';
 
@@ -99,6 +100,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly audit: AuditService,
     private readonly cipher: FieldCipherService,
+    private readonly email: EmailService,
   ) {}
 
   /**
@@ -544,11 +546,22 @@ export class AuthService {
       });
     });
 
-    // Production would email the token. Dev/test surfaces it once so QA works
-    // without an SMTP provider. Never log the raw token in production logs.
-    if (process.env.NODE_ENV === 'production') {
-      this.logger.log(
-        `Password reset requested for user ${user.id} (email delivery not configured — wire SMTP/SES next).`,
+    const webOrigin = (process.env.WEB_ORIGIN || process.env.PUBLIC_WEB_URL || 'http://localhost:3000').replace(
+      /\/+$/,
+      '',
+    );
+    const resetUrl = `${webOrigin}/login/reset?token=${encodeURIComponent(rawToken)}`;
+    const mail = await this.email.sendPasswordReset(user.email, resetUrl);
+
+    // Never log the raw token in production. Non-live email still returns
+    // devResetToken so local QA works without Resend.
+    if (mail.delivered) {
+      this.logger.log(`Password reset email delivered via ${mail.provider} for user ${user.id}`);
+      return { ok: true };
+    }
+    if (process.env.NODE_ENV === 'production' && this.email.isLive === false) {
+      this.logger.warn(
+        `Password reset requested for user ${user.id} but email is console-only — set RESEND_API_KEY + EMAIL_FROM.`,
       );
       return { ok: true };
     }
