@@ -69,11 +69,14 @@ export class DocumentsController {
     return this.documents.listPendingVirusScan(user);
   }
 
-  /** Trigger a single-document malware scan (ops / staging). */
+  /**
+   * Trigger a single-document malware scan (ops / clinician / staging).
+   * Tenant-scoped only — not a clinical write. ADMIN/MANAGER with CLIENT_READ
+   * can clear the pending queue without chart assignment; the worker itself
+   * never serves bytes (download gate still enforces clean status).
+   */
   @Post(':id/virus-scan')
-  @UseGuards(ClinicalAccessGuard)
-  @RequireClinicalAccess({ resource: 'document', source: 'params', key: 'id' })
-  @RequirePermissions(Permission.CLIENT_WRITE)
+  @RequirePermissions(Permission.CLIENT_READ)
   runVirusScan(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
     return this.virusScan.scanDocument(user.tenantId, id);
   }

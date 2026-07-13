@@ -74,14 +74,19 @@ VPSY_DOCUMENT_S3_BUCKET=vpsy-docs-staging
 VPSY_DOCUMENT_VIRUS_SCAN=true
 # Staging stub (marks clean; EICAR in key → infected):
 VPSY_DOCUMENT_VIRUS_SCAN_STUB=true
-# Or ClamAV reachability check (full byte stream still fail-closed until wired):
+# Or real ClamAV INSTREAM for local blob objects:
 # CLAMAV_HOST=clamav
 # CLAMAV_PORT=3310
+# VPSY_DOCUMENT_BLOB_BACKEND=local   # required for byte load → clamd
+# VPSY_DOCUMENT_VIRUS_SCAN_MAX_BYTES=26214400
 ```
 
 - Background sweep every 30s for `virusScanStatus=pending`  
-- Manual: `POST /documents/:id/virus-scan`  
+- Manual: `POST /documents/:id/virus-scan` (CLIENT_READ; tenant-scoped ops triage)  
+- Local + `CLAMAV_HOST`: loads object bytes from the local blob dir and streams zINSTREAM to clamd  
+- S3 + ClamAV without a download stream worker: fail-closed → `error` (honest until Lambda/sidecar lands)  
 - Downloads of `infected` rows are **403**  
+- UI: Admin → Documents card (status + pending queue); Session workspace → client vault (presign upload)  
 
 **Never use the stub against real PHI.** Production stub requires explicit `VPSY_ALLOW_VIRUS_SCAN_STUB_IN_PROD=true`.
 
@@ -117,6 +122,9 @@ pnpm --filter @vpsy/api start
 | Break-glass | Audit + DPO log/email |
 | Field key set | Notes / intake free text / SMS / messages encrypted at rest |
 | Virus scan stub | pending → clean (or infected for EICAR key) |
+| Admin Documents card | mode blob + pending queue + client vault load |
+| Session document vault | upload → pending/clean → download clean only |
+| ClamAV local | clean file → clean; EICAR bytes → infected |
 
 ---
 

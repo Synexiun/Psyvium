@@ -35,6 +35,7 @@ import { ErrorPanel } from '@/components/ErrorPanel';
 import { EmptyState } from '@/components/EmptyState';
 import { StatTile } from '@/components/StatTile';
 import { DataTable, type DataColumn } from '@/components/DataTable';
+import { ClientDocumentsPanel } from '@/components/ClientDocumentsPanel';
 import {
   draftIdFor,
   enqueue,
@@ -653,6 +654,13 @@ export default function SessionWorkspacePage() {
                     rowKey={(o) => `${o.construct}-${o.occurredAt}`}
                     caption={t('workspace.measuresCaption')}
                   />
+                </section>
+              )}
+
+              {/* Secure document vault — presign upload + malware status + download gate */}
+              {clientId && (
+                <section className="card p-5">
+                  <ClientDocumentsPanel clientId={clientId} />
                 </section>
               )}
 

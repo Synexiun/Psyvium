@@ -26,6 +26,25 @@ export class DocumentVirusScanService {
   private readonly logger = new Logger(DocumentVirusScanService.name);
   private running = false;
 
+  /**
+   * Test seam for ClamAV TCP — production uses node:net.createConnection.
+   * Specs replace this with a fake duplex that emits connect/data/end.
+   */
+  static createSocket: (opts: { host: string; port: number }) => import('node:net').Socket = (
+    opts,
+  ) => {
+    // Lazy require so jest can still run without binding native net at load time.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const net = require('node:net') as typeof import('node:net');
+    return net.createConnection(opts);
+  };
+
+  /**
+   * Test seam for local blob byte load (avoids real filesystem in unit tests).
+   * Null = use LocalBlobAdapter.fromEnv() default path.
+   */
+  static loadObjectBytesOverride: ((storageKey: string) => Promise<Buffer | null>) | null = null;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -85,7 +104,14 @@ export class DocumentVirusScanService {
     const clamHost = process.env.CLAMAV_HOST?.trim();
     if (clamHost) {
       try {
-        return await this.scanWithClamav(clamHost, storageKey);
+        const bytes = await this.loadObjectBytes(storageKey);
+        if (!bytes) {
+          this.logger.warn(
+            `ClamAV: no local bytes for ${storageKey} (S3 objects need a download stream worker) — fail-closed error`,
+          );
+          return 'error';
+        }
+        return await this.scanWithClamavInstream(clamHost, bytes);
       } catch (err) {
         this.logger.warn(`ClamAV scan error for ${storageKey}: ${(err as Error).message}`);
         return 'error';
@@ -104,40 +130,78 @@ export class DocumentVirusScanService {
     return 'skipped';
   }
 
+  /** Local blob only — S3 requires a separate stream pipeline. */
+  private async loadObjectBytes(storageKey: string): Promise<Buffer | null> {
+    if (DocumentVirusScanService.loadObjectBytesOverride) {
+      return DocumentVirusScanService.loadObjectBytesOverride(storageKey);
+    }
+    if (process.env.VPSY_DOCUMENT_BLOB_BACKEND !== 'local') return null;
+    try {
+      const { LocalBlobAdapter } = await import('./adapters/local-blob.adapter');
+      const local = LocalBlobAdapter.fromEnv();
+      if (!local) return null;
+      return await local.getObject(storageKey);
+    } catch {
+      return null;
+    }
+  }
+
   /**
-   * Minimal ClamAV INSTREAM over TCP. Expects clamav listening on CLAMAV_HOST:PORT.
-   * Does not stream object bytes from S3 here — production should pipe S3 → clamd.
-   * This call sends a ping (zPING) to verify reachability, then returns error
-   * until a full stream pipeline is wired (honest partial implementation).
+   * ClamAV INSTREAM over TCP (zINSTREAM). Streams object bytes to clamd.
+   * Works for local blob objects; S3 should use a Lambda/sidecar that downloads first.
    */
-  private async scanWithClamav(host: string, _storageKey: string): Promise<VirusScanOutcome> {
-    const net = await import('node:net');
+  private async scanWithClamavInstream(host: string, bytes: Buffer): Promise<VirusScanOutcome> {
     const port = Number(process.env.CLAMAV_PORT ?? 3310);
-    await new Promise<void>((resolve, reject) => {
-      const socket = net.createConnection({ host, port }, () => {
-        socket.write('zPING\0');
-      });
+    const maxBytes = Number(process.env.VPSY_DOCUMENT_VIRUS_SCAN_MAX_BYTES ?? 25 * 1024 * 1024);
+    if (bytes.length > maxBytes) {
+      this.logger.warn(`ClamAV: object ${bytes.length} bytes exceeds max ${maxBytes} — error`);
+      return 'error';
+    }
+
+    return new Promise<VirusScanOutcome>((resolve, reject) => {
+      const socket = DocumentVirusScanService.createSocket({ host, port });
       const timer = setTimeout(() => {
         socket.destroy();
-        reject(new Error('ClamAV ping timeout'));
-      }, 3000);
+        reject(new Error('ClamAV INSTREAM timeout'));
+      }, 30_000);
+
+      let response = '';
+      socket.on('connect', () => {
+        socket.write('zINSTREAM\0');
+        const chunkSize = 2048;
+        for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+          const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
+          const size = Buffer.alloc(4);
+          size.writeUInt32BE(chunk.length, 0);
+          socket.write(size);
+          socket.write(chunk);
+        }
+        const zero = Buffer.alloc(4);
+        zero.writeUInt32BE(0, 0);
+        socket.write(zero);
+      });
       socket.on('data', (data) => {
+        response += data.toString('utf8');
+      });
+      socket.on('end', () => {
         clearTimeout(timer);
-        socket.end();
-        if (data.toString().includes('PONG')) resolve();
-        else reject(new Error(`Unexpected ClamAV response: ${data.toString()}`));
+        const text = response.trim();
+        if (/OK$/i.test(text) || /: OK/i.test(text)) {
+          resolve('clean');
+          return;
+        }
+        if (/FOUND/i.test(text)) {
+          resolve('infected');
+          return;
+        }
+        this.logger.warn(`ClamAV unexpected response: ${text.slice(0, 200)}`);
+        resolve('error');
       });
       socket.on('error', (err) => {
         clearTimeout(timer);
         reject(err);
       });
     });
-    // Reachable but full object stream not yet wired — fail closed as error
-    // so ops sees pending→error and can attach a real stream worker.
-    this.logger.warn(
-      'ClamAV is reachable but object-byte streaming is not wired — marking scan error (fail-closed).',
-    );
-    return 'error';
   }
 
   private async applyOutcome(

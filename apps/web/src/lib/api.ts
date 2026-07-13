@@ -567,7 +567,7 @@ export const api = {
     status?: string;
   }) => request('/formulations', { method: 'POST', body: JSON.stringify(payload) }),
 
-  // ── Documents capability ──
+  // ── Documents capability + upload pipeline ──
   documentsStatus: () =>
     request<{
       mode: 'disabled' | 'metadata-only' | 'blob';
@@ -585,8 +585,105 @@ export const api = {
         sizeBytes: number;
         virusScanStatus: string;
         createdAt: string;
+        storageKey?: string;
       }>
     >(`/documents/client/${clientId}`),
+  documentsPendingVirusScan: () =>
+    request<
+      Array<{
+        id: string;
+        category: string;
+        mimeType: string;
+        sizeBytes: number;
+        virusScanStatus: string;
+        createdAt: string;
+      }>
+    >('/documents/virus-scan/pending'),
+  documentsPresignUpload: (payload: {
+    ownerType?: string;
+    ownerId: string;
+    category: string;
+    mimeType: string;
+    sizeBytes: number;
+    fileName?: string;
+  }) =>
+    request<{
+      storageKey: string;
+      uploadUrl: string;
+      method: 'PUT';
+      headers: Record<string, string>;
+      expiresAt: string;
+      backend: 'local' | 's3';
+    }>('/documents/presign-upload', { method: 'POST', body: JSON.stringify(payload) }),
+  documentsRegister: (payload: {
+    ownerType?: string;
+    ownerId: string;
+    category: string;
+    storageKey: string;
+    mimeType: string;
+    sizeBytes: number;
+  }) => request('/documents', { method: 'POST', body: JSON.stringify(payload) }),
+  documentsPresignDownload: (id: string) =>
+    request<{ downloadUrl: string; expiresAt: string; backend: 'local' | 's3' }>(
+      `/documents/${id}/presign-download`,
+      { method: 'POST' },
+    ),
+  documentsVirusScan: (id: string) =>
+    request<{ id: string; virusScanStatus: string }>(`/documents/${id}/virus-scan`, {
+      method: 'POST',
+    }),
+  /**
+   * Full upload pipeline: presign → PUT bytes → register metadata.
+   * Maps /api/v1 local upload URLs onto the Next rewrite (/api/backend).
+   */
+  async uploadClientDocument(opts: {
+    clientId: string;
+    category: string;
+    file: File;
+  }): Promise<{ id: string; virusScanStatus: string }> {
+    const presign = await api.documentsPresignUpload({
+      ownerType: 'client',
+      ownerId: opts.clientId,
+      category: opts.category,
+      mimeType: opts.file.type || 'application/octet-stream',
+      sizeBytes: opts.file.size,
+      fileName: opts.file.name,
+    });
+    let uploadUrl = presign.uploadUrl;
+    if (uploadUrl.startsWith('/api/v1/')) {
+      uploadUrl = uploadUrl.replace('/api/v1/', '/api/backend/');
+    }
+    const put = await fetch(uploadUrl, {
+      method: presign.method,
+      headers: presign.headers,
+      body: opts.file,
+      credentials: uploadUrl.startsWith('/') ? 'include' : 'omit',
+    });
+    if (!put.ok) {
+      throw new ApiError(put.status, `Upload failed (${put.status})`);
+    }
+    const registered = (await api.documentsRegister({
+      ownerType: 'client',
+      ownerId: opts.clientId,
+      category: opts.category,
+      storageKey: presign.storageKey,
+      mimeType: opts.file.type || 'application/octet-stream',
+      sizeBytes: opts.file.size,
+    })) as { id: string; virusScanStatus: string };
+    return registered;
+  },
+  /**
+   * Presign download and open in a new tab. Rewrites local /api/v1 blob URLs
+   * onto the Next rewrite path (/api/backend).
+   */
+  async downloadClientDocument(id: string): Promise<void> {
+    const presign = await api.documentsPresignDownload(id);
+    let url = presign.downloadUrl;
+    if (url.startsWith('/api/v1/')) {
+      url = url.replace('/api/v1/', '/api/backend/');
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+  },
 
   // ── AI human-decision queue (ADR-007) ──
   aiPendingRecommendations: (limit = 50) =>

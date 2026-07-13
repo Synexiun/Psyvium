@@ -29,6 +29,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { DataTable, type DataColumn } from '@/components/DataTable';
 import { ContextPanel } from '@/components/ContextPanel';
 import { StatTile } from '@/components/StatTile';
+import { ClientDocumentsPanel } from '@/components/ClientDocumentsPanel';
 
 const CLINIC_TYPES = ['VIRTUAL', 'PHYSICAL', 'HYBRID'] as const;
 const CLIENT_STATUSES = ['active', 'inactive', 'discharged'] as const;
@@ -155,8 +156,14 @@ function TenantCard({ tenant, onSaved }: { tenant: TenantDto; onSaved: () => voi
 /* ────────────────────── Feature flags (kill switch) ────────────────────── */
 
 function DocumentsCapabilityCard() {
-  const { t } = useI18n();
+  const { t, fmtDate } = useI18n();
   const status = useResource(() => api.documentsStatus(), []);
+  const pending = useResource(() => api.documentsPendingVirusScan(), []);
+  const [clientId, setClientId] = useState('');
+  const [loadedClientId, setLoadedClientId] = useState<string | null>(null);
+  const [scanBusyId, setScanBusyId] = useState<string | null>(null);
+  const [opsMsg, setOpsMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
   const modeLabel =
     status.data?.mode === 'blob'
       ? t('documents.modeBlob')
@@ -164,8 +171,22 @@ function DocumentsCapabilityCard() {
         ? t('documents.modeMetadata')
         : t('documents.modeDisabled');
 
+  async function runScan(id: string) {
+    setScanBusyId(id);
+    setOpsMsg(null);
+    try {
+      const result = await api.documentsVirusScan(id);
+      setOpsMsg({ text: t('documents.scanOk', { status: result.virusScanStatus }), ok: true });
+      pending.reload();
+    } catch {
+      setOpsMsg({ text: t('documents.scanFailed'), ok: false });
+    } finally {
+      setScanBusyId(null);
+    }
+  }
+
   return (
-    <section className="card p-5">
+    <section className="card p-5 xl:col-span-2">
       <p className="eyebrow">{t('documents.eyebrow')}</p>
       <h2 className="mt-1.5 font-display text-lg text-mist">{t('documents.title')}</h2>
       <p className="mt-2 text-xs leading-relaxed text-mist/55">{t('documents.honesty')}</p>
@@ -196,6 +217,74 @@ function DocumentsCapabilityCard() {
           </ul>
         </div>
       )}
+
+      <div className="hairline-t mt-5 pt-5">
+        <p className="eyebrow">{t('documents.pendingEyebrow')}</p>
+        {pending.loading && <SkeletonCard className="mt-3" />}
+        {!!pending.error && (
+          <ErrorPanel className="mt-3" message={t('documents.pendingFailed')} onRetry={pending.reload} />
+        )}
+        {!pending.loading && !pending.error && (pending.data?.length ?? 0) === 0 && (
+          <EmptyState className="mt-3" body={t('documents.pendingEmpty')} />
+        )}
+        {(pending.data?.length ?? 0) > 0 && (
+          <ul className="mt-3 space-y-2">
+            {pending.data!.map((d) => (
+              <li key={d.id} className="card-inset flex flex-wrap items-center justify-between gap-2 p-3">
+                <div className="min-w-0">
+                  <p className="truncate font-mono text-xs text-mist" dir="ltr">{d.id.slice(0, 12)}…</p>
+                  <p className="mt-0.5 text-[11px] text-mist/55">
+                    {d.category} · {d.mimeType} · {fmtDate(d.createdAt)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void runScan(d.id)}
+                  disabled={scanBusyId !== null}
+                  className="btn-ghost shrink-0 px-2.5 py-1.5 text-xs disabled:opacity-60"
+                >
+                  {scanBusyId === d.id ? t('documents.scanning') : t('documents.scanNow')}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {opsMsg && (
+          <p role="status" className={`mt-3 text-sm ${opsMsg.ok ? 'text-teal-soft' : 'text-risk'}`}>
+            {opsMsg.text}
+          </p>
+        )}
+      </div>
+
+      <div className="hairline-t mt-5 pt-5">
+        <p className="eyebrow">{t('documents.clientEyebrow')}</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <div className="min-w-0 flex-1">
+            <label htmlFor="doc-admin-client" className="sr-only">
+              {t('documents.clientIdLabel')}
+            </label>
+            <input
+              id="doc-admin-client"
+              className="field font-mono text-xs"
+              dir="ltr"
+              placeholder={t('documents.clientIdPlaceholder')}
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value.trim())}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setLoadedClientId(clientId.length > 0 ? clientId : null)}
+            disabled={clientId.length < 4}
+            className="btn-primary shrink-0 px-3 text-sm disabled:opacity-60"
+          >
+            {t('documents.loadClient')}
+          </button>
+        </div>
+        {loadedClientId && (
+          <ClientDocumentsPanel clientId={loadedClientId} compact className="mt-4" />
+        )}
+      </div>
     </section>
   );
 }
