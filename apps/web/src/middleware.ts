@@ -150,5 +150,9 @@ export const config = {
     '/telehealth/:path*',
     '/admin/:path*',
     '/assessments/:path*',
+    '/diagnosis/:path*',
+    '/ai-queue/:path*',
+    '/audit/:path*',
+    '/security/:path*',
   ],
 };

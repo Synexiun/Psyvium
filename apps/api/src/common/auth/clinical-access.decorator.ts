@@ -7,6 +7,7 @@ export type ClinicalResourceKind =
   | 'session'
   | 'note'
   | 'goal'
+  | 'plan'
   | 'hypothesis'
   | 'formulation'
   | 'intervention'

@@ -7,6 +7,7 @@ import { RiskService } from '../modules/risk/risk.service';
 import { PsychometricsService } from '../modules/psychometrics/psychometrics.service';
 import { ScoringService } from '../modules/psychometrics/scoring.service';
 import { IrtScoringService } from '../modules/psychometrics/irt-scoring.service';
+import { assertActiveInstrumentLicense } from '../modules/psychometrics/instrument-license';
 import { NationalAnalyticsService } from '../modules/analytics/national-analytics.service';
 import { FieldCipherService } from './crypto/field-cipher';
 import type { FieldKeyProvider } from './crypto/field-key-provider';
@@ -102,6 +103,34 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
     it('allows a clinical write with a verified, active, jurisdiction-matched credential', async () => {
       const svc = makeService({ userId: 'user_psy_a', credentials: [verifiedActive] });
       await expect(svc.assertClinicalEligibility('user_psy_a', 'US-NY')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('Instrument LicenseGrant gate — assertActiveInstrumentLicense (doc 07 §2)', () => {
+    it('blocks LICENSED instrument administration without an active grant', async () => {
+      const prisma = {
+        instrumentLicenseGrant: { findUnique: jest.fn().mockResolvedValue(null) },
+      };
+      await expect(
+        assertActiveInstrumentLicense(prisma as any, 'tenant_demo', {
+          id: 'q_lic',
+          code: 'PREMIUM',
+          licensing: 'LICENSED',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('allows PUBLIC_DOMAIN instruments without a grant', async () => {
+      const prisma = {
+        instrumentLicenseGrant: { findUnique: jest.fn() },
+      };
+      await expect(
+        assertActiveInstrumentLicense(prisma as any, 'tenant_demo', {
+          id: 'q_phq',
+          code: 'PHQ9',
+          licensing: 'PUBLIC_DOMAIN',
+        }),
+      ).resolves.toBeUndefined();
     });
   });
 
@@ -304,6 +333,12 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
         id: 'qv_1',
         published: true,
         cutoffs: CUTOFFS_WITH_SAFETY_ITEM,
+        questionnaire: {
+          id: 'q_1',
+          code: 'PHQ9',
+          scoringMethod: 'CLASSICAL',
+          licensing: 'PUBLIC_DOMAIN',
+        },
         items: ['q1', 'q2', 'q9'].map((linkId, orderIndex) => ({
           id: `item_${linkId}`,
           linkId,
@@ -357,6 +392,7 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
       const prisma = {
         questionnaireVersion: { findUnique: jest.fn().mockResolvedValue(version) },
         client: { findFirst: jest.fn().mockResolvedValue(client) },
+        instrumentLicenseGrant: { findUnique: jest.fn().mockResolvedValue(null) },
         $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(tx)),
       };
 

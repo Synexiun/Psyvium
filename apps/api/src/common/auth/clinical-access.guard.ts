@@ -63,6 +63,14 @@ export class ClinicalAccessGuard implements CanActivate {
           })
         )?.plan.clientId;
         break;
+      case 'plan':
+        clientId = (
+          await this.prisma.treatmentPlan.findFirst({
+            where: { id, tenantId, deletedAt: null },
+            select: { clientId: true },
+          })
+        )?.clientId;
+        break;
       case 'hypothesis':
         clientId = (
           await this.prisma.diagnosisHypothesis.findFirst({

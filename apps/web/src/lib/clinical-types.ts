@@ -43,6 +43,7 @@ export interface ActivePlanSummary {
   id: string;
   status: string;
   version: number;
+  clientAcknowledgedAt?: string | null;
   goals: PlanGoalSummary[];
 }
 

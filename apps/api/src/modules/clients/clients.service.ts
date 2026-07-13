@@ -130,6 +130,9 @@ export class ClientsService {
             id: activePlan.id,
             status: activePlan.status,
             version: activePlan.version,
+            clientAcknowledgedAt: activePlan.clientAcknowledgedAt
+              ? activePlan.clientAcknowledgedAt.toISOString()
+              : null,
             goals: activePlan.goals.map((g) => ({
               id: g.id,
               description: g.description,

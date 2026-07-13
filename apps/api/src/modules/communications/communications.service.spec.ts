@@ -31,6 +31,16 @@ describe('CommunicationsService', () => {
     permissions: ['comms:read', 'comms:write'],
   };
 
+  // Quiet hours default 21:00–08:00 UTC — disable so tests don't flake at night.
+  const prevQuietDisabled = process.env.VPSY_SMS_QUIET_HOURS_DISABLED;
+  beforeAll(() => {
+    process.env.VPSY_SMS_QUIET_HOURS_DISABLED = 'true';
+  });
+  afterAll(() => {
+    if (prevQuietDisabled === undefined) delete process.env.VPSY_SMS_QUIET_HOURS_DISABLED;
+    else process.env.VPSY_SMS_QUIET_HOURS_DISABLED = prevQuietDisabled;
+  });
+
   function makeService() {
     const smsStatuses: string[] = [];
 
@@ -100,6 +110,18 @@ describe('CommunicationsService', () => {
         upsert: jest.fn(),
         update: jest.fn(),
       },
+      smsTemplate: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'tpl_1',
+          tenantId: 'tenant_demo',
+          key: 'appt_reminder',
+          body: 'Hi {name}, your session is on {date}.',
+          locale: 'en',
+          active: true,
+        }),
+        findMany: jest.fn().mockResolvedValue([]),
+        upsert: jest.fn(),
+      },
       client: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     const audit = { record: jest.fn().mockResolvedValue(undefined) };
@@ -125,6 +147,28 @@ describe('CommunicationsService', () => {
     expect(prisma.engagementActivity.create.mock.calls[0][0].data).toMatchObject({ kind: 'SMS', direction: 'OUTBOUND' });
     expect(audit.record).toHaveBeenCalled();
     expect(bus.publish).toHaveBeenCalledWith('sms.delivered', 'tenant_demo', expect.objectContaining({ smsId: 'sms_1' }));
+  });
+
+  it('sendSmsByTemplate interpolates placeholders and stamps templateId', async () => {
+    const { service, prisma } = makeService();
+
+    const result = await service.sendSmsByTemplate(psychologist, {
+      toE164: '+15551230099',
+      templateKey: 'appt_reminder',
+      locale: 'en',
+      vars: { name: 'Alex', date: 'Tuesday 3pm' },
+      clientId: 'client_1',
+    });
+
+    expect(result.status).toBe('DELIVERED');
+    expect(prisma.smsMessage.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          body: 'Hi Alex, your session is on Tuesday 3pm.',
+          templateId: 'tpl_1',
+        }),
+      }),
+    );
   });
 
   it('click-to-call stub produces a CallSession with a duration', async () => {

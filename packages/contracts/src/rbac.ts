@@ -78,6 +78,8 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     Permission.INVOICE_READ,
     Permission.ASSESSMENT_ADMINISTER,
     Permission.CLIENT_READ,
+    // Own active treatment plan read + collaborative acknowledgment.
+    Permission.PLAN_READ,
     Permission.WEARABLE_READ,
     Permission.WEARABLE_WRITE,
     Permission.CONSENT_GRANT,

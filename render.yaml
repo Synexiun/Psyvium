@@ -39,11 +39,13 @@ services:
         generateValue: true
       - key: JWT_ACCESS_TTL
         value: "900"
+      # Host is bare (no scheme). Set full https:// origins in the dashboard after
+      # first deploy, or rely on main.ts CORS allowing the web service host.
+      # Leave sync:false so operators can set `https://<web-host>` explicitly.
       - key: WEB_ORIGIN
-        fromService:
-          type: web
-          name: vpsy-web
-          property: host
+        sync: false
+      - key: PUBLIC_API_URL
+        sync: false
       # Activate-on-key rails — set in the dashboard when ready; each degrades
       # honestly (rule-based AI note, offline comms stub, manual capture) when unset.
       - key: ANTHROPIC_API_KEY
@@ -76,6 +78,13 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Same secret as the API — middleware.ts verifies access JWTs at the edge.
+      # On first deploy, copy JWT_ACCESS_SECRET from vpsy-api into this service
+      # (Render cannot share generateValue across services automatically).
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      # Prefer full https:// URLs. Bare host is accepted — next.config.mjs
+      # prefixes https:// when the scheme is missing.
       - key: API_URL
         fromService:
           type: web

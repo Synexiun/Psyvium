@@ -23,6 +23,7 @@ import { AuditService } from '../../common/audit/audit.service';
 import { CatSelectionService, type CatCandidate } from './cat-selection.service';
 import { IrtScoringService } from './irt-scoring.service';
 import { PsychometricsService } from './psychometrics.service';
+import { assertActiveInstrumentLicense } from './instrument-license';
 import { validateSafetyConfiguration } from './response-validation';
 
 /**
@@ -73,7 +74,12 @@ interface LoadedCatVersion {
   version: {
     id: string;
     cutoffs: unknown;
-    questionnaire?: { scoringMethod: string } | null;
+    questionnaire?: {
+      id: string;
+      code: string;
+      scoringMethod: string;
+      licensing: string;
+    } | null;
     items?: Array<{ id: string; linkId?: string | null; responseOptions: unknown; parameters?: unknown[] }>;
   };
   candidates: CatItemCandidate[];
@@ -119,6 +125,12 @@ export class CatService {
     });
     if (!client) throw new NotFoundException('Client not found');
     this.assertClientSelf(principal, client.userId);
+
+    // Doc 07 §2 — same LICENSE_REQUIRED gate as batch administer, at START
+    // so a licensed CAT never begins without a royalty-tracked grant.
+    if (version.questionnaire) {
+      await assertActiveInstrumentLicense(this.prisma, principal.tenantId, version.questionnaire);
+    }
 
     // Fail at START, not after the client answered 12 items: a version whose
     // cutoffs can't band the final classical score would strand the session.
@@ -333,7 +345,7 @@ export class CatService {
     const version = await this.prisma.questionnaireVersion.findUnique({
       where: { id: versionId },
       include: {
-        questionnaire: { select: { scoringMethod: true } },
+        questionnaire: { select: { id: true, code: true, scoringMethod: true, licensing: true } },
         items: {
           where: { active: true },
           orderBy: { orderIndex: 'asc' },

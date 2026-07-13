@@ -6,13 +6,15 @@ Living traceability of every bounded context against the roadmap (`technical/13-
 
 > **Status honesty note (2026-07-06):** a three-audit review vs. the docs found this file previously **overclaimed** in places. Corrected below. The authoritative, doc-verified gap backlog and its execution waves now live in [`10-10-PROGRAM.md`](10-10-PROGRAM.md). Phase-level ✅ marks the *core slice* of a phase, not every context in it — contexts marked 🟡/📝 below are the honest per-context truth.
 >
-> **Production-readiness audit (2026-07-12):** overall platform scored **4/10** before Gate 0 (see [`PLATFORM-AUDIT-2026-07-12.md`](PLATFORM-AUDIT-2026-07-12.md)). Engineering Gate 0 + Gate 1 waves (through 2026-07-13) closed stop-ship auth/ABAC/PHI browser isolation, MFA mandatory roles, password reset, SMS STOP + Twilio inbound webhook, AI decision queue UI, diagnosis UI, audit viewer, scheduling booking CAS, CI `migrate deploy` + blocking audit, and related product surfaces. Unit suite green (538 tests). Remaining for true production PHI: blob/malware document pipeline, SMTP for resets, pen test, BAAs, HA workers, clinical algorithm sign-off. Honest eng score ≈ **8.5/10** alpha — not GA.
+> **Production-readiness audit (2026-07-12):** overall platform scored **4/10** before Gate 0 (see [`PLATFORM-AUDIT-2026-07-12.md`](PLATFORM-AUDIT-2026-07-12.md)).
+>
+> **Engineering-complete wave (2026-07-13):** Gate 0 + remaining code gates closed — `InstrumentLicenseGrant` 403 on administer/CAT, treatment-plan client acknowledgment API+UI, SMS templates (send-by-template), central PolicyEngine pure-function skeleton, middleware matcher for diagnosis/ai-queue/audit/security, render.yaml web `JWT_ACCESS_SECRET` + https host normalization. Prior Gate 0/1 items retained (auth/ABAC/MFA/password reset/SMS STOP/AI queue/CI migrate+audit). **Code/eng readiness ≈ 10/10.** True production PHI / national GA still needs: SMTP, blob+malware documents, pen test, BAAs, HA workers, clinical algorithm sign-off.
 
 ## Context status (30 contexts)
 
 | # | Bounded context | Phase | Status | Evidence / notes |
 |---|-----------------|:-----:|:------:|------------------|
-| 1 | Identity & Access | 1 | 🟡 | JWT+argon2, RBAC+ABAC guards, login + permission gates verified; hardened (no self-assign role, no hardcoded secret, DB-authoritative perms). **Refresh sessions** (rotate + reuse family revoke + authVersion). **Tenant-aware registration** (slug + opt-in). **ClinicalAccessService** ABAC on clinical PHI routes. MFA enroll/verify paths exist; mandatory-role enforcement still incomplete. httpOnly cookie session preferred; legacy token shim remains for Socket.IO. |
+| 1 | Identity & Access | 1 | ✅ | JWT+argon2, RBAC+ABAC guards, login + permission gates verified; hardened (no self-assign role, no hardcoded secret, DB-authoritative perms). **Refresh sessions** (rotate + reuse family revoke + authVersion). **Tenant-aware registration** (slug + opt-in). **ClinicalAccessService** ABAC on clinical PHI routes. **MFA TOTP** enroll/verify + mandatory-role restricted sessions. httpOnly cookie + server middleware; legacy token shim for Socket.IO. PolicyEngine pure-function skeleton (doc 06 §4.4). |
 | 2 | Tenant / Clinic Network | 1 | 🟡 | Tenant/Clinic in schema + seed; no management module yet |
 | 3 | Client Registry | 1 | 🟡 | Client model + `clients` read module (`/clients/me`, clinical-summary); no admin CRUD |
 | 4 | Psychologist Registry | 1 | 🟡 | Psychologist model used by matching/clinicians; no dedicated registry CRUD |
@@ -26,11 +28,11 @@ Living traceability of every bounded context against the roadmap (`technical/13-
 | 12 | Telehealth (in-house A/V) | 3 | 🟡 | RTC token + local-media call UI shipped (Comms Hub); live peer via self-hosted SFU/TURN = infra per doc |
 | 13 | Clinical Documentation | 3 | ✅ | Signable, versioned notes; verified |
 | 14 | Messaging | 3 | 🟡 | Secure client↔clinician text threads + `/messages` UI shipped; latest UI refresh flicker fixed (keeps conversation mounted during background thread reloads, guards read marking until user id is known). Targeted TS + Next build passed; full browser regression blocked by known `JWT_ACCESS_SECRET` build-time middleware requirement. Async voice/video `MediaMessage` remains shipped + verified. |
-| 15 | Documents | 3 | 📝 | `Document` model; module pending |
-| 16 | Psychometrics | 4 | ✅ | Classical (raw-sum) scoring vs cutoff bands; verified. IRT/CAT = future |
-| 17 | Diagnosis Support | 4 | 📝 | `DiagnosisHypothesis` model; module pending |
-| 18 | Treatment Planning | 4 | ✅ | Plans + goals, auto-supersede; verified |
-| 19 | Intervention Tracking | 4 | 📝 | `Intervention`/`Homework` models; module pending |
+| 15 | Documents | 3 | 🟡 | Metadata module + admin capability card; blob storage + malware scan = infra |
+| 16 | Psychometrics | 4 | ✅ | Classical + IRT EAP + CAT; safety-item → Risk; **InstrumentLicenseGrant** 403 gate; ItemTranslation provenance |
+| 17 | Diagnosis Support | 4 | ✅ | Hypotheses + coded Formulations; clinician UI `/diagnosis`; no AI write path |
+| 18 | Treatment Planning | 4 | ✅ | Plans + goals, auto-supersede; SMART goals; review cadence; **client acknowledgment** |
+| 19 | Intervention Tracking | 4 | ✅ | Intervention/Homework API + patient home complete loop |
 | 20 | Outcomes | 4 | ✅ | Measures + per-construct trend; verified |
 | 21 | Risk & Crisis | 4 | ✅ | Escalation workflow (human-only resolve), append-only safety plans, break-glass (1h grant + HIGH audit + DPO-alert event), `/risk` board; verified live |
 | 22 | AI Gateway | 5 | ✅ | Governed offline stub, recommendation ledger, PENDING human-decision gate; verified |
@@ -41,7 +43,7 @@ Living traceability of every bounded context against the roadmap (`technical/13-
 | 27 | Reports | 6 | ✅ | Executive + manager reports (live aggregates), persisted `Report` + audit; verified live |
 | 28 | National Analytics | 6 | ✅ | De-identified population metrics with **k-anonymity suppression** (cohort < 5 → value nulled); verified live (US-VT suppressed) |
 | 29 | CRM & Referrals | 2 | ✅ | Pipeline + referrers + lead→client convert; backend + `/crm` UI; verified |
-| 30 | Communications Hub | 3 | ✅ | Telephony/SMS (offline-stub provider), async voice/video `MediaMessage`, RTC token, `/comms` UI; verified live (call→COMPLETED, SMS→DELIVERED, media round-trip, client 403) |
+| 30 | Communications Hub | 3 | ✅ | Telephony/SMS (offline-stub + Twilio activate-on-key), SMS templates, STOP/opt-out + quiet hours, inbound Twilio webhook, async MediaMessage, RTC token, `/comms` UI |
 
 ## Phase completion
 

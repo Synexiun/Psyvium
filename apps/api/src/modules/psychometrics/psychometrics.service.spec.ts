@@ -52,6 +52,12 @@ function makeService(versionOverrides: Record<string, unknown> = {}) {
     published: true,
     cutoffs: CUTOFFS_WITH_SAFETY_ITEM,
     items: DEFAULT_ITEMS,
+    questionnaire: {
+      id: 'q_1',
+      code: 'PHQ9',
+      scoringMethod: 'CLASSICAL',
+      licensing: 'PUBLIC_DOMAIN',
+    },
     ...versionOverrides,
   };
   const client = { id: 'client_1', tenantId: 'tenant_demo', userId: 'user_client_1', riskLevel: 'LOW' };
@@ -107,6 +113,7 @@ function makeService(versionOverrides: Record<string, unknown> = {}) {
   const prisma = {
     questionnaireVersion: { findUnique: jest.fn().mockResolvedValue(version) },
     client: { findFirst: jest.fn().mockResolvedValue(client) },
+    instrumentLicenseGrant: { findUnique: jest.fn().mockResolvedValue(null) },
     $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(tx)),
   };
 
@@ -226,7 +233,12 @@ describe('PsychometricsService.administer — safety-item hook', () => {
 describe('PsychometricsService.administer — IRT latent-trait scoring', () => {
   const IRT_VERSION = {
     cutoffs: CUTOFFS_WITHOUT_SAFETY_ITEMS,
-    questionnaire: { scoringMethod: 'IRT' },
+    questionnaire: {
+      id: 'q_irt',
+      code: 'ANX-IRT',
+      scoringMethod: 'IRT',
+      licensing: 'PUBLIC_DOMAIN',
+    },
     items: [
       // GRM anxiety-style items, categories 0..3, answers keyed by linkId
       { id: 'item_1', linkId: 'q1', responseOptions: [0, 1, 2, 3], parameters: [{ model: 'GRM', a: 1.8, b: 0, c: null, thresholds: [-1.2, 0, 1.1] }] },
@@ -277,7 +289,12 @@ describe('PsychometricsService.administer — IRT latent-trait scoring', () => {
   it('IRT-declared instrument WITHOUT calibrated parameters falls back to classical (theta null)', async () => {
     const { svc, createdScores } = makeService({
       cutoffs: CUTOFFS_WITHOUT_SAFETY_ITEMS,
-      questionnaire: { scoringMethod: 'IRT' },
+      questionnaire: {
+        id: 'q_irt',
+        code: 'ANX-IRT',
+        scoringMethod: 'IRT',
+        licensing: 'PUBLIC_DOMAIN',
+      },
       items: [{ id: 'item_1', linkId: 'q1', responseOptions: [0, 1, 2, 3], parameters: [] }],
     });
 
@@ -290,7 +307,12 @@ describe('PsychometricsService.administer — IRT latent-trait scoring', () => {
   it('refuses to score against a mis-calibrated parameter row (fails loudly, nothing persisted)', async () => {
     const { svc, tx } = makeService({
       cutoffs: CUTOFFS_WITHOUT_SAFETY_ITEMS,
-      questionnaire: { scoringMethod: 'IRT' },
+      questionnaire: {
+        id: 'q_irt',
+        code: 'ANX-IRT',
+        scoringMethod: 'IRT',
+        licensing: 'PUBLIC_DOMAIN',
+      },
       items: [
         // Unordered GRM thresholds — a wrong theta is worse than none.
         { id: 'item_1', linkId: 'q1', responseOptions: [0, 1, 2, 3], parameters: [{ model: 'GRM', a: 1.8, b: 0, c: null, thresholds: [1.1, -0.2, 0.4] }] },

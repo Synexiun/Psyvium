@@ -893,6 +893,42 @@ async function main() {
     },
   });
 
+  // SMS templates (doc 15) — demo keys for appointment reminder + crisis follow-up.
+  await prisma.smsTemplate.upsert({
+    where: {
+      tenantId_key_locale: { tenantId: tenant.id, key: 'appt_reminder', locale: 'en' },
+    },
+    update: {
+      body: 'Hi {name}, your session is on {date}. Reply C to confirm.',
+      active: true,
+    },
+    create: {
+      id: 'sms_tpl_appt_reminder_en',
+      tenantId: tenant.id,
+      key: 'appt_reminder',
+      locale: 'en',
+      body: 'Hi {name}, your session is on {date}. Reply C to confirm.',
+      active: true,
+    },
+  });
+  await prisma.smsTemplate.upsert({
+    where: {
+      tenantId_key_locale: { tenantId: tenant.id, key: 'caring_contact', locale: 'en' },
+    },
+    update: {
+      body: 'Hi {name}, checking in after your recent visit. Reply if you need support; crisis line is always available.',
+      active: true,
+    },
+    create: {
+      id: 'sms_tpl_caring_contact_en',
+      tenantId: tenant.id,
+      key: 'caring_contact',
+      locale: 'en',
+      body: 'Hi {name}, checking in after your recent visit. Reply if you need support; crisis line is always available.',
+      active: true,
+    },
+  });
+
   const commsThreadId = `thread_${client.id}_${psyA.id}`;
 
   await prisma.callSession.upsert({

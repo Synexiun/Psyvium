@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type {
   AuthPrincipal,
   CreateTreatmentPlanInput,
@@ -33,6 +33,8 @@ type PlanRow = {
   reviewDate: Date | null;
   status: string;
   version: number;
+  clientAcknowledgedAt: Date | null;
+  clientAcknowledgedBy: string | null;
   createdAt: Date;
   goals: GoalRow[];
 };
@@ -146,6 +148,49 @@ export class TreatmentPlanningService {
   }
 
   /**
+   * Client collaborative acknowledgment of an active treatment plan
+   * (WAVE CR / Joint Commission care-plan partnership). Idempotent: a second
+   * ack returns the existing timestamp rather than rewriting history.
+   */
+  async acknowledge(principal: AuthPrincipal, planId: string): Promise<TreatmentPlanDto> {
+    const plan = await this.prisma.treatmentPlan.findFirst({
+      where: { id: planId, tenantId: principal.tenantId, deletedAt: null },
+      include: { goals: true },
+    });
+    if (!plan) throw new NotFoundException('Treatment plan not found');
+    if (plan.status !== 'active') {
+      throw new BadRequestException('Only an active treatment plan can be acknowledged');
+    }
+
+    if (plan.clientAcknowledgedAt) {
+      return this.toDto(plan as PlanRow);
+    }
+
+    const updated = await this.prisma.treatmentPlan.update({
+      where: { id: plan.id },
+      data: {
+        clientAcknowledgedAt: new Date(),
+        clientAcknowledgedBy: principal.userId,
+      },
+      include: { goals: true },
+    });
+
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'plan.client_acknowledged',
+      entityType: 'TreatmentPlan',
+      entityId: updated.id,
+      after: {
+        clientId: updated.clientId,
+        clientAcknowledgedAt: updated.clientAcknowledgedAt?.toISOString() ?? null,
+      },
+    });
+
+    return this.toDto(updated as PlanRow);
+  }
+
+  /**
    * Overdue-review tracking (audit finding #4). Active plans whose
    * `reviewDate` has already passed — the Joint Commission care-plan-cycle
    * gap the audit flagged. Manager/clinician-gated (PLAN_READ) at the
@@ -215,6 +260,10 @@ export class TreatmentPlanningService {
       reviewDate: plan.reviewDate ? plan.reviewDate.toISOString() : null,
       status: plan.status,
       version: plan.version,
+      clientAcknowledgedAt: plan.clientAcknowledgedAt
+        ? plan.clientAcknowledgedAt.toISOString()
+        : null,
+      clientAcknowledgedBy: plan.clientAcknowledgedBy ?? null,
       goals: plan.goals.map((g) => this.toGoalDto(g)),
       createdAt: plan.createdAt.toISOString(),
     };

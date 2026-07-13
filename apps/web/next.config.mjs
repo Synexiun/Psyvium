@@ -19,14 +19,22 @@ const nextConfig = {
   // the workspace dependency @vpsy/contracts.
   outputFileTracingRoot: path.join(__dirname, '../../'),
   async rewrites() {
+    // Render `fromService.property: host` returns a bare hostname. Normalize
+    // so rewrites always hit an absolute URL with a scheme.
+    const rawApi =
+      process.env.API_URL ??
+      (process.env.NODE_ENV === 'production'
+        ? 'https://psyvium-api.onrender.com'
+        : 'http://localhost:4000');
+    const apiBase =
+      rawApi.startsWith('http://') || rawApi.startsWith('https://')
+        ? rawApi
+        : `https://${rawApi}`;
+
     return [
       {
         source: '/api/backend/:path*',
-        // API_URL wins when set; production builds otherwise default to the
-        // live API (a localhost fallback in prod becomes Vercel's
-        // DNS_HOSTNAME_RESOLVED_PRIVATE 404 — observed on the first deploy);
-        // dev keeps localhost.
-        destination: `${process.env.API_URL ?? (process.env.NODE_ENV === 'production' ? 'https://psyvium-api.onrender.com' : 'http://localhost:4000')}/api/v1/:path*`,
+        destination: `${apiBase}/api/v1/:path*`,
       },
     ];
   },

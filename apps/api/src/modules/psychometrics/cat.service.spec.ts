@@ -73,7 +73,12 @@ function makeHarness(opts: {
     id: 'qv_cat',
     published: opts.published ?? true,
     cutoffs: opts.cutoffs ?? CUTOFFS,
-    questionnaire: { scoringMethod: opts.scoringMethod ?? 'CAT' },
+    questionnaire: {
+      id: 'q_cat',
+      code: 'CAT-DEMO',
+      scoringMethod: opts.scoringMethod ?? 'CAT',
+      licensing: 'PUBLIC_DOMAIN',
+    },
     items: opts.items,
   };
   const client = {
@@ -151,6 +156,7 @@ function makeHarness(opts: {
   const prisma = {
     questionnaireVersion: { findUnique: jest.fn().mockResolvedValue(version) },
     client: { findFirst: jest.fn().mockResolvedValue(client) },
+    instrumentLicenseGrant: { findUnique: jest.fn().mockResolvedValue(null) },
     questionnaireResponse: {
       findFirst: jest.fn().mockImplementation(({ where }: any) => {
         const r = createdResponses.find((x) => x.id === where.id) ?? null;

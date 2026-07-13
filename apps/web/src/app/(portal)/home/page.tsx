@@ -154,6 +154,24 @@ export default function PatientHomePage() {
 
   const [rescheduleBusy, setRescheduleBusy] = useState(false);
   const [rescheduleMsg, setRescheduleMsg] = useState<string | null>(null);
+  const [planAckBusy, setPlanAckBusy] = useState(false);
+  const [planAckMsg, setPlanAckMsg] = useState<string | null>(null);
+
+  async function acknowledgePlan() {
+    const planId = summary?.activePlan?.id;
+    if (!planId || planAckBusy) return;
+    setPlanAckBusy(true);
+    setPlanAckMsg(null);
+    try {
+      await api.acknowledgeTreatmentPlan(planId);
+      setPlanAckMsg(t('patient.planAckDone'));
+      reload();
+    } catch {
+      setPlanAckMsg(t('patient.planAckFailed'));
+    } finally {
+      setPlanAckBusy(false);
+    }
+  }
 
   async function requestReschedule() {
     if (!nextAppt || rescheduleBusy) return;
@@ -273,8 +291,8 @@ export default function PatientHomePage() {
               </div>
             </section>
 
-            {/* Active-plan goal progress */}
-            {goals.length > 0 && (
+            {/* Active-plan goal progress + collaborative acknowledgment */}
+            {goals.length > 0 && summary.activePlan && (
               <section className="card p-5">
                 <p className="eyebrow">{t('patient.planEyebrow')}</p>
                 <h2 className="mt-1.5 font-display text-lg font-medium text-mist">{t('patient.planTitle')}</h2>
@@ -295,6 +313,31 @@ export default function PatientHomePage() {
                     </li>
                   ))}
                 </ul>
+                <div className="mt-5 border-t border-line/15 pt-4">
+                  {summary.activePlan.clientAcknowledgedAt ? (
+                    <p className="text-xs text-mist/55" role="status">
+                      {t('patient.planAcked', {
+                        date: fmtDate(summary.activePlan.clientAcknowledgedAt),
+                      })}
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={planAckBusy}
+                        onClick={() => void acknowledgePlan()}
+                      >
+                        {planAckBusy ? t('patient.planAcking') : t('patient.planAck')}
+                      </button>
+                      {planAckMsg && (
+                        <p role="status" className="text-xs text-mist/60">
+                          {planAckMsg}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
               </section>
             )}
 

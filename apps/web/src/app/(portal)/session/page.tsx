@@ -712,6 +712,13 @@ export default function SessionWorkspacePage() {
                     <li className="text-sm text-mist/40">—</li>
                   )}
                 </ul>
+                {summary.activePlan && (
+                  <p className="mt-4 text-xs text-mist/50" role="status">
+                    {summary.activePlan.clientAcknowledgedAt
+                      ? t('workspace.planAcked')
+                      : t('workspace.planPendingAck')}
+                  </p>
+                )}
               </section>
             </div>
           </div>

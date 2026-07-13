@@ -5,14 +5,18 @@ import {
   createMediaMessageSchema,
   Permission,
   rtcTokenRequestSchema,
+  sendSmsByTemplateSchema,
   sendSmsSchema,
   setSmsOptOutSchema,
+  upsertSmsTemplateSchema,
   type AuthPrincipal,
   type ClickToCallInput,
   type CreateMediaMessageInput,
   type RtcTokenInput,
+  type SendSmsByTemplateInput,
   type SendSmsInput,
   type SetSmsOptOutInput,
+  type UpsertSmsTemplateInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
@@ -41,6 +45,31 @@ export class CommunicationsController {
   @RequirePermissions(Permission.COMMS_WRITE)
   sendSms(@CurrentUser() user: AuthPrincipal, @Body(new ZodValidationPipe(sendSmsSchema)) body: SendSmsInput) {
     return this.comms.sendSms(user, body);
+  }
+
+  /** Send SMS using a tenant-scoped template key (doc 15). */
+  @Post('sms/template')
+  @RequirePermissions(Permission.COMMS_WRITE)
+  sendSmsByTemplate(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(sendSmsByTemplateSchema)) body: SendSmsByTemplateInput,
+  ) {
+    return this.comms.sendSmsByTemplate(user, body);
+  }
+
+  @Get('sms/templates')
+  @RequirePermissions(Permission.COMMS_READ)
+  listSmsTemplates(@CurrentUser() user: AuthPrincipal) {
+    return this.comms.listSmsTemplates(user);
+  }
+
+  @Post('sms/templates')
+  @RequirePermissions(Permission.COMMS_WRITE)
+  upsertSmsTemplate(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(upsertSmsTemplateSchema)) body: UpsertSmsTemplateInput,
+  ) {
+    return this.comms.upsertSmsTemplate(user, body);
   }
 
   /** Staff STOP/START preference management (TCPA-style suppression list). */

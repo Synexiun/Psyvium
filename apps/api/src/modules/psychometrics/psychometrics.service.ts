@@ -21,6 +21,7 @@ import { ScoringService, type ClassicalScoreResult, type SafetyItemHit } from '.
 import { IrtScoringService, type IrtScorableItem } from './irt-scoring.service';
 import { ScoringMethod, type IrtScoreResult } from '@vpsy/contracts';
 import { assertAuthorizedAssessmentTarget } from './assessment-target-access';
+import { assertActiveInstrumentLicense } from './instrument-license';
 import { validateSafetyConfiguration, validateStaticResponses } from './response-validation';
 
 /** Marker embedded in `PsychometricScore.interpretation` by `buildScoreComputation` when demo/uncalibrated item parameters were used — no dedicated schema column exists (schema.prisma out of scope), so detection is string-based. */
@@ -128,7 +129,7 @@ export class PsychometricsService {
     const version = await this.prisma.questionnaireVersion.findUnique({
       where: { id: input.versionId },
       include: {
-        questionnaire: { select: { scoringMethod: true } },
+        questionnaire: { select: { id: true, code: true, scoringMethod: true, licensing: true } },
         items: {
           where: { active: true },
           orderBy: { orderIndex: 'asc' },
@@ -139,6 +140,11 @@ export class PsychometricsService {
     if (!version || !version.published) {
       throw new NotFoundException('Published questionnaire version not found');
     }
+    if (!version.questionnaire) {
+      throw new NotFoundException('Questionnaire for version not found');
+    }
+    // Doc 07 §2 — LICENSED/PROPRIETARY fail closed without an active grant.
+    await assertActiveInstrumentLicense(this.prisma, principal.tenantId, version.questionnaire);
 
     const client = await this.prisma.client.findFirst({
       where: { id: input.clientId, tenantId: principal.tenantId },

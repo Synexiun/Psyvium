@@ -313,11 +313,20 @@ export const api = {
   createTreatmentPlan: (payload: unknown) =>
     request('/treatment-plans', { method: 'POST', body: JSON.stringify(payload) }),
   activePlan: (clientId: string) => request<any>(`/treatment-plans/client/${clientId}/active`),
+  acknowledgeTreatmentPlan: (planId: string) =>
+    request(`/treatment-plans/${planId}/acknowledge`, { method: 'POST' }),
   updateGoalProgress: (goalId: string, progressPct: number, status?: string) =>
     request('/treatment-plans/goals/progress', {
       method: 'PATCH',
       body: JSON.stringify({ goalId, progressPct, status }),
     }),
+  sendSmsByTemplate: (payload: {
+    toE164: string;
+    templateKey: string;
+    locale?: string;
+    vars?: Record<string, string | number>;
+    clientId?: string;
+  }) => request('/comms/sms/template', { method: 'POST', body: JSON.stringify(payload) }),
 
   administerAssessment: (versionId: string, clientId: string, answers: Record<string, number>) =>
     request('/assessments/responses', {

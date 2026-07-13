@@ -23,7 +23,13 @@ const principal: AuthPrincipal = {
 function makeService() {
   const prisma: any = {
     client: { findFirst: jest.fn().mockResolvedValue({ id: 'client_1', tenantId: 'tenant_demo' }) },
-    treatmentPlan: { create: jest.fn(), updateMany: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+    treatmentPlan: {
+      create: jest.fn(),
+      updateMany: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn(),
+      update: jest.fn(),
+    },
   };
   // create() runs inside `this.prisma.$transaction(async (tx) => ...)` — hand
   // the callback the same mock object so `tx.treatmentPlan.*` calls land on
@@ -181,6 +187,8 @@ describe('TreatmentPlanningService.listOverdueReviews (audit finding #4)', () =>
       reviewDate: new Date('2020-01-01T00:00:00.000Z'),
       status: 'active',
       version: 1,
+      clientAcknowledgedAt: null,
+      clientAcknowledgedBy: null,
       createdAt: new Date('2019-01-01T00:00:00.000Z'),
       goals: [],
     };
@@ -199,5 +207,58 @@ describe('TreatmentPlanningService.listOverdueReviews (audit finding #4)', () =>
     );
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('plan_overdue');
+  });
+});
+
+describe('TreatmentPlanningService.acknowledge — client collaborative acknowledgment', () => {
+  const activePlan = {
+    id: 'plan_1',
+    clientId: 'client_1',
+    problemList: [],
+    sessionFrequency: 'weekly',
+    riskPlan: null,
+    reviewDate: new Date('2026-10-01T00:00:00.000Z'),
+    status: 'active',
+    version: 1,
+    clientAcknowledgedAt: null as Date | null,
+    clientAcknowledgedBy: null as string | null,
+    createdAt: new Date('2026-07-01T00:00:00.000Z'),
+    goals: [],
+  };
+
+  it('records acknowledgment on an active plan', async () => {
+    const { svc, prisma, audit } = makeService();
+    prisma.treatmentPlan.findFirst.mockResolvedValue({ ...activePlan });
+    prisma.treatmentPlan.update.mockImplementation(({ data }: any) =>
+      Promise.resolve({
+        ...activePlan,
+        clientAcknowledgedAt: data.clientAcknowledgedAt,
+        clientAcknowledgedBy: data.clientAcknowledgedBy,
+      }),
+    );
+
+    const dto = await svc.acknowledge(principal, 'plan_1');
+
+    expect(dto.clientAcknowledgedAt).not.toBeNull();
+    expect(dto.clientAcknowledgedBy).toBe(principal.userId);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'plan.client_acknowledged', entityId: 'plan_1' }),
+    );
+  });
+
+  it('is idempotent when the plan is already acknowledged', async () => {
+    const { svc, prisma, audit } = makeService();
+    const ackedAt = new Date('2026-07-02T12:00:00.000Z');
+    prisma.treatmentPlan.findFirst.mockResolvedValue({
+      ...activePlan,
+      clientAcknowledgedAt: ackedAt,
+      clientAcknowledgedBy: 'user_client_1',
+    });
+
+    const dto = await svc.acknowledge(principal, 'plan_1');
+
+    expect(prisma.treatmentPlan.update).not.toHaveBeenCalled();
+    expect(dto.clientAcknowledgedAt).toBe(ackedAt.toISOString());
+    expect(audit.record).not.toHaveBeenCalled();
   });
 });

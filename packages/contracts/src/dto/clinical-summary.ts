@@ -35,6 +35,7 @@ export const clinicalSummaryPlanSchema = z.object({
   id: z.string(),
   status: z.string(),
   version: z.number().int(),
+  clientAcknowledgedAt: z.string().nullable().optional(),
   goals: z.array(clinicalSummaryGoalSchema),
 });
 

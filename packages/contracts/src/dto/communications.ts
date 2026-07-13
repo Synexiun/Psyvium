@@ -118,6 +118,36 @@ export const sendSmsSchema = z.object({
 });
 export type SendSmsInput = z.infer<typeof sendSmsSchema>;
 
+/**
+ * Send SMS by tenant template key (doc 15). Body placeholders use `{name}`
+ * style — only string/number vars are interpolated; missing keys stay as-is.
+ */
+export const sendSmsByTemplateSchema = z.object({
+  toE164: z.string().min(3).max(20),
+  templateKey: z.string().min(1).max(100),
+  locale: z.string().min(2).max(16).default('en'),
+  vars: z.record(z.string(), z.union([z.string(), z.number()])).default({}),
+  clientId: z.string().optional(),
+});
+export type SendSmsByTemplateInput = z.infer<typeof sendSmsByTemplateSchema>;
+
+export const upsertSmsTemplateSchema = z.object({
+  key: z.string().min(1).max(100),
+  body: z.string().min(1).max(1600),
+  locale: z.string().min(2).max(16).default('en'),
+  active: z.boolean().default(true),
+});
+export type UpsertSmsTemplateInput = z.infer<typeof upsertSmsTemplateSchema>;
+
+export const smsTemplateSchema = z.object({
+  id: z.string(),
+  key: z.string(),
+  body: z.string(),
+  locale: z.string(),
+  active: z.boolean(),
+});
+export type SmsTemplateDto = z.infer<typeof smsTemplateSchema>;
+
 export const createMediaMessageSchema = z.object({
   threadId: z.string().min(1),
   kind: z.nativeEnum(MediaKind),

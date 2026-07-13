@@ -66,6 +66,9 @@ export const treatmentPlanSchema = z.object({
   reviewDate: z.string().nullable(),
   status: z.string(),
   version: z.number().int(),
+  /** Client collaborative acknowledgment of the active plan (WAVE CR). */
+  clientAcknowledgedAt: z.string().nullable(),
+  clientAcknowledgedBy: z.string().nullable(),
   goals: z.array(goalSchema),
   createdAt: z.string(),
 });

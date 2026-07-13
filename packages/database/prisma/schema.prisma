@@ -862,6 +862,9 @@ model TreatmentPlan {
   reviewDate          DateTime?
   status              String    @default("active")
   version             Int       @default(1)
+  /// Client collaborative acknowledgment of the active plan (WAVE CR follow-up).
+  clientAcknowledgedAt DateTime?
+  clientAcknowledgedBy String?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   deletedAt           DateTime?
@@ -1198,6 +1201,28 @@ model Questionnaire {
   createdAt     DateTime      @default(now())
 
   versions QuestionnaireVersion[]
+  licenseGrants InstrumentLicenseGrant[]
+}
+
+/// Tenant-scoped grant to administer a LICENSED/PROPRIETARY instrument
+/// (doc 07 §2). PUBLIC_DOMAIN instruments need no grant. Absent/expired/
+/// revoked grants fail closed with 403.
+model InstrumentLicenseGrant {
+  id              String    @id @default(cuid())
+  tenantId        String
+  questionnaireId String
+  questionnaire   Questionnaire @relation(fields: [questionnaireId], references: [id])
+  /// ACTIVE | EXPIRED | REVOKED
+  status          String    @default("ACTIVE")
+  jurisdiction    String?
+  effectiveFrom   DateTime  @default(now())
+  expiresAt       DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([tenantId, questionnaireId])
+  @@index([tenantId, status])
 }
 
 model QuestionnaireVersion {
@@ -1768,6 +1793,21 @@ model CallSession {
 
   @@index([tenantId, clientId])
   @@index([tenantId, status])
+}
+
+/// Reusable SMS templates (doc 15). Body may include `{name}` style placeholders.
+model SmsTemplate {
+  id        String   @id @default(cuid())
+  tenantId  String
+  key       String
+  body      String
+  locale    String   @default("en")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, key, locale])
+  @@index([tenantId, active])
 }
 
 /// SMS lifecycle QUEUED → SENT → DELIVERED | FAILED (`15` §4.3).

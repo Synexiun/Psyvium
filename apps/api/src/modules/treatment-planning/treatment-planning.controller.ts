@@ -59,6 +59,19 @@ export class TreatmentPlanningController {
   }
 
   /**
+   * Client collaborative acknowledgment of an active treatment plan.
+   * Clients acknowledge their own plan; clinicians/managers may record
+   * acknowledgment after a collaborative review session.
+   */
+  @Post(':planId/acknowledge')
+  @UseGuards(ClinicalAccessGuard)
+  @RequireClinicalAccess({ resource: 'plan', source: 'params', key: 'planId' })
+  @RequirePermissions(Permission.PLAN_READ)
+  acknowledge(@CurrentUser() user: AuthPrincipal, @Param('planId') planId: string) {
+    return this.plans.acknowledge(user, planId);
+  }
+
+  /**
    * Overdue-review tracking (Joint Commission care-plan standard, audit
    * finding #4): active plans whose reviewDate has passed. Manager/clinician
    * gated — PLAN_READ is held by PSYCHOLOGIST, MANAGER, and SUPERVISOR.

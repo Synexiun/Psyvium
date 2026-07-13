@@ -10,10 +10,13 @@ import type {
   MediaMessageDto,
   RtcTokenDto,
   RtcTokenInput,
+  SendSmsByTemplateInput,
   SendSmsInput,
   SetSmsOptOutInput,
   SmsMessageDto,
   SmsOptOutDto,
+  SmsTemplateDto,
+  UpsertSmsTemplateInput,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
@@ -544,6 +547,115 @@ export class CommunicationsService {
    */
   async sendSms(principal: AuthPrincipal, input: SendSmsInput): Promise<SmsMessageDto> {
     this.assertStaffRole(principal, 'send an SMS');
+    return this.dispatchOutboundSms(principal, {
+      toE164: input.toE164,
+      body: input.body,
+      clientId: input.clientId,
+    });
+  }
+
+  /**
+   * Resolve a tenant `SmsTemplate` and send (doc 15). Falls back to `en`
+   * when the requested locale has no active row.
+   */
+  async sendSmsByTemplate(
+    principal: AuthPrincipal,
+    input: SendSmsByTemplateInput,
+  ): Promise<SmsMessageDto> {
+    this.assertStaffRole(principal, 'send a templated SMS');
+    const tenantId = principal.tenantId;
+    const locale = input.locale ?? 'en';
+
+    let template = await this.prisma.smsTemplate.findUnique({
+      where: {
+        tenantId_key_locale: { tenantId, key: input.templateKey, locale },
+      },
+    });
+    if ((!template || !template.active) && locale !== 'en') {
+      template = await this.prisma.smsTemplate.findUnique({
+        where: {
+          tenantId_key_locale: { tenantId, key: input.templateKey, locale: 'en' },
+        },
+      });
+    }
+    if (!template || !template.active) {
+      throw new NotFoundException(`Active SMS template "${input.templateKey}" not found`);
+    }
+
+    const body = this.interpolateTemplate(template.body, input.vars ?? {});
+    return this.dispatchOutboundSms(principal, {
+      toE164: input.toE164,
+      body,
+      clientId: input.clientId,
+      templateId: template.id,
+    });
+  }
+
+  async listSmsTemplates(principal: AuthPrincipal): Promise<SmsTemplateDto[]> {
+    this.assertStaffRole(principal, 'list SMS templates');
+    const rows = await this.prisma.smsTemplate.findMany({
+      where: { tenantId: principal.tenantId },
+      orderBy: [{ key: 'asc' }, { locale: 'asc' }],
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      key: r.key,
+      body: r.body,
+      locale: r.locale,
+      active: r.active,
+    }));
+  }
+
+  async upsertSmsTemplate(
+    principal: AuthPrincipal,
+    input: UpsertSmsTemplateInput,
+  ): Promise<SmsTemplateDto> {
+    this.assertStaffRole(principal, 'manage SMS templates');
+    const locale = input.locale ?? 'en';
+    const row = await this.prisma.smsTemplate.upsert({
+      where: {
+        tenantId_key_locale: {
+          tenantId: principal.tenantId,
+          key: input.key,
+          locale,
+        },
+      },
+      create: {
+        tenantId: principal.tenantId,
+        key: input.key,
+        body: input.body,
+        locale,
+        active: input.active ?? true,
+      },
+      update: {
+        body: input.body,
+        active: input.active ?? true,
+      },
+    });
+
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: 'comms.sms_template.upserted',
+      entityType: 'SmsTemplate',
+      entityId: row.id,
+      after: { key: row.key, locale: row.locale, active: row.active },
+    });
+
+    return {
+      id: row.id,
+      key: row.key,
+      body: row.body,
+      locale: row.locale,
+      active: row.active,
+    };
+  }
+
+  /** Shared outbound SMS pipeline (free-text + templated). */
+  private async dispatchOutboundSms(
+    principal: AuthPrincipal,
+    input: { toE164: string; body: string; clientId?: string; templateId?: string },
+  ): Promise<SmsMessageDto> {
     const tenantId = principal.tenantId;
 
     await this.assertSmsAllowed(tenantId, input.toE164);
@@ -561,6 +673,7 @@ export class CommunicationsService {
         fromE164: fromNumber.e164,
         body: input.body,
         clientId: input.clientId,
+        templateId: input.templateId,
         status: 'QUEUED',
       },
     });
@@ -595,7 +708,11 @@ export class CommunicationsService {
       action: sms.status === 'DELIVERED' ? 'comms.sms.delivered' : 'comms.sms.failed',
       entityType: 'SmsMessage',
       entityId: sms.id,
-      after: { status: sms.status, clientId: sms.clientId },
+      after: {
+        status: sms.status,
+        clientId: sms.clientId,
+        templateId: input.templateId ?? null,
+      },
     });
 
     if (sms.status === 'DELIVERED') {
@@ -603,6 +720,19 @@ export class CommunicationsService {
     }
 
     return this.toSmsMessageDto(sms as SmsMessageRow);
+  }
+
+  /** Replace `{key}` placeholders; unknown keys left intact. */
+  private interpolateTemplate(
+    body: string,
+    vars: Record<string, string | number>,
+  ): string {
+    return body.replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key: string) => {
+      if (Object.prototype.hasOwnProperty.call(vars, key)) {
+        return String(vars[key]);
+      }
+      return match;
+    });
   }
 
   /**
