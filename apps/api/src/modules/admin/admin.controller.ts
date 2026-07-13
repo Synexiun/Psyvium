@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   createClinicSchema,
@@ -18,6 +18,8 @@ import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { AdminService } from './admin.service';
+import { SecurityStatusService } from '../../common/crypto/security-status.service';
+import { FieldReencryptService } from '../../common/crypto/field-reencrypt.service';
 
 /**
  * Admin Configuration (contexts 2/27, Wave E). `Permission.ADMIN_CONFIG` is
@@ -31,7 +33,11 @@ import { AdminService } from './admin.service';
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @RequirePermissions(Permission.ADMIN_CONFIG)
 export class AdminController {
-  constructor(private readonly admin: AdminService) {}
+  constructor(
+    private readonly admin: AdminService,
+    private readonly security: SecurityStatusService,
+    private readonly reencrypt: FieldReencryptService,
+  ) {}
 
   @Get('tenant')
   getTenant(@CurrentUser() user: AuthPrincipal) {
@@ -80,5 +86,31 @@ export class AdminController {
     @Body(new ZodValidationPipe(upsertFeatureFlagSchema)) body: UpsertFeatureFlagInput,
   ) {
     return this.admin.upsertFeatureFlag(user, body);
+  }
+
+  /**
+   * PHI staging security posture: cipher, SIEM, documents, audit chain tip,
+   * and restore-drill checklist probes.
+   */
+  @Get('security/status')
+  securityStatus(@CurrentUser() user: AuthPrincipal) {
+    return this.security.status(user);
+  }
+
+  /**
+   * Run one field re-encrypt batch for the caller's tenant (or all tenants when
+   * scope=all). Use after DEK rotation while previous keys remain configured.
+   */
+  @Post('security/field-reencrypt')
+  fieldReencrypt(
+    @CurrentUser() user: AuthPrincipal,
+    @Query('scope') scope?: string,
+    @Query('sealPlaintext') sealPlaintext?: string,
+  ) {
+    const seal = sealPlaintext === 'true' || sealPlaintext === '1';
+    if (scope === 'all') {
+      return this.reencrypt.runForAllTenants({ sealPlaintext: seal });
+    }
+    return this.reencrypt.runForTenant(user.tenantId, { sealPlaintext: seal });
   }
 }

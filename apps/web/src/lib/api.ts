@@ -745,6 +745,58 @@ export const api = {
   adminFeatureFlags: () => request<FeatureFlagDto[]>('/admin/feature-flags'),
   adminUpsertFeatureFlag: (payload: UpsertFeatureFlagInput) =>
     request<FeatureFlagDto>('/admin/feature-flags', { method: 'PUT', body: JSON.stringify(payload) }),
+  adminSecurityStatus: () =>
+    request<{
+      fieldCipher: { active: boolean; activeKeyId: string | null; provider: string };
+      reencrypt: {
+        cipherActive: boolean;
+        activeKeyId: string | null;
+        backgroundEnabled: boolean;
+        sealPlaintextDefault: boolean;
+        tables: string[];
+      };
+      siem: { configured: boolean; webhook: boolean; local: boolean };
+      documents: {
+        mode: string;
+        canUpload: boolean;
+        canDownload: boolean;
+        virusScan: boolean;
+        message: string;
+      };
+      auditChain: {
+        ok: boolean;
+        checked: number;
+        tipHash: string | null;
+        tipId: string | null;
+        brokenAt: string | null;
+        reason: string | null;
+      };
+      restoreDrill: {
+        items: Array<{
+          id: string;
+          label: string;
+          automated: boolean;
+          status: 'pass' | 'fail' | 'warn' | 'manual';
+        }>;
+        automatedPass: number;
+        automatedTotal: number;
+        readyForAttestation: boolean;
+      };
+    }>('/admin/security/status'),
+  adminFieldReencrypt: (opts?: { scope?: 'tenant' | 'all'; sealPlaintext?: boolean }) => {
+    const q = new URLSearchParams();
+    if (opts?.scope === 'all') q.set('scope', 'all');
+    if (opts?.sealPlaintext) q.set('sealPlaintext', 'true');
+    const qs = q.toString();
+    return request<{
+      active: boolean;
+      activeKeyId: string | null;
+      scanned: number;
+      rewritten: number;
+      skipped: number;
+      errors: number;
+    }>(`/admin/security/field-reencrypt${qs ? `?${qs}` : ''}`, { method: 'POST' });
+  },
 
   // ── Registry (contexts 3/4 — person master records; cursor-paginated {items,nextCursor}) ──
   regListClients: (cursor?: string, take = 25) =>

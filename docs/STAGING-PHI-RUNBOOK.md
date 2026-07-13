@@ -186,14 +186,35 @@ pnpm --filter @vpsy/api start
 
 ---
 
+## 8b. Field re-encrypt after DEK rotation
+
+```bash
+# Keep previous key for decrypt, set new active key, then:
+VPSY_FIELD_REENCRYPT=true
+# Optional background seal of leftover plaintext:
+# VPSY_FIELD_REENCRYPT_SEAL_PLAINTEXT=true
+
+# Or one-shot (ADMIN):
+# POST /api/v1/admin/security/field-reencrypt
+# POST /api/v1/admin/security/field-reencrypt?sealPlaintext=true
+# POST /api/v1/admin/security/field-reencrypt?scope=all
+```
+
+Covers SessionNote, SafetyPlan, Message, SmsMessage, Intake free text, User.mfaSecret.
+
+## 8c. Restore drill
+
+See [`RESTORE-DRILL-CHECKLIST.md`](RESTORE-DRILL-CHECKLIST.md) and Admin → Security posture.
+
+---
+
 ## 8. Still required for production PHI GA
 
 - BAAs (host, email, SMS, video, AI, storage)  
 - External pen test + remediation  
 - Dedicated stream worker for multi-GB fleets (API in-process S3→ClamAV is fine for staging/single-node)  
-- Automated re-encrypt job after DEK rotation (kid dual-key decrypt is live; bulk re-write is ops)  
 - True WORM (S3 Object Lock / immutable SIEM) — JSONL + webhook are staging-grade  
-- PITR restore drill  
+- Operator-attested PITR restore drill (checklist + automated probes are live)  
 - Clinical algorithm sign-off for marketed claims  
 - No shared demo seed on any public DB 
 

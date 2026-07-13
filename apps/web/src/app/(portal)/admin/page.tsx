@@ -62,6 +62,7 @@ export default function AdminPage() {
           <FlagsCard flags={flags} />
           <ClinicsCard clinics={clinics} />
           <DocumentsCapabilityCard />
+          <SecurityStatusCard />
         </div>
       )}
 
@@ -154,6 +155,157 @@ function TenantCard({ tenant, onSaved }: { tenant: TenantDto; onSaved: () => voi
 }
 
 /* ────────────────────── Feature flags (kill switch) ────────────────────── */
+
+function SecurityStatusCard() {
+  const { t } = useI18n();
+  const status = useResource(() => api.adminSecurityStatus(), []);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  async function runReencrypt(sealPlaintext: boolean) {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const result = await api.adminFieldReencrypt({ sealPlaintext });
+      setMsg({
+        text: t('security.reencryptOk', {
+          rewritten: result.rewritten,
+          scanned: result.scanned,
+          errors: result.errors,
+        }),
+        ok: result.errors === 0,
+      });
+      status.reload();
+    } catch {
+      setMsg({ text: t('security.reencryptFailed'), ok: false });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const drill = status.data?.restoreDrill;
+  const chain = status.data?.auditChain;
+  const cipher = status.data?.fieldCipher;
+  const siem = status.data?.siem;
+
+  return (
+    <section className="card p-5 xl:col-span-2">
+      <p className="eyebrow">{t('security.eyebrow')}</p>
+      <h2 className="mt-1.5 font-display text-lg text-mist">{t('security.title')}</h2>
+      <p className="mt-2 text-xs leading-relaxed text-mist/55">{t('security.intro')}</p>
+
+      {status.loading && <SkeletonCard className="mt-4" />}
+      {!!status.error && (
+        <ErrorPanel className="mt-4" message={t('adminPortal.errNetwork')} onRetry={status.reload} />
+      )}
+
+      {status.data && (
+        <div className="mt-4 space-y-4">
+          <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-[11px]">
+            <li className="card-inset p-3">
+              <p className="text-mist/50">{t('security.cipher')}</p>
+              <p className="mt-1 font-medium text-mist">
+                {cipher?.active ? t('security.active') : t('security.inactive')}
+                {cipher?.activeKeyId ? ` · ${cipher.activeKeyId}` : ''}
+              </p>
+              <p className="mt-0.5 font-mono text-[10px] text-haze/80" dir="ltr">
+                {cipher?.provider}
+              </p>
+            </li>
+            <li className="card-inset p-3">
+              <p className="text-mist/50">{t('security.siem')}</p>
+              <p className="mt-1 font-medium text-mist">
+                {siem?.configured ? t('security.configured') : t('security.notConfigured')}
+              </p>
+              <p className="mt-0.5 text-mist/45">
+                {[siem?.webhook ? 'webhook' : null, siem?.local ? 'local' : null].filter(Boolean).join(' · ') || '—'}
+              </p>
+            </li>
+            <li className="card-inset p-3">
+              <p className="text-mist/50">{t('security.auditChain')}</p>
+              <p className={`mt-1 font-medium ${chain?.ok ? 'text-teal-soft' : 'text-risk'}`}>
+                {chain?.ok ? t('security.chainOk') : t('security.chainBroken')}
+              </p>
+              <p className="mt-0.5 font-mono text-[10px] text-haze/80" dir="ltr">
+                {chain?.tipHash ? `${chain.tipHash.slice(0, 12)}…` : '—'}
+              </p>
+            </li>
+            <li className="card-inset p-3">
+              <p className="text-mist/50">{t('security.restoreDrill')}</p>
+              <p className="mt-1 font-medium text-mist">
+                {drill ? `${drill.automatedPass}/${drill.automatedTotal}` : '—'}
+              </p>
+              <p className="mt-0.5 text-mist/45">
+                {drill?.readyForAttestation ? t('security.readyAttest') : t('security.notReadyAttest')}
+              </p>
+            </li>
+          </ul>
+
+          {drill && (
+            <div>
+              <p className="eyebrow">{t('security.drillEyebrow')}</p>
+              <ul className="mt-2 space-y-1.5">
+                {drill.items.map((item) => (
+                  <li
+                    key={item.id}
+                    className="flex flex-wrap items-start justify-between gap-2 card-inset px-3 py-2 text-xs"
+                  >
+                    <span className="text-mist/80">{item.label}</span>
+                    <span
+                      className={`chip shrink-0 ${
+                        item.status === 'pass'
+                          ? 'border-teal/40 text-teal-soft'
+                          : item.status === 'fail'
+                            ? 'border-risk/40 text-risk'
+                            : item.status === 'warn'
+                              ? 'chip-signal'
+                              : ''
+                      }`}
+                    >
+                      {t(`security.status.${item.status}`)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void runReencrypt(false)}
+              disabled={busy || !cipher?.active}
+              className="btn-primary px-3 py-2 text-xs disabled:opacity-60"
+            >
+              {busy ? t('security.reencrypting') : t('security.reencryptRotate')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void runReencrypt(true)}
+              disabled={busy || !cipher?.active}
+              className="btn-ghost px-3 py-2 text-xs disabled:opacity-60"
+            >
+              {t('security.reencryptSeal')}
+            </button>
+            <button
+              type="button"
+              onClick={() => status.reload()}
+              disabled={busy}
+              className="btn-ghost px-3 py-2 text-xs disabled:opacity-60"
+            >
+              {t('common.refresh')}
+            </button>
+          </div>
+          {msg && (
+            <p role="status" className={`text-sm ${msg.ok ? 'text-teal-soft' : 'text-risk'}`}>
+              {msg.text}
+            </p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
 
 function DocumentsCapabilityCard() {
   const { t, fmtDate } = useI18n();

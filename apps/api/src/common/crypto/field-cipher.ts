@@ -35,7 +35,7 @@ export interface FieldEnvelope {
   c: string;
 }
 
-function isFieldEnvelope(value: unknown): value is FieldEnvelope {
+export function isFieldEnvelope(value: unknown): value is FieldEnvelope {
   return (
     typeof value === 'object' &&
     value !== null &&
@@ -43,6 +43,29 @@ function isFieldEnvelope(value: unknown): value is FieldEnvelope {
     typeof (value as Record<string, unknown>).n === 'string' &&
     typeof (value as Record<string, unknown>).c === 'string'
   );
+}
+
+/** Kid on a JSON envelope, or null if not encrypted. */
+export function fieldEnvelopeKid(value: unknown): string | null {
+  if (!isFieldEnvelope(value)) return null;
+  return value.kid ?? '';
+}
+
+/** Kid on a string column that may hold a stringified envelope. */
+export function stringFieldEnvelopeKid(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return fieldEnvelopeKid(parsed);
+  } catch {
+    return null;
+  }
+}
+
+/** Kid on String[] shim (length-1 stringified envelope). */
+export function stringArrayFieldEnvelopeKid(value: string[] | null | undefined): string | null {
+  if (!Array.isArray(value) || value.length !== 1) return null;
+  return stringFieldEnvelopeKid(value[0]);
 }
 
 /**
@@ -138,6 +161,29 @@ export class FieldCipherService implements OnModuleInit {
   /** Active encrypt key id (null when encryption disabled). */
   get activeKeyId(): string | null {
     return this.keyId;
+  }
+
+  /** Wait for boot-time key resolution (call before isActive in async workers). */
+  async whenReady(): Promise<void> {
+    await this.ready();
+  }
+
+  /**
+   * True when a stored value should be rewritten under the active kid.
+   * - Not encrypted + sealPlaintext → true (first-time seal)
+   * - Encrypted with missing/other kid → true
+   * - Already active kid → false
+   * Awaits boot-time key resolution (same as encrypt/decrypt).
+   */
+  async needsReencrypt(
+    kid: string | null,
+    opts: { sealPlaintext?: boolean } = {},
+  ): Promise<boolean> {
+    await this.ready();
+    if (!this.isActive || !this.keyId) return false;
+    if (kid === null) return Boolean(opts.sealPlaintext);
+    // kid === '' means legacy envelope without kid field
+    return kid !== this.keyId;
   }
 
   private async ready(): Promise<void> {
