@@ -63,6 +63,8 @@ export default function AdminPage() {
           <ClinicsCard clinics={clinics} />
           <DocumentsCapabilityCard />
           <SecurityStatusCard />
+          <ClinicalGovernanceCard />
+          <VendorBaaCard />
         </div>
       )}
 
@@ -364,6 +366,128 @@ function SecurityStatusCard() {
               {msg.text}
             </p>
           )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ClinicalGovernanceCard() {
+  const { t } = useI18n();
+  const reg = useResource(() => api.adminClinicalValidationRegister(), []);
+  const summary = reg.data?.summary;
+  const entries = reg.data?.entries ?? [];
+
+  return (
+    <section className="card p-5 xl:col-span-2">
+      <p className="eyebrow">{t('governance.clinicalEyebrow')}</p>
+      <h2 className="mt-1.5 font-display text-lg text-mist">{t('governance.clinicalTitle')}</h2>
+      <p className="mt-2 text-xs leading-relaxed text-mist/55">{t('governance.clinicalIntro')}</p>
+      {reg.loading && <SkeletonCard className="mt-4" />}
+      {!!reg.error && (
+        <ErrorPanel className="mt-4" message={t('adminPortal.errNetwork')} onRetry={reg.reload} />
+      )}
+      {summary && (
+        <div className="mt-4 space-y-3">
+          <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4 text-[11px]">
+            <li className="card-inset p-2 text-center">
+              <p className="text-mist/50">{t('governance.total')}</p>
+              <p className="mt-1 font-medium text-mist">{summary.total}</p>
+            </li>
+            <li className="card-inset p-2 text-center">
+              <p className="text-mist/50">{t('governance.marketable')}</p>
+              <p className="mt-1 font-medium text-mist">{summary.marketableCount}</p>
+            </li>
+            <li className="card-inset p-2 text-center">
+              <p className="text-mist/50">{t('governance.engComplete')}</p>
+              <p className="mt-1 font-medium text-mist">
+                {summary.byStatus['engineering-complete'] ?? 0}
+              </p>
+            </li>
+            <li className="card-inset p-2 text-center">
+              <p className="text-mist/50">{t('governance.honest')}</p>
+              <p className={`mt-1 font-medium ${summary.governanceHonest ? 'text-teal-soft' : 'text-risk'}`}>
+                {summary.governanceHonest ? t('documents.yes') : t('documents.no')}
+              </p>
+            </li>
+          </ul>
+          <ul className="space-y-2">
+            {entries.map((e) => (
+              <li key={e.id} className="card-inset flex flex-wrap items-start justify-between gap-2 p-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-mist">{e.title}</p>
+                  <p className="mt-0.5 font-mono text-[11px] text-mist/50" dir="ltr">
+                    {e.id} · v{e.version}
+                  </p>
+                  {e.notes && <p className="mt-1 text-[11px] text-mist/45">{e.notes}</p>}
+                </div>
+                <span
+                  className={`chip shrink-0 ${
+                    e.signOffStatus === 'signed'
+                      ? 'border-teal/40 text-teal-soft'
+                      : e.signOffStatus === 'engineering-complete'
+                        ? 'chip-signal'
+                        : ''
+                  }`}
+                >
+                  {e.signOffStatus}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function VendorBaaCard() {
+  const { t } = useI18n();
+  const reg = useResource(() => api.adminVendorBaaRegister(), []);
+  const summary = reg.data?.summary;
+  const entries = reg.data?.entries ?? [];
+
+  return (
+    <section className="card p-5 xl:col-span-2">
+      <p className="eyebrow">{t('governance.baaEyebrow')}</p>
+      <h2 className="mt-1.5 font-display text-lg text-mist">{t('governance.baaTitle')}</h2>
+      <p className="mt-2 text-xs leading-relaxed text-mist/55">{t('governance.baaIntro')}</p>
+      {reg.loading && <SkeletonCard className="mt-4" />}
+      {!!reg.error && (
+        <ErrorPanel className="mt-4" message={t('adminPortal.errNetwork')} onRetry={reg.reload} />
+      )}
+      {summary && (
+        <div className="mt-4 space-y-3">
+          <p className={`text-sm font-medium ${summary.productionPhiReady ? 'text-teal-soft' : 'text-signal-soft'}`}>
+            {summary.productionPhiReady
+              ? t('governance.baaReady')
+              : t('governance.baaBlocking', { n: summary.requiredNotSigned })}
+          </p>
+          <ul className="space-y-2">
+            {entries.map((e) => (
+              <li key={e.id} className="card-inset flex flex-wrap items-start justify-between gap-2 p-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-mist">{e.name}</p>
+                  <p className="mt-0.5 text-[11px] text-mist/50">
+                    {e.category}
+                    {e.dataClasses[0] ? ` · ${e.dataClasses[0]}` : ''}
+                  </p>
+                  {e.notes && <p className="mt-1 text-[11px] text-mist/45">{e.notes}</p>}
+                </div>
+                <span
+                  className={`chip shrink-0 ${
+                    e.baaOrDpa === 'signed'
+                      ? 'border-teal/40 text-teal-soft'
+                      : e.baaOrDpa === 'required-not-signed'
+                        ? 'border-risk/40 text-risk'
+                        : 'chip-signal'
+                  }`}
+                >
+                  {e.baaOrDpa}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </section>

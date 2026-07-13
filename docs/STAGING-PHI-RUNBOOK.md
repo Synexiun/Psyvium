@@ -223,14 +223,22 @@ See [`RESTORE-DRILL-CHECKLIST.md`](RESTORE-DRILL-CHECKLIST.md) and Admin → Sec
 
 ---
 
+## 8d. Clinical validation + BAA registers
+
+- Algorithms: [`CLINICAL-VALIDATION-REGISTER.md`](CLINICAL-VALIDATION-REGISTER.md) · `GET /admin/clinical/validation-register`  
+- Vendors: [`VENDOR-BAA-REGISTER.md`](VENDOR-BAA-REGISTER.md) · `GET /admin/compliance/vendors`  
+- Overrides: `VPSY_CLINICAL_SIGNOFF_JSON`, `VPSY_BAA_STATUS_JSON`  
+
+---
+
 ## 8. Still required for production PHI GA
 
-- BAAs (host, email, SMS, video, AI, storage)  
+- **Signed** BAAs/DPAs recorded in the vendor register (inventory is live; signatures are legal)  
 - External pen test execution + remediation (readiness pack: [`PEN-TEST-READINESS.md`](PEN-TEST-READINESS.md))  
 - Dedicated stream worker for multi-GB fleets (API in-process S3→ClamAV is fine for staging/single-node)  
 - Bucket-level Object Lock / compliance mode on SIEM S3 (app can send lock headers when enabled)  
 - Operator-attested PITR restore drill (checklist + automated probes are live)  
-- Clinical algorithm sign-off for marketed claims  
+- Clinical board **sign-off** for any marketed claims (register + overrides live)  
 - No shared demo seed on any public DB 
 
 ---

@@ -789,7 +789,63 @@ export const api = {
         ready: boolean;
       };
       productionFindings?: Array<{ id: string; severity: string; message: string }>;
+      clinicalValidation?: {
+        total: number;
+        marketableCount: number;
+        governanceHonest: boolean;
+        pendingSignOff: string[];
+        byStatus: Record<string, number>;
+      };
+      vendorBaa?: {
+        total: number;
+        signed: number;
+        requiredNotSigned: number;
+        underNegotiation: number;
+        productionPhiReady: boolean;
+        blockingVendors: string[];
+      };
     }>('/admin/security/status'),
+  adminClinicalValidationRegister: () =>
+    request<{
+      entries: Array<{
+        id: string;
+        title: string;
+        version: string;
+        signOffStatus: string;
+        marketingAllowed: boolean;
+        marketedClaims: string[];
+        citations: string[];
+        notes?: string;
+        signedBy?: string;
+        signedAt?: string;
+      }>;
+      summary: {
+        total: number;
+        marketableCount: number;
+        governanceHonest: boolean;
+        byStatus: Record<string, number>;
+      };
+    }>('/admin/clinical/validation-register'),
+  adminVendorBaaRegister: () =>
+    request<{
+      entries: Array<{
+        id: string;
+        name: string;
+        category: string;
+        baaOrDpa: string;
+        dataClasses: string[];
+        notes?: string;
+        signedAt?: string;
+        agreementRef?: string;
+      }>;
+      summary: {
+        total: number;
+        signed: number;
+        requiredNotSigned: number;
+        productionPhiReady: boolean;
+        blockingVendors: string[];
+      };
+    }>('/admin/compliance/vendors'),
   adminFieldReencrypt: (opts?: { scope?: 'tenant' | 'all'; sealPlaintext?: boolean }) => {
     const q = new URLSearchParams();
     if (opts?.scope === 'all') q.set('scope', 'all');

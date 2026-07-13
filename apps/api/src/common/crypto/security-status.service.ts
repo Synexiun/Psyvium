@@ -6,6 +6,11 @@ import {
   evaluateProductionSecurity,
 } from '../config/production-security';
 import { SiemExportService } from '../siem/siem-export.service';
+import {
+  clinicalValidationSummary,
+  listClinicalValidationRegister,
+} from '../clinical/clinical-validation-register';
+import { listVendorBaaRegister, vendorBaaSummary } from '../compliance/vendor-baa-register';
 import { FieldCipherService } from './field-cipher';
 import { FieldReencryptService } from './field-reencrypt.service';
 
@@ -41,6 +46,10 @@ export class SecurityStatusService {
 
     const penPass = penTest.filter((i) => i.status === 'pass').length;
     const penFail = penTest.filter((i) => i.status === 'fail').length;
+    const clinicalEntries = listClinicalValidationRegister();
+    const clinical = clinicalValidationSummary(clinicalEntries);
+    const vendors = listVendorBaaRegister();
+    const baa = vendorBaaSummary(vendors);
 
     return {
       fieldCipher: {
@@ -73,6 +82,13 @@ export class SecurityStatusService {
         ready: penFail === 0,
       },
       productionFindings,
+      clinicalValidation: {
+        ...clinical,
+        pendingSignOff: clinicalEntries
+          .filter((e) => e.signOffStatus === 'engineering-complete' || e.signOffStatus === 'internal-clinical-review')
+          .map((e) => e.id),
+      },
+      vendorBaa: baa,
     };
   }
 

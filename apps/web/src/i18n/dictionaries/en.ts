@@ -641,6 +641,22 @@ const en = {
     errStatus: 'Could not load the audit trail ({status}).',
     errNetwork: 'Could not reach the server for the audit trail.',
   },
+  governance: {
+    clinicalEyebrow: 'Clinical governance',
+    clinicalTitle: 'Algorithm validation register',
+    clinicalIntro:
+      'Deterministic clinical procedures and their sign-off status. Marketing claims are allowed only when status is signed. Defaults are engineering-complete — not a regulatory certificate. Record sign-offs via VPSY_CLINICAL_SIGNOFF_JSON.',
+    total: 'Algorithms',
+    marketable: 'Marketable',
+    engComplete: 'Eng. complete',
+    honest: 'Governance honest',
+    baaEyebrow: 'Subprocessors',
+    baaTitle: 'BAA / DPA register',
+    baaIntro:
+      'Vendors that may process PHI or special-category data. Status is operational honesty until legal updates VPSY_BAA_STATUS_JSON. Production PHI GA needs zero required-not-signed rows.',
+    baaReady: 'All required BAAs marked signed.',
+    baaBlocking: '{n} required BAAs still unsigned.',
+  },
   security: {
     eyebrow: 'Security posture',
     title: 'PHI staging readiness',

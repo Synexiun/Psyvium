@@ -20,6 +20,14 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { AdminService } from './admin.service';
 import { SecurityStatusService } from '../../common/crypto/security-status.service';
 import { FieldReencryptService } from '../../common/crypto/field-reencrypt.service';
+import {
+  clinicalValidationSummary,
+  listClinicalValidationRegister,
+} from '../../common/clinical/clinical-validation-register';
+import {
+  listVendorBaaRegister,
+  vendorBaaSummary,
+} from '../../common/compliance/vendor-baa-register';
 
 /**
  * Admin Configuration (contexts 2/27, Wave E). `Permission.ADMIN_CONFIG` is
@@ -112,5 +120,25 @@ export class AdminController {
       return this.reencrypt.runForAllTenants({ sealPlaintext: seal });
     }
     return this.reencrypt.runForTenant(user.tenantId, { sealPlaintext: seal });
+  }
+
+  /**
+   * Clinical algorithm validation register — engineering status + governance
+   * sign-off (VPSY_CLINICAL_SIGNOFF_JSON). Marketing claims only when signed.
+   */
+  @Get('clinical/validation-register')
+  clinicalValidationRegister() {
+    const entries = listClinicalValidationRegister();
+    return { entries, summary: clinicalValidationSummary(entries) };
+  }
+
+  /**
+   * Subprocessor / BAA inventory. Status overrides via VPSY_BAA_STATUS_JSON.
+   * productionPhiReady is false until all required BAAs are marked signed.
+   */
+  @Get('compliance/vendors')
+  vendorBaaRegister() {
+    const entries = listVendorBaaRegister();
+    return { entries, summary: vendorBaaSummary(entries) };
   }
 }
