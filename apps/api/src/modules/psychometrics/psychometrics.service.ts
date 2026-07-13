@@ -490,9 +490,10 @@ export class PsychometricsService {
   async getResponse(principal: AuthPrincipal, id: string): Promise<QuestionnaireResponseDto> {
     const response = await this.prisma.questionnaireResponse.findFirst({
       where: { id, tenantId: principal.tenantId },
-      include: { score: true },
+      include: { score: true, client: { select: { id: true, userId: true } } },
     });
     if (!response) throw new NotFoundException('Response not found');
+    await assertAuthorizedAssessmentTarget(this.prisma, principal, response.client);
     return this.toDto(response, response.score);
   }
 
@@ -508,9 +509,17 @@ export class PsychometricsService {
   async aiInterpret(principal: AuthPrincipal, scoreId: string): Promise<PsychometricAiAssistResult> {
     const score = await this.prisma.psychometricScore.findFirst({
       where: { id: scoreId, tenantId: principal.tenantId },
-      include: { response: { include: { version: { include: { questionnaire: true } } } } },
+      include: {
+        response: {
+          include: {
+            version: { include: { questionnaire: true } },
+            client: { select: { id: true, userId: true } },
+          },
+        },
+      },
     });
     if (!score) throw new NotFoundException('Score not found');
+    await assertAuthorizedAssessmentTarget(this.prisma, principal, score.response.client);
 
     const synthetic = score.interpretation?.includes(SYNTHETIC_CALIBRATION_MARKER) ?? false;
 

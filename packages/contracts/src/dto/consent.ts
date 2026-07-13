@@ -32,6 +32,11 @@ export const grantConsentSchema = z.object({
   type: z.nativeEnum(ConsentType),
   version: z.string().min(1).max(20),
   documentUrl: z.string().url().optional(),
+  /** SHA-256 hex of the policy text presented to the client at grant time. */
+  policyContentHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/i)
+    .optional(),
 });
 export type GrantConsentInput = z.infer<typeof grantConsentSchema>;
 
@@ -43,5 +48,6 @@ export const consentSchema = z.object({
   grantedAt: z.string(),
   revokedAt: z.string().nullable(),
   documentUrl: z.string().nullable(),
+  policyContentHash: z.string().nullable().optional(),
 });
 export type ConsentDto = z.infer<typeof consentSchema>;

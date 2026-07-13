@@ -135,11 +135,26 @@ export class IntakeService {
         });
       }
 
-      // Reflect risk on the client record
-      await tx.client.update({
+      // Escalate-only risk reflection — never silently downgrade a prior
+      // HIGH/SEVERE level from assessments/prior intakes (matches psychometrics).
+      const SEVERITY_RANK: Record<string, number> = {
+        LOW: 1,
+        MODERATE: 2,
+        HIGH: 3,
+        SEVERE: 4,
+      };
+      const current = await tx.client.findFirst({
         where: { id: client.id },
-        data: { riskLevel: computed.severityBand },
+        select: { riskLevel: true },
       });
+      const nextRank = SEVERITY_RANK[computed.severityBand] ?? 0;
+      const prevRank = SEVERITY_RANK[current?.riskLevel ?? ''] ?? 0;
+      if (nextRank > prevRank) {
+        await tx.client.update({
+          where: { id: client.id },
+          data: { riskLevel: computed.severityBand },
+        });
+      }
 
       return { intake, screening, raisedFlagIds, raisedEscalations };
     });

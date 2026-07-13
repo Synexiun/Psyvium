@@ -9,7 +9,11 @@ const basePrincipal: AuthPrincipal = {
   permissions: [],
 };
 
-function harness(options: { psychologistId?: string | null; assignmentId?: string | null } = {}) {
+function harness(options: {
+  psychologistId?: string | null;
+  assignmentId?: string | null;
+  breakGlassId?: string | null;
+} = {}) {
   const prisma = {
     psychologist: {
       findFirst: jest.fn().mockResolvedValue(
@@ -26,6 +30,15 @@ function harness(options: { psychologistId?: string | null; assignmentId?: strin
           ? { id: 'assignment_1' }
           : options.assignmentId
             ? { id: options.assignmentId }
+            : null,
+      ),
+    },
+    breakGlassGrant: {
+      findFirst: jest.fn().mockResolvedValue(
+        options.breakGlassId === undefined
+          ? null
+          : options.breakGlassId
+            ? { id: options.breakGlassId }
             : null,
       ),
     },
@@ -73,8 +86,25 @@ describe('assessment target access', () => {
     );
   });
 
+  it('allows a psychologist with a live break-glass grant without an assignment', async () => {
+    const prisma = harness({ assignmentId: null, breakGlassId: 'bg_1' });
+    const principal = { ...basePrincipal, userId: 'psychologist_user', roles: [Role.PSYCHOLOGIST] };
+
+    await expect(
+      assertAuthorizedAssessmentTarget(prisma, principal, { id: 'client_1', userId: 'client_user' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('allows a manager for any client in the tenant', async () => {
+    const prisma = harness();
+    const principal = { ...basePrincipal, roles: [Role.MANAGER] };
+    await expect(
+      assertAuthorizedAssessmentTarget(prisma, principal, { id: 'client_1', userId: 'client_user' }),
+    ).resolves.toBeUndefined();
+  });
+
   it('blocks a psychologist who is not assigned to the target', async () => {
-    const prisma = harness({ assignmentId: null });
+    const prisma = harness({ assignmentId: null, breakGlassId: null });
     const principal = { ...basePrincipal, roles: [Role.PSYCHOLOGIST] };
 
     await expect(

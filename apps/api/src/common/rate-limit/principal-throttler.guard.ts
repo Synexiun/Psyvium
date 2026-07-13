@@ -52,12 +52,34 @@ export class PrincipalThrottlerGuard extends ThrottlerGuard {
           return `principal:${payload.tenantId}:${payload.sub}`;
         }
       } catch {
-        // Invalid/expired token: fall through to IP tracking. JwtAuthGuard
-        // (where applied) is the one that turns this into a 401 — rate
-        // limiting must stay a no-op on the authn decision itself.
+        // Invalid/expired token: fall through to cookie / IP.
+      }
+    }
+
+    // Browser portal uses httpOnly access cookie (doc 06 §3) — principal
+    // tracking must not collapse every staff user behind NAT to one IP bucket.
+    const cookieHeader: string | undefined = req.headers?.cookie ?? req.headers?.Cookie;
+    const cookieToken = this.readCookie(cookieHeader, 'vpsy_at');
+    if (cookieToken) {
+      try {
+        const payload = await this.jwt.verifyAsync(cookieToken, { secret: jwtAccessSecret() });
+        if (payload?.tenantId && payload?.sub) {
+          return `principal:${payload.tenantId}:${payload.sub}`;
+        }
+      } catch {
+        // Invalid/expired cookie: fall through to IP tracking.
       }
     }
 
     return `ip:${req.ip}`;
+  }
+
+  private readCookie(header: string | undefined, name: string): string | undefined {
+    if (!header) return undefined;
+    for (const part of header.split(';')) {
+      const [rawKey, ...rest] = part.trim().split('=');
+      if (rawKey === name) return decodeURIComponent(rest.join('='));
+    }
+    return undefined;
   }
 }

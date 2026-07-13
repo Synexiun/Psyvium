@@ -43,6 +43,9 @@ interface TokenUser {
   status: string;
   deletedAt: Date | null;
   mfaEnabled: boolean;
+  mfaRecoveryHashes?: unknown;
+  failedLoginCount?: number;
+  lockedUntil?: Date | null;
   tenant: { status: string };
   roleAssignments: Array<{
     clinicId: string | null;
@@ -173,37 +176,81 @@ export class AuthService {
     // the same response as bad credentials to avoid tenant/account enumeration.
     if (users.length !== 1) throw new UnauthorizedException('Invalid credentials');
     const user = users[0]!;
+
+    // Progressive lockout after failed password attempts (doc 06).
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      throw new UnauthorizedException('Account temporarily locked — try again later');
+    }
+
     const passwordValid = await argon2.verify(user.hashedPassword, input.password);
-    if (!passwordValid) throw new UnauthorizedException('Invalid credentials');
+    if (!passwordValid) {
+      const failures = (user.failedLoginCount ?? 0) + 1;
+      const lockAfter = 5;
+      const data: { failedLoginCount: number; lockedUntil?: Date } = { failedLoginCount: failures };
+      if (failures >= lockAfter) {
+        data.lockedUntil = new Date(Date.now() + 15 * 60_000);
+      }
+      await this.prisma.user.update({ where: { id: user.id }, data });
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if ((user.failedLoginCount ?? 0) > 0 || user.lockedUntil) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { failedLoginCount: 0, lockedUntil: null },
+      });
+    }
 
     let migratedSecret: string | undefined;
+    let consumedRecoveryHashes: string[] | undefined;
     if (user.mfaEnabled) {
       if (!input.totp) {
         throw new UnauthorizedException({ code: MfaErrorCode.MFA_REQUIRED, message: 'MFA code required' });
       }
-      const secret = await this.decryptMfaSecret(user.mfaSecret, user.tenantId);
-      const result = await verifyTotp({ secret, token: input.totp, epochTolerance: 30 });
-      if (!result.valid) {
-        throw new UnauthorizedException({ code: MfaErrorCode.MFA_INVALID, message: 'Invalid MFA code' });
+      const presented = input.totp.trim();
+      // Recovery codes are 12-char alphanumerics; TOTP is 6 digits.
+      if (presented.length > 6) {
+        const hashes = Array.isArray(user.mfaRecoveryHashes)
+          ? (user.mfaRecoveryHashes as string[])
+          : [];
+        const presentedHash = digestToken(presented.toLowerCase());
+        const idx = hashes.findIndex((h) => constantTimeHexEqual(h, presentedHash));
+        if (idx < 0) {
+          throw new UnauthorizedException({ code: MfaErrorCode.MFA_INVALID, message: 'Invalid MFA code' });
+        }
+        consumedRecoveryHashes = hashes.filter((_, i) => i !== idx);
+      } else {
+        const secret = await this.decryptMfaSecret(user.mfaSecret, user.tenantId);
+        const result = await verifyTotp({ secret, token: presented, epochTolerance: 30 });
+        if (!result.valid) {
+          throw new UnauthorizedException({ code: MfaErrorCode.MFA_INVALID, message: 'Invalid MFA code' });
+        }
+        // Lazy migration: once a legacy plaintext secret is successfully used,
+        // seal it with the field key in the same update as lastLoginAt.
+        const sealed = await this.cipher.encryptString(secret, user.tenantId);
+        if (this.cipher.isActive && sealed && sealed !== user.mfaSecret) migratedSecret = sealed;
       }
-      // Lazy migration: once a legacy plaintext secret is successfully used,
-      // seal it with the field key in the same update as lastLoginAt.
-      const sealed = await this.cipher.encryptString(secret, user.tenantId);
-      if (this.cipher.isActive && sealed && sealed !== user.mfaSecret) migratedSecret = sealed;
     }
 
     return TenantContext.run({ tenantId: user.tenantId }, async () => {
       await this.prisma.user.update({
         where: { id: user.id },
-        data: { lastLoginAt: new Date(), ...(migratedSecret ? { mfaSecret: migratedSecret } : {}) },
+        data: {
+          lastLoginAt: new Date(),
+          ...(migratedSecret ? { mfaSecret: migratedSecret } : {}),
+          ...(consumedRecoveryHashes
+            ? { mfaRecoveryHashes: consumedRecoveryHashes }
+            : {}),
+        },
       });
       const tokens = await this.issueTokens(user.id, metadata);
       await this.audit.record({
         tenantId: user.tenantId,
         actorId: user.id,
-        action: 'user.login',
+        action: consumedRecoveryHashes ? 'user.login_mfa_recovery' : 'user.login',
         entityType: 'User',
         entityId: user.id,
+        critical: Boolean(consumedRecoveryHashes),
       });
       return tokens;
     });
@@ -499,9 +546,14 @@ export class AuthService {
 
   /**
    * Completes enrollment and re-issues tokens so `mfaEnrollmentRequired`
-   * clears without a second login.
+   * clears without a second login. Also returns one-time recovery codes
+   * (plaintext shown once; only digests stored).
    */
-  async mfaVerify(userId: string, code: string, metadata: SessionMetadata = {}): Promise<AuthTokens> {
+  async mfaVerify(
+    userId: string,
+    code: string,
+    metadata: SessionMetadata = {},
+  ): Promise<AuthTokens & { recoveryCodes: string[] }> {
     const user = await this.activeUserOrThrow(userId);
     if (!user.mfaPendingSecret) {
       throw new BadRequestException('No MFA enrollment in progress — call /auth/mfa/enroll first');
@@ -512,9 +564,18 @@ export class AuthService {
       throw new UnauthorizedException({ code: MfaErrorCode.MFA_INVALID, message: 'Invalid MFA code' });
     }
     const sealed = await this.cipher.encryptString(secret, user.tenantId);
+    const recoveryCodes = Array.from({ length: 8 }, () =>
+      randomBytes(6).toString('hex'),
+    );
+    const mfaRecoveryHashes = recoveryCodes.map((c) => digestToken(c.toLowerCase()));
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { mfaEnabled: true, mfaSecret: sealed ?? secret, mfaPendingSecret: null },
+      data: {
+        mfaEnabled: true,
+        mfaSecret: sealed ?? secret,
+        mfaPendingSecret: null,
+        mfaRecoveryHashes,
+      },
     });
     await this.audit.record({
       tenantId: user.tenantId,
@@ -522,6 +583,7 @@ export class AuthService {
       action: 'user.mfa_enabled',
       entityType: 'User',
       entityId: user.id,
+      after: { recoveryCodeCount: recoveryCodes.length },
       critical: true,
     });
     // Revoke prior refresh family so the restricted pre-enrollment session dies.
@@ -531,7 +593,10 @@ export class AuthService {
         data: { revokedAt: new Date() },
       }),
     );
-    return TenantContext.run({ tenantId: user.tenantId }, () => this.issueTokens(user.id, metadata));
+    const tokens = await TenantContext.run({ tenantId: user.tenantId }, () =>
+      this.issueTokens(user.id, metadata),
+    );
+    return { ...tokens, recoveryCodes };
   }
 
   private async resolveRegistrationTenant(tenantSlug?: string): Promise<{ id: string }> {

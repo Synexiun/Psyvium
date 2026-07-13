@@ -684,9 +684,9 @@ export class CommunicationsService {
       data: { status: result.status === 'SENT' ? 'SENT' : 'FAILED', providerRef: result.providerRef },
     });
 
-    if (sms.status === 'SENT') {
-      // Offline stub simulates the carrier delivery receipt synchronously —
-      // no network round-trip, deterministic outcome every run.
+    // Offline stub has no carrier DLR — simulate receipt for the stub only.
+    // Live Twilio stays SENT until a delivery-status webhook promotes it.
+    if (sms.status === 'SENT' && this.sms instanceof OfflineStubAdapter) {
       sms = await this.prisma.smsMessage.update({ where: { id: sms.id }, data: { status: 'DELIVERED' } });
     }
 

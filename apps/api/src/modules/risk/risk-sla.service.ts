@@ -125,12 +125,32 @@ export class RiskSlaService {
     })) as SweepEscalationRow[];
     if (unassigned.length === 0) return;
 
-    const onCall = await this.prisma.psychologist.findFirst({
-      where: { tenantId, acceptingClients: true, deletedAt: null },
+    // Credential-eligible pool only: verified active license, active malpractice,
+    // non-expired, active user — never least-loaded alone.
+    const now = new Date();
+    const candidates = await this.prisma.psychologist.findMany({
+      where: {
+        tenantId,
+        acceptingClients: true,
+        deletedAt: null,
+        user: { status: 'ACTIVE', deletedAt: null },
+        credentials: {
+          some: {
+            verificationStatus: 'verified',
+            malpracticeStatus: 'active',
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+          },
+        },
+      },
       orderBy: { currentCaseload: 'asc' },
+      take: 20,
+      select: { id: true, userId: true, currentCaseload: true, caseloadCap: true },
     });
+    const onCall = candidates.find((p) => p.caseloadCap <= 0 || p.currentCaseload < p.caseloadCap);
     if (!onCall) {
-      this.logger.warn(`No active on-call psychologist available for tenant ${tenantId} SEVERE auto-assign`);
+      this.logger.warn(
+        `No credential-eligible on-call psychologist available for tenant ${tenantId} SEVERE auto-assign`,
+      );
       return;
     }
 
@@ -148,7 +168,7 @@ export class RiskSlaService {
         entityId: esc.id,
         after: {
           assignedTo: onCall.userId,
-          reason: `on-call fallback: unassigned SEVERE past ${ESCALATION_AUTO_ASSIGN_AFTER_MINUTES}min`,
+          reason: `on-call fallback: unassigned SEVERE past ${ESCALATION_AUTO_ASSIGN_AFTER_MINUTES}min (credential-eligible)`,
         },
         critical: true,
       });

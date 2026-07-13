@@ -35,6 +35,8 @@ jobs:
       # CI-only throwaway secrets (must be >=16 chars — the API refuses to boot without them).
       JWT_ACCESS_SECRET: ci-only-access-secret-not-for-production
       JWT_REFRESH_SECRET: ci-only-refresh-secret-not-for-production
+      # Explicit opt-in for shared demo seed passwords (never set in real PHI).
+      ALLOW_DEMO_SEED: 'true'
       NODE_OPTIONS: --max-old-space-size=4096
 
     steps:

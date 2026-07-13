@@ -119,6 +119,7 @@ enum RiskType {
   MANIA
   SEVERE_SUBSTANCE
   MEDICAL_EMERGENCY
+  CLINICAL_DETERIORATION
 }
 
 enum RiskSource {
@@ -337,6 +338,11 @@ model User {
   mfaEnabled     Boolean    @default(false)
   mfaSecret      String?
   mfaPendingSecret String?
+  /// SHA-256 digests of one-time MFA recovery codes (never plaintext).
+  mfaRecoveryHashes Json     @default("[]")
+  /// Progressive lockout after failed password attempts.
+  failedLoginCount Int       @default(0)
+  lockedUntil    DateTime?
   locale         String     @default("en")
   timezone       String     @default("UTC")
   status         UserStatus @default(ACTIVE)
@@ -500,6 +506,8 @@ model Consent {
   grantedAt   DateTime    @default(now())
   revokedAt   DateTime?
   documentUrl String?
+  /// SHA-256 of the policy text presented at grant time (enumeration-safe proof).
+  policyContentHash String?
 
   @@index([clientId, type])
 }
@@ -795,6 +803,7 @@ model SessionNote {
   amendsVersionId String?
   amendmentReason String?
 
+  @@unique([sessionId, version])
   @@index([sessionId])
   @@index([planId])
 }
@@ -1043,6 +1052,7 @@ model SafetyPlan {
   createdAt            DateTime  @default(now())
   deletedAt            DateTime?
 
+  @@unique([clientId, version])
   @@index([clientId])
 }
 

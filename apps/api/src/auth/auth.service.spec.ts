@@ -326,9 +326,15 @@ describe('AuthService — MFA enrollment lifecycle', () => {
     const tokens = await svc.mfaVerify(USER_ID, '123456');
     expect(tokens.accessToken).toBe('access-token');
     expect(tokens.principal?.mfaEnrollmentRequired).toBe(false);
+    expect(tokens.recoveryCodes).toHaveLength(8);
     expect(prisma.user.update).toHaveBeenCalledWith({
       where: { id: USER_ID },
-      data: { mfaEnabled: true, mfaSecret: 'encrypted:PENDINGSECRET', mfaPendingSecret: null },
+      data: expect.objectContaining({
+        mfaEnabled: true,
+        mfaSecret: 'encrypted:PENDINGSECRET',
+        mfaPendingSecret: null,
+        mfaRecoveryHashes: expect.any(Array),
+      }),
     });
     expect(prisma.refreshSession.updateMany).toHaveBeenCalled();
     expect(prisma.refreshSession.create).toHaveBeenCalled();

@@ -507,6 +507,17 @@ export class RiskService {
       critical: true,
     });
 
+    // Durable outbox so DPO alert never depends on post-commit process memory.
+    await this.prisma.$transaction(async (tx) => {
+      await this.bus.publishDurable(tx, Events.BreakGlassInvoked, principal.tenantId, {
+        grantId: grant.id,
+        clientId: grant.clientId,
+        invokedBy: grant.invokedBy,
+        reason: grant.reason,
+        expiresAt: expiresAt.toISOString(),
+      });
+    });
+    // Immediate in-process DPO/on-call seam (logger + subscriber hooks).
     await this.bus.publish(Events.BreakGlassInvoked, principal.tenantId, {
       grantId: grant.id,
       clientId: grant.clientId,

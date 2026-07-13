@@ -431,6 +431,14 @@ describe('PsychometricsService.getVersionItems — locale-aware item read path',
  * de-identified/coded signals reach the AI Gateway.
  */
 describe('PsychometricsService.aiInterpret — Psychometric Interpretation ai-assist', () => {
+  // Manager role bypasses assignment ABAC for interpret tests.
+  const principal = {
+    userId: 'user_manager',
+    tenantId: 'tenant_demo',
+    roles: [Role.MANAGER],
+    permissions: [],
+  };
+
   function scoreRow(overrides: Partial<{ id: string; interpretation: string | null }> = {}) {
     return {
       id: overrides.id ?? 'score_1',
@@ -443,6 +451,7 @@ describe('PsychometricsService.aiInterpret — Psychometric Interpretation ai-as
       response: {
         id: 'resp_1',
         clientId: 'client_1',
+        client: { id: 'client_1', userId: 'user_client_1' },
         version: {
           id: 'qv_1',
           questionnaire: { id: 'q_1', code: 'PHQ-9' },
@@ -452,7 +461,12 @@ describe('PsychometricsService.aiInterpret — Psychometric Interpretation ai-as
   }
 
   function makeAiInterpretService(score: ReturnType<typeof scoreRow> | null) {
-    const prisma = { psychometricScore: { findFirst: jest.fn().mockResolvedValue(score) } };
+    const prisma = {
+      psychometricScore: { findFirst: jest.fn().mockResolvedValue(score) },
+      psychologist: { findFirst: jest.fn().mockResolvedValue(null) },
+      assignment: { findFirst: jest.fn().mockResolvedValue(null) },
+      breakGlassGrant: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
     const ai = {
       interpretScore: jest.fn().mockResolvedValue({
         interpretation: 'assistive text',

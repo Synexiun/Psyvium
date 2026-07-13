@@ -116,7 +116,12 @@ function makeService() {
   };
   const audit = { record: jest.fn() };
   const bus = { publish: jest.fn() };
-  const svc = new MessagingService(prisma as any, audit as any, bus as any);
+  const cipher = {
+    encryptString: jest.fn(async (v: string) => v),
+    decryptString: jest.fn(async (v: string) => v),
+    isActive: false,
+  };
+  const svc = new MessagingService(prisma as any, audit as any, bus as any, cipher as any);
   return { svc, prisma, audit, bus, threadRow, messageRow, assignmentRow };
 }
 

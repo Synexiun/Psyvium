@@ -1,14 +1,19 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type {
-  AuthPrincipal,
-  OutcomeAiAssistInput,
-  OutcomeAiAssistResult,
-  OutcomeMeasureDto,
-  OutcomeTrend,
-  RecordOutcomeMeasureInput,
+import {
+  computeEscalationSlaDueAt,
+  RiskSource,
+  RiskType,
+  SeverityBand,
+  type AuthPrincipal,
+  type OutcomeAiAssistInput,
+  type OutcomeAiAssistResult,
+  type OutcomeMeasureDto,
+  type OutcomeTrend,
+  type RecordOutcomeMeasureInput,
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { EventBus, Events } from '../../common/events/event-bus.service';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 
 type MeasureRow = {
@@ -117,6 +122,7 @@ export class OutcomesService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly ai: AiGatewayService,
+    private readonly bus: EventBus,
   ) {}
 
   async record(principal: AuthPrincipal, input: RecordOutcomeMeasureInput): Promise<OutcomeMeasureDto> {
@@ -142,16 +148,93 @@ export class OutcomesService {
       },
     });
 
+    const dto = this.toDto(measure, previous);
+
+    // Reliable clinical deterioration must surface on the risk board — never silent.
+    if (dto.trend.classification === 'reliably-worsened') {
+      await this.raiseDeteriorationRisk(principal, input, measure.id, dto);
+    }
+
     await this.audit.record({
       tenantId: principal.tenantId,
       actorId: principal.userId,
       action: 'outcome.recorded',
       entityType: 'OutcomeMeasure',
       entityId: measure.id,
-      after: { construct: input.construct, value: input.value },
+      after: {
+        construct: input.construct,
+        value: input.value,
+        classification: dto.trend.classification,
+      },
+      critical: dto.trend.classification === 'reliably-worsened',
     });
 
-    return this.toDto(measure, previous);
+    return dto;
+  }
+
+  private async raiseDeteriorationRisk(
+    principal: AuthPrincipal,
+    input: RecordOutcomeMeasureInput,
+    measureId: string,
+    dto: OutcomeMeasureDto,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const openedAt = new Date();
+      const rf = await tx.riskFlag.create({
+        data: {
+          tenantId: principal.tenantId,
+          clientId: input.clientId,
+          type: RiskType.CLINICAL_DETERIORATION,
+          severity: SeverityBand.HIGH,
+          source: RiskSource.CLINICIAN,
+          evidence: `Reliable clinical deterioration on ${input.construct} (RCI=${dto.trend.rci ?? 'n/a'})`,
+          evidenceDetail: {
+            construct: input.construct,
+            value: input.value,
+            rci: dto.trend.rci,
+            classification: dto.trend.classification,
+            measureId,
+          } as any,
+          status: 'ESCALATED',
+        },
+      });
+      const escalation = await tx.escalation.create({
+        data: {
+          tenantId: principal.tenantId,
+          riskFlagId: rf.id,
+          openedAt,
+          slaDueAt: computeEscalationSlaDueAt(SeverityBand.HIGH, openedAt),
+        },
+      });
+
+      const SEVERITY_RANK: Record<string, number> = {
+        LOW: 1,
+        MODERATE: 2,
+        HIGH: 3,
+        SEVERE: 4,
+      };
+      const client = await tx.client.findFirst({
+        where: { id: input.clientId },
+        select: { riskLevel: true },
+      });
+      const prev = SEVERITY_RANK[client?.riskLevel ?? ''] ?? 0;
+      if (SEVERITY_RANK.HIGH > prev) {
+        await tx.client.update({
+          where: { id: input.clientId },
+          data: { riskLevel: SeverityBand.HIGH },
+        });
+      }
+
+      await this.bus.publishDurable(tx, Events.RiskFlagRaised, principal.tenantId, {
+        riskFlagId: rf.id,
+        clientId: input.clientId,
+      });
+      await this.bus.publishDurable(tx, Events.EscalationRaised, principal.tenantId, {
+        escalationId: escalation.id,
+        riskFlagId: rf.id,
+        clientId: input.clientId,
+      });
+    });
   }
 
   async listForClient(principal: AuthPrincipal, clientId: string): Promise<OutcomeMeasureDto[]> {

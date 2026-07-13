@@ -1,6 +1,7 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { AssignmentStatus, Role, type AuthPrincipal, type ClinicalSummary } from '@vpsy/contracts';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import type { AuthPrincipal, ClinicalSummary } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { ClinicalAccessService } from '../../common/auth/clinical-access.service';
 import { WearablesService } from '../wearables/wearables.service';
 
 const EXCERPT_LENGTH = 140;
@@ -27,6 +28,7 @@ export class ClientsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly wearables: WearablesService,
+    private readonly clinicalAccess: ClinicalAccessService,
   ) {}
 
   /** The authenticated CLIENT's own summary, resolved via Client.userId. */
@@ -40,9 +42,8 @@ export class ClientsService {
   }
 
   /**
-   * A clinician's or manager's view of a specific client. ABAC-gated: the
-   * requester must either be MANAGER or the psychologist on an
-   * APPROVED/ACTIVE assignment for this client.
+   * A clinician's or manager's view of a specific client. ABAC-gated via the
+   * central ClinicalAccessService (assignment, break-glass, supervisor, manager).
    */
   async getClinicalSummary(principal: AuthPrincipal, clientId: string): Promise<ClinicalSummary> {
     const client = await this.prisma.client.findFirst({
@@ -51,31 +52,9 @@ export class ClientsService {
     });
     if (!client) throw new NotFoundException('Client not found');
 
-    await this.assertCanViewClient(principal, clientId);
+    await this.clinicalAccess.assertCanAccessClient(principal, clientId);
 
     return this.buildSummary(principal, client);
-  }
-
-  private async assertCanViewClient(principal: AuthPrincipal, clientId: string): Promise<void> {
-    if (principal.roles.includes(Role.MANAGER)) return;
-
-    const psychologist = await this.prisma.psychologist.findFirst({
-      where: { userId: principal.userId, tenantId: principal.tenantId },
-    });
-    const assignment = psychologist
-      ? await this.prisma.assignment.findFirst({
-          where: {
-            clientId,
-            tenantId: principal.tenantId,
-            psychologistId: psychologist.id,
-            status: { in: [AssignmentStatus.APPROVED, AssignmentStatus.ACTIVE] },
-          },
-        })
-      : null;
-
-    if (!assignment) {
-      throw new ForbiddenException('Not an assigned psychologist for this client');
-    }
   }
 
   private async buildSummary(principal: AuthPrincipal, client: ClientWithUser): Promise<ClinicalSummary> {

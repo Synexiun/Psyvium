@@ -18,6 +18,7 @@ type ConsentRow = {
   grantedAt: Date;
   revokedAt: Date | null;
   documentUrl: string | null;
+  policyContentHash?: string | null;
 };
 
 /**
@@ -43,6 +44,7 @@ export class ConsentService {
         type: input.type,
         version: input.version,
         documentUrl: input.documentUrl,
+        policyContentHash: input.policyContentHash,
       },
     });
 
@@ -52,7 +54,12 @@ export class ConsentService {
       action: 'consent.granted',
       entityType: 'Consent',
       entityId: consent.id,
-      after: { type: consent.type, version: consent.version },
+      after: {
+        type: consent.type,
+        version: consent.version,
+        policyContentHash: consent.policyContentHash ?? null,
+      },
+      critical: true,
     });
 
     return this.toDto(consent);
@@ -149,6 +156,7 @@ export class ConsentService {
       grantedAt: c.grantedAt.toISOString(),
       revokedAt: c.revokedAt ? c.revokedAt.toISOString() : null,
       documentUrl: c.documentUrl,
+      policyContentHash: c.policyContentHash ?? null,
     };
   }
 }

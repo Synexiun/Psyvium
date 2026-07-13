@@ -188,10 +188,37 @@ export class MatchingService implements OnModuleInit {
   async approve(principal: AuthPrincipal, input: ApproveAssignmentInput) {
     const assignment = await this.prisma.assignment.findFirst({
       where: { id: input.assignmentId, tenantId: principal.tenantId, deletedAt: null },
+      include: {
+        client: {
+          include: {
+            user: {
+              include: { roleAssignments: { select: { jurisdiction: true } } },
+            },
+          },
+        },
+      },
     });
     if (!assignment) throw new NotFoundException('Assignment not found');
     if (assignment.status !== AssignmentStatus.PROPOSED) {
       throw new ConflictException(`Assignment is already ${assignment.status}`);
+    }
+
+    // Re-check credential eligibility at approve time — manager authority is
+    // final, but never allows unlicensed / wrong-jurisdiction assignment.
+    const jurisdictions = this.clientJurisdictions(assignment.client);
+    const psychologist = await this.prisma.psychologist.findFirst({
+      where: { id: input.psychologistId, tenantId: principal.tenantId, deletedAt: null },
+      include: {
+        user: { select: { status: true, deletedAt: true } },
+        credentials: true,
+      },
+    });
+    if (!psychologist) throw new NotFoundException('Psychologist not found');
+    const credential = this.eligibleCredential(psychologist, jurisdictions, new Date());
+    if (!credential) {
+      throw new UnprocessableEntityException(
+        'Psychologist is not credential-eligible for this client (jurisdiction, verification, malpractice, capacity, or status)',
+      );
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {

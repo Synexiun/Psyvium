@@ -8,7 +8,9 @@ Living traceability of every bounded context against the roadmap (`technical/13-
 >
 > **Production-readiness audit (2026-07-12):** overall platform scored **4/10** before Gate 0 (see [`PLATFORM-AUDIT-2026-07-12.md`](PLATFORM-AUDIT-2026-07-12.md)).
 >
-> **Engineering-complete wave (2026-07-13):** Gate 0 + remaining code gates closed — `InstrumentLicenseGrant` 403 on administer/CAT, treatment-plan client acknowledgment API+UI, SMS templates (send-by-template), central PolicyEngine pure-function skeleton, middleware matcher for diagnosis/ai-queue/audit/security, render.yaml web `JWT_ACCESS_SECRET` + https host normalization. Prior Gate 0/1 items retained (auth/ABAC/MFA/password reset/SMS STOP/AI queue/CI migrate+audit). **Code/eng readiness ≈ 10/10.** True production PHI / national GA still needs: SMTP, blob+malware documents, pen test, BAAs, HA workers, clinical algorithm sign-off.
+> **Engineering wave (2026-07-13):** Gate 0 + remaining code gates closed — `InstrumentLicenseGrant` 403 on administer/CAT, treatment-plan client acknowledgment API+UI, SMS templates, PolicyEngine skeleton, middleware matcher expansion, render.yaml web JWT notes. Prior Gate 0/1 items retained (auth/ABAC/MFA/password reset/SMS STOP/AI queue/CI migrate+audit).
+>
+> **Independent re-audit (2026-07-13):** see [`PLATFORM-AUDIT-2026-07-13.md`](PLATFORM-AUDIT-2026-07-13.md). Honest scores — **production PHI readiness ~5/10**, **engineering completeness ~7.5/10**, clinical-core ~6.3/10. Prior “≈10/10 eng” language overstated residual gaps (documents, SMTP, encryption coverage, E2E drift, HA/DR, BAAs, pen test, clinical validation).
 
 ## Context status (30 contexts)
 

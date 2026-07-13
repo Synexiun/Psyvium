@@ -265,9 +265,12 @@ describe('Clinical-safety gate (docs/technical/12-testing-strategy.md §6)', () 
         breakGlassGrant: {
           create: jest.fn().mockImplementation(({ data }: any) => ({ ...data, id: 'grant_1' })),
         },
+        $transaction: jest.fn(async (cb: (tx: any) => unknown) =>
+          cb({ outboxEvent: { create: jest.fn() } }),
+        ),
       };
       const audit = { record: jest.fn() };
-      const bus = { publish: jest.fn() };
+      const bus = { publish: jest.fn(), publishDurable: jest.fn() };
       return { svc: new RiskService(prisma as any, audit as any, bus as any, disabledCipher()), audit, bus };
     }
 

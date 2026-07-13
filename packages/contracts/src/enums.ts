@@ -67,6 +67,7 @@ export const RiskType = {
   MANIA: 'MANIA',
   SEVERE_SUBSTANCE: 'SEVERE_SUBSTANCE',
   MEDICAL_EMERGENCY: 'MEDICAL_EMERGENCY',
+  CLINICAL_DETERIORATION: 'CLINICAL_DETERIORATION',
 } as const;
 export type RiskType = (typeof RiskType)[keyof typeof RiskType];
 

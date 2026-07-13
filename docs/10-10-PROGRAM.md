@@ -7,7 +7,8 @@
 
 > **Latest production-readiness audit:** [`PLATFORM-AUDIT-2026-07-12.md`](PLATFORM-AUDIT-2026-07-12.md) — overall **4/10** before Gate 0.
 >
-> **Engineering-complete (2026-07-13):** Gate 0 + code-level 10/10 gates closed in-repo. Honest residual score for *true production PHI / national GA* still requires infra + external work (SMTP, blob+malware scan, pen test, BAAs, HA workers, clinical algorithm sign-off). Code/eng readiness ≈ **10/10**; operational readiness remains infra-gated.
+> **Engineering wave (2026-07-13):** Gate 0 + remaining in-repo code gates closed.  
+> **Independent re-audit:** [`PLATFORM-AUDIT-2026-07-13.md`](PLATFORM-AUDIT-2026-07-13.md) — production PHI **~5/10**, eng completeness **~7.5/10**. Path to true 10/10 is Phase G1–G3 in that report (ops + validation + compliance evidence), not more checkbox module stubs.
 
 ---
 

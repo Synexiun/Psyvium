@@ -13,7 +13,8 @@ export const REFRESH_TOKEN_COOKIE = 'vpsy_rt';
 export const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8).max(200),
-  totp: z.string().length(6).optional(),
+  /** 6-digit TOTP or a one-time MFA recovery code (8–32 chars). */
+  totp: z.string().min(6).max(32).optional(),
   /** Required only when the same email belongs to more than one tenant. */
   tenantSlug: z.string().trim().min(2).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).optional(),
 });

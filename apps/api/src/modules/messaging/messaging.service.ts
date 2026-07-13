@@ -12,6 +12,7 @@ import {
 } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { FieldCipherService } from '../../common/crypto/field-cipher';
 import { EventBus, Events } from '../../common/events/event-bus.service';
 
 type ThreadRow = {
@@ -70,6 +71,7 @@ export class MessagingService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly bus: EventBus,
+    private readonly cipher: FieldCipherService,
   ) {}
 
   // ── Threads ──
@@ -136,7 +138,7 @@ export class MessagingService {
       });
     }
 
-    return this.toThreadDto(thread, assignment.psychologistId, null, 0);
+    return await this.toThreadDto(thread, assignment.psychologistId, null, 0);
   }
 
   /**
@@ -211,8 +213,12 @@ export class MessagingService {
   async sendMessage(principal: AuthPrincipal, threadId: string, input: SendMessageInput): Promise<MessageDto> {
     const { thread, client, psychologist } = await this.resolveParticipantThread(principal, threadId);
 
+    // Field-encrypt body at rest when VPSY_FIELD_KEY is active (passthrough otherwise).
+    const sealedBody =
+      (await this.cipher.encryptString(input.body, principal.tenantId)) ?? input.body;
+
     const message = (await this.prisma.message.create({
-      data: { threadId: thread.id, senderId: principal.userId, body: input.body },
+      data: { threadId: thread.id, senderId: principal.userId, body: sealedBody },
     })) as MessageRow;
 
     await this.prisma.engagementActivity.create({
@@ -227,7 +233,8 @@ export class MessagingService {
         // non-phone correspondence — until the enum grows a MESSAGE value.
         kind: 'EMAIL',
         direction: 'OUTBOUND',
-        summary: `Message: ${input.body.slice(0, 80)}`,
+        // Never put message body into engagement summary (PHI minimization).
+        summary: `Secure message in thread ${thread.id.slice(0, 8)}…`,
         actorId: principal.userId,
       },
     });
@@ -239,6 +246,7 @@ export class MessagingService {
       entityType: 'Message',
       entityId: message.id,
       after: { threadId: message.threadId },
+      critical: true,
     });
 
     await this.bus.publish(Events.MessageSent, principal.tenantId, {
@@ -250,7 +258,7 @@ export class MessagingService {
       ),
     });
 
-    return this.toMessageDto(message);
+    return this.toMessageDto(message, principal.tenantId);
   }
 
   /** Paginated (cursor = last-seen message id, oldest-first cursor over `createdAt` desc). Participants only. */
@@ -271,8 +279,9 @@ export class MessagingService {
     const hasMore = rows.length > query.limit;
     const page = hasMore ? rows.slice(0, query.limit) : rows;
 
+    const messages = await Promise.all(page.map((m) => this.toMessageDto(m, principal.tenantId)));
     return {
-      messages: page.map((m) => this.toMessageDto(m)),
+      messages,
       nextCursor: hasMore ? page[page.length - 1].id : null,
     };
   }
@@ -304,7 +313,7 @@ export class MessagingService {
       });
     }
 
-    return this.toMessageDto(message);
+    return this.toMessageDto(message, tenantId);
   }
 
   // ── ABAC ──
@@ -354,36 +363,42 @@ export class MessagingService {
 
   // ── Mappers ──
 
-  private toThreadDto(
+  private async toThreadDto(
     thread: ThreadRow,
     psychologistId: string,
     lastMessage: MessageRow | null,
     unreadCount: number,
-  ): ThreadDto {
+  ): Promise<ThreadDto> {
+    let last: ThreadDto['lastMessage'];
+    if (lastMessage) {
+      const body =
+        (await this.cipher.decryptString(lastMessage.body, thread.tenantId)) ?? lastMessage.body;
+      last = {
+        id: lastMessage.id,
+        senderId: lastMessage.senderId,
+        body,
+        createdAt: lastMessage.createdAt.toISOString(),
+      };
+    }
     return {
       id: thread.id,
       clientId: thread.clientId,
       psychologistId,
       subject: thread.subject ?? undefined,
       createdAt: thread.createdAt.toISOString(),
-      lastMessage: lastMessage
-        ? {
-            id: lastMessage.id,
-            senderId: lastMessage.senderId,
-            body: lastMessage.body,
-            createdAt: lastMessage.createdAt.toISOString(),
-          }
-        : undefined,
+      lastMessage: last,
       unreadCount,
     };
   }
 
-  private toMessageDto(message: MessageRow): MessageDto {
+  private async toMessageDto(message: MessageRow, tenantId: string): Promise<MessageDto> {
+    const body =
+      (await this.cipher.decryptString(message.body, tenantId)) ?? message.body;
     return {
       id: message.id,
       threadId: message.threadId,
       senderId: message.senderId,
-      body: message.body,
+      body,
       readAt: message.readAt?.toISOString() ?? undefined,
       createdAt: message.createdAt.toISOString(),
     };

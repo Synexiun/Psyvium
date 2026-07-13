@@ -13,6 +13,21 @@ const prisma = new PrismaClient();
 const DEMO_PASSWORD = 'Vpsy!2026';
 
 async function main() {
+  // Production / networked PHI environments must never mint a shared password.
+  // Local demos opt in with ALLOW_DEMO_SEED=true (CI sets this).
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEMO_SEED !== 'true') {
+    throw new Error(
+      'Refusing to seed shared demo passwords when NODE_ENV=production. ' +
+        'Set ALLOW_DEMO_SEED=true only for isolated demo environments — never with real PHI.',
+    );
+  }
+  if (process.env.ALLOW_DEMO_SEED !== 'true' && process.env.CI !== 'true') {
+    console.warn(
+      '[seed] Shared demo password is active (Vpsy!2026). Set ALLOW_DEMO_SEED=true to acknowledge, ' +
+        'or use unique passwords before any networked deploy.',
+    );
+  }
+
   const hashed = await argon2.hash(DEMO_PASSWORD);
 
   const tenant = await prisma.tenant.upsert({

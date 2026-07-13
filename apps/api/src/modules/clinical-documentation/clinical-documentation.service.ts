@@ -172,6 +172,7 @@ export class ClinicalDocumentationService {
       entityType: 'SessionNote',
       entityId: note.id,
       after: { sessionId: input.sessionId, version: note.version, goldenThread: goldenThreadFlag ?? 'anchored' },
+      critical: true,
     });
 
     return this.toDto(note, principal.tenantId);
@@ -204,6 +205,7 @@ export class ClinicalDocumentationService {
       entityType: 'SessionNote',
       entityId: signed.id,
       after: { signedBy: principal.userId, version: signed.version },
+      critical: true,
     });
     await this.bus.publish(Events.NoteSigned, principal.tenantId, {
       noteId: signed.id,

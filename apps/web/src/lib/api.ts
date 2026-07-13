@@ -678,13 +678,18 @@ export const api = {
     request<CatSessionStateDto>('/assessments/cat/start', {
       method: 'POST',
       body: JSON.stringify({ versionId, clientId }),
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      // Stable key so a retried/double-tapped start does not open two sessions.
+      headers: {
+        'Idempotency-Key': `cat-start:${clientId}:${versionId}`,
+      },
     }),
   catAnswer: (sessionId: string, itemId: string, answer: number) =>
     request<CatSessionStateDto>(`/assessments/cat/${sessionId}/answer`, {
       method: 'POST',
       body: JSON.stringify({ itemId, answer }),
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      headers: {
+        'Idempotency-Key': `cat-answer:${sessionId}:${itemId}:${answer}`,
+      },
     }),
   catState: (sessionId: string) => request<CatSessionStateDto>(`/assessments/cat/${sessionId}`),
 };

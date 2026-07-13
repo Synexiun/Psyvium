@@ -17,13 +17,24 @@ const principal: AuthPrincipal = {
 };
 
 function makeService() {
-  const prisma = {
+  const prisma: any = {
     client: { findFirst: jest.fn().mockResolvedValue({ id: 'client_1', tenantId: 'tenant_demo' }) },
     outcomeMeasure: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
     },
+    $transaction: jest.fn(async (cb: (tx: any) => unknown) =>
+      cb({
+        riskFlag: { create: jest.fn().mockResolvedValue({ id: 'rf_1' }) },
+        escalation: { create: jest.fn().mockResolvedValue({ id: 'esc_1' }) },
+        client: {
+          findFirst: jest.fn().mockResolvedValue({ riskLevel: 'LOW' }),
+          update: jest.fn(),
+        },
+        outboxEvent: { create: jest.fn() },
+      }),
+    ),
   };
   const audit = { record: jest.fn() };
   const ai = {
@@ -33,8 +44,9 @@ function makeService() {
       aiConfigured: false,
     }),
   };
-  const svc = new OutcomesService(prisma as any, audit as any, ai as any);
-  return { svc, prisma, audit, ai };
+  const bus = { publish: jest.fn(), publishDurable: jest.fn() };
+  const svc = new OutcomesService(prisma, audit as any, ai as any, bus as any);
+  return { svc, prisma, audit, ai, bus };
 }
 
 function measureRow(overrides: Partial<{ id: string; construct: string; value: number; occurredAt: Date }> = {}) {

@@ -49,6 +49,18 @@ function makeService(overrides: {
         const list = (overrides.psychologists ?? []).slice().sort((a, b) => a.currentCaseload - b.currentCaseload);
         return list[0] ?? null;
       }),
+      findMany: jest.fn().mockImplementation(() => {
+        const list = (overrides.psychologists ?? [])
+          .slice()
+          .sort((a, b) => a.currentCaseload - b.currentCaseload)
+          .map((p) => ({
+            id: p.id ?? p.userId,
+            userId: p.userId,
+            currentCaseload: p.currentCaseload,
+            caseloadCap: p.caseloadCap ?? 30,
+          }));
+        return list;
+      }),
     },
   };
 
