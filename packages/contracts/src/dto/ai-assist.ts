@@ -48,7 +48,7 @@ export const sessionNoteAiAssistResponseSchema = z.object({
    * the model client is never invoked). Absent when AI simply isn't
    * configured or the client has consented.
    */
-  withheldReason: z.enum(['no-ai-consent', 'feature-disabled']).optional(),
+  withheldReason: z.enum(['no-ai-consent', 'feature-disabled', 'model-not-approved']).optional(),
 });
 export type SessionNoteAiAssistResult = z.infer<typeof sessionNoteAiAssistResponseSchema>;
 
@@ -82,7 +82,7 @@ export const treatmentPlanAiAssistResponseSchema = z.object({
    * the model client is never invoked). Absent when AI simply isn't
    * configured or the client has consented.
    */
-  withheldReason: z.enum(['no-ai-consent', 'feature-disabled']).optional(),
+  withheldReason: z.enum(['no-ai-consent', 'feature-disabled', 'model-not-approved']).optional(),
 });
 export type TreatmentPlanAiAssistResult = z.infer<typeof treatmentPlanAiAssistResponseSchema>;
 
@@ -119,7 +119,7 @@ export const differentialAiAssistResponseSchema = z.object({
   source: z.enum(['ai', 'rule-based']),
   aiConfigured: z.boolean(),
   recommendationId: z.string().optional(),
-  withheldReason: z.enum(['no-ai-consent', 'feature-disabled']).optional(),
+  withheldReason: z.enum(['no-ai-consent', 'feature-disabled', 'model-not-approved']).optional(),
 });
 export type DifferentialAiAssistResult = z.infer<typeof differentialAiAssistResponseSchema>;
 
@@ -152,7 +152,7 @@ export const outcomeAiAssistResponseSchema = z.object({
   source: z.enum(['ai', 'rule-based']),
   aiConfigured: z.boolean(),
   recommendationId: z.string().optional(),
-  withheldReason: z.enum(['no-ai-consent', 'feature-disabled']).optional(),
+  withheldReason: z.enum(['no-ai-consent', 'feature-disabled', 'model-not-approved']).optional(),
 });
 export type OutcomeAiAssistResult = z.infer<typeof outcomeAiAssistResponseSchema>;
 
@@ -167,7 +167,7 @@ export const psychometricAiAssistResponseSchema = z.object({
   source: z.enum(['ai', 'rule-based']),
   aiConfigured: z.boolean(),
   recommendationId: z.string().optional(),
-  withheldReason: z.enum(['no-ai-consent', 'feature-disabled']).optional(),
+  withheldReason: z.enum(['no-ai-consent', 'feature-disabled', 'model-not-approved']).optional(),
 });
 export type PsychometricAiAssistResult = z.infer<typeof psychometricAiAssistResponseSchema>;
 
@@ -193,7 +193,7 @@ export const riskContextAiAssistResponseSchema = z.object({
   source: z.enum(['ai', 'rule-based']),
   aiConfigured: z.boolean(),
   recommendationId: z.string().optional(),
-  withheldReason: z.enum(['no-ai-consent', 'feature-disabled']).optional(),
+  withheldReason: z.enum(['no-ai-consent', 'feature-disabled', 'model-not-approved']).optional(),
 });
 export type RiskContextAiAssistResult = z.infer<typeof riskContextAiAssistResponseSchema>;
 
@@ -266,6 +266,12 @@ export const aiRecommendationProvenanceSchema = z.object({
   linkedEntityId: z.string().nullable(),
   output: z.unknown(),
   inputHash: z.string(),
+  /**
+   * The DE-IDENTIFIED structured signal bundle the model saw (or the rules
+   * evaluated), persisted verbatim so the recommendation can be truly
+   * replayed — not merely integrity-checked via the hash (doc 05 §5).
+   */
+  inputSignals: z.unknown(),
   createdAt: z.string(),
   modelVersion: z.object({
     id: z.string(),
@@ -273,6 +279,9 @@ export const aiRecommendationProvenanceSchema = z.object({
     model: z.string(),
     version: z.string(),
     capability: z.string(),
+    approvedForProduction: z.boolean(),
+    approvedBy: z.string().nullable(),
+    approvedAt: z.string().nullable(),
   }),
   promptVersion: z.object({
     id: z.string(),

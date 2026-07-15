@@ -1534,6 +1534,13 @@ model AIModelVersion {
   capability  String
   evalMetrics Json     @default("{}")
   activatedAt DateTime @default(now())
+  /// Clinical-governance production approval (doc 05 §5, doc 12 §6) as REAL
+  /// columns, not registry JSON. Approval is fail-closed: the admin API
+  /// refuses to approve a version whose `evalMetrics` carries no eval run,
+  /// and in production the gateway will not call an unapproved runtime model.
+  approvedForProduction Boolean   @default(false)
+  approvedBy            String?
+  approvedAt            DateTime?
 
   recommendations AIRecommendation[]
 
@@ -1558,6 +1565,11 @@ model AIRecommendation {
   tenantId         String
   agent            AiAgent
   inputHash        String
+  /// The DE-IDENTIFIED structured signal bundle the model saw (or the rules
+  /// evaluated), persisted verbatim for true replay (doc 05 §5 — "any output
+  /// can be replayed and audited months later"). Callers minimize PHI *before*
+  /// this bundle is formed — free text never enters it.
+  inputSignals     Json           @default("{}")
   output           Json           @default("{}")
   confidence       Float          @default(0)
   modelVersionId   String
@@ -1589,6 +1601,26 @@ model AuditEvent {
   after      Json?
   ip         String?
   userAgent  String?
+  /// ── doc 02 forensic fields (Wave D) — all optional; populated where the
+  /// call site actually knows them (never fabricated). Each participates in
+  /// the event hash so it cannot be rewritten without breaking the chain.
+  /// License state of the acting clinician at action time (credentialed writes).
+  licenseSnapshot Json?
+  /// Jurisdiction the action was performed under (principal claim).
+  jurisdiction    String?
+  /// Purpose-of-use, e.g. the break-glass justification reason.
+  purpose         String?
+  /// Consent record/version this access relied on.
+  consentRef      String?
+  /// Which ABAC rule/path authorized the action (e.g. 'assignment', 'break-glass').
+  abacRuleMatched String?
+  deviceId        String?
+  /// Server-side refresh-session id (`sid` claim) of the acting principal.
+  sessionId       String?
+  /// Session strength: 'standard' | 'restricted-mfa-pending' (see AuthPrincipal).
+  authLevel       String?
+  /// PolicyEngine-style obligations the enforcement point had to carry out.
+  obligations     Json?
   prevHash   String?
   hash       String
   occurredAt DateTime @default(now())

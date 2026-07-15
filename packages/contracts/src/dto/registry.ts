@@ -53,6 +53,17 @@ export const createClientRegistrySchema = z.object({
   preferredLanguage: z.string().default('en'),
   culturalContext: z.string().max(500).optional(),
   demographics: z.record(z.unknown()).default({}),
+  /**
+   * Client location jurisdiction (e.g. "US-NY") stamped onto the CLIENT role
+   * assignment — required for matching's scope-of-practice credential gate to
+   * ever produce candidates for this client (matching.service.ts).
+   */
+  jurisdiction: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z]{2}(?:-[A-Za-z0-9]{1,6})?$/)
+    .transform((v) => v.toUpperCase())
+    .optional(),
 });
 export type CreateClientRegistryInput = z.infer<typeof createClientRegistrySchema>;
 

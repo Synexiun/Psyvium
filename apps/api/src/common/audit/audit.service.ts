@@ -15,6 +15,22 @@ export interface AuditInput {
   ip?: string;
   userAgent?: string;
   /**
+   * doc 02 forensic fields (Wave D). All optional — a call site populates
+   * only what it actually knows (never fabricated). Every populated field is
+   * covered by the event hash, so it cannot be rewritten without breaking
+   * the chain. `AuditService.forensicsFromPrincipal` derives the
+   * principal-borne subset (jurisdiction/sessionId/authLevel).
+   */
+  licenseSnapshot?: unknown;
+  jurisdiction?: string;
+  purpose?: string;
+  consentRef?: string;
+  abacRuleMatched?: string;
+  deviceId?: string;
+  sessionId?: string;
+  authLevel?: string;
+  obligations?: unknown;
+  /**
    * When true, a failed audit write is re-thrown so the triggering action
    * fails closed instead of silently succeeding without its audit trail
    * (docs/technical/06-security-and-rbac.md §5 — "every clinical action
@@ -41,6 +57,25 @@ export class AuditService {
     private readonly prisma: PrismaService,
     @Optional() private readonly bus?: EventBus,
   ) {}
+
+  /**
+   * The principal-borne subset of the doc-02 forensic fields. Call sites
+   * spread this into `record()` and add what only they know (purpose,
+   * consentRef, abacRuleMatched, licenseSnapshot, obligations).
+   */
+  static forensicsFromPrincipal(principal: AuthPrincipal): {
+    jurisdiction?: string;
+    sessionId?: string;
+    authLevel: string;
+  } {
+    return {
+      ...(principal.jurisdiction ? { jurisdiction: principal.jurisdiction } : {}),
+      ...(principal.sessionId ? { sessionId: principal.sessionId } : {}),
+      // Honest labels only: we know whether this session is restricted
+      // pending MFA enrollment — not the original credential ceremony.
+      authLevel: principal.mfaEnrollmentRequired ? 'restricted-mfa-pending' : 'standard',
+    };
+  }
 
   /**
    * Read-only audit trail for holders of AUDIT_READ. Returns the newest
@@ -70,6 +105,15 @@ export class AuditService {
       after: unknown;
       hash: string;
       prevHash: string | null;
+      licenseSnapshot: unknown;
+      jurisdiction: string | null;
+      purpose: string | null;
+      consentRef: string | null;
+      abacRuleMatched: string | null;
+      deviceId: string | null;
+      sessionId: string | null;
+      authLevel: string | null;
+      obligations: unknown;
     }>;
     nextCursor: string | null;
   }> {
@@ -102,6 +146,15 @@ export class AuditService {
         after: row.after,
         hash: row.hash,
         prevHash: row.prevHash,
+        licenseSnapshot: row.licenseSnapshot,
+        jurisdiction: row.jurisdiction,
+        purpose: row.purpose,
+        consentRef: row.consentRef,
+        abacRuleMatched: row.abacRuleMatched,
+        deviceId: row.deviceId,
+        sessionId: row.sessionId,
+        authLevel: row.authLevel,
+        obligations: row.obligations,
       })),
       nextCursor: next,
     };
@@ -133,6 +186,15 @@ export class AuditService {
           after: input.after ?? null,
           ip: input.ip ?? null,
           userAgent: input.userAgent ?? null,
+          licenseSnapshot: input.licenseSnapshot ?? null,
+          jurisdiction: input.jurisdiction ?? null,
+          purpose: input.purpose ?? null,
+          consentRef: input.consentRef ?? null,
+          abacRuleMatched: input.abacRuleMatched ?? null,
+          deviceId: input.deviceId ?? null,
+          sessionId: input.sessionId ?? null,
+          authLevel: input.authLevel ?? null,
+          obligations: input.obligations ?? null,
           occurredAt: occurredAt.toISOString(),
         });
 
@@ -147,6 +209,15 @@ export class AuditService {
             after: input.after as any,
             ip: input.ip,
             userAgent: input.userAgent,
+            licenseSnapshot: input.licenseSnapshot as any,
+            jurisdiction: input.jurisdiction,
+            purpose: input.purpose,
+            consentRef: input.consentRef,
+            abacRuleMatched: input.abacRuleMatched,
+            deviceId: input.deviceId,
+            sessionId: input.sessionId,
+            authLevel: input.authLevel,
+            obligations: input.obligations as any,
             prevHash,
             hash,
             occurredAt,
@@ -293,10 +364,21 @@ function computeEventHash(fields: {
   after: unknown;
   ip: string | null;
   userAgent: string | null;
+  licenseSnapshot: unknown;
+  jurisdiction: string | null;
+  purpose: string | null;
+  consentRef: string | null;
+  abacRuleMatched: string | null;
+  deviceId: string | null;
+  sessionId: string | null;
+  authLevel: string | null;
+  obligations: unknown;
   occurredAt: string;
 }): string {
-  // Full material — before/ip/userAgent participate in the hash so an
-  // attacker cannot rewrite those forensic fields without breaking the chain.
+  // Full material — before/ip/userAgent and every doc-02 forensic field
+  // participate in the hash so an attacker cannot rewrite them without
+  // breaking the chain. (Historical rows are unaffected: verification checks
+  // prevHash linkage, not recomputation — see verifyChain's note.)
   const material = JSON.stringify(fields);
   return createHash('sha256').update(material).digest('hex');
 }

@@ -27,10 +27,9 @@ export class AuditChainAnchorService {
     return process.env.VPSY_AUDIT_DAILY_ANCHOR !== 'false';
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_12AM)
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async nightly(): Promise<void> {
-    // Nest CronExpression.EVERY_DAY_AT_12AM is midnight. Prefer a slight
-    // offset so app boot + migrations settle; operators can also hit POST.
+    // Midnight UTC; operators can also trigger explicitly via POST.
     if (!this.enabled) return;
     await this.anchorAllTenants();
   }

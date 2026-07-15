@@ -1,5 +1,41 @@
+import { createHmac } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+
+/**
+ * RFC 6238 TOTP (SHA1 / 30s step / 6 digits — otplib's defaults, which the
+ * API's `verifyTotp` uses). Implemented inline so the e2e suite can enroll
+ * REAL MFA for the mandatory clinical/admin roles without adding a dependency
+ * to apps/web: auth.setup.ts enrolls via the real API, computes codes here,
+ * and completes the same TOTP ceremony a human does with an authenticator app.
+ */
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function base32Decode(input: string): Buffer {
+  const clean = input.toUpperCase().replace(/=+$/, '').replace(/[^A-Z2-7]/g, '');
+  let bits = 0;
+  let value = 0;
+  const bytes: number[] = [];
+  for (const char of clean) {
+    value = (value << 5) | BASE32_ALPHABET.indexOf(char);
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return Buffer.from(bytes);
+}
+
+export function totp(secret: string, at = Date.now(), stepSeconds = 30, digits = 6): string {
+  const counter = Math.floor(at / 1000 / stepSeconds);
+  const counterBuf = Buffer.alloc(8);
+  counterBuf.writeBigUInt64BE(BigInt(counter));
+  const hmac = createHmac('sha1', base32Decode(secret)).update(counterBuf).digest();
+  const offset = hmac[hmac.length - 1]! & 0xf;
+  const code = (hmac.readUInt32BE(offset) & 0x7fffffff) % 10 ** digits;
+  return code.toString().padStart(digits, '0');
+}
 
 /** axe-core `impact` levels this suite treats as build-breaking. */
 export const BLOCKING_IMPACTS = ['serious', 'critical'] as const;

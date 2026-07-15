@@ -106,3 +106,115 @@ describe('AuditService chain integrity', () => {
     );
   });
 });
+
+/**
+ * WAVE D (10-10 program) — doc 02 forensic fields. All optional, persisted
+ * as given (never fabricated), and covered by the event hash so they cannot
+ * be rewritten without breaking the chain.
+ */
+describe('AuditService forensic fields (doc 02)', () => {
+  function makeWriteService() {
+    const tx = {
+      $executeRaw: jest.fn(),
+      auditEvent: {
+        findFirst: jest.fn().mockResolvedValue({ hash: 'prev_hash' }),
+        create: jest.fn().mockResolvedValue({}),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn(async (fn: (t: unknown) => Promise<void>) => fn(tx)),
+    };
+    return { svc: new AuditService(prisma as any), tx };
+  }
+
+  it('persists every provided forensic field and includes them in the hash material', async () => {
+    const { svc, tx } = makeWriteService();
+
+    await svc.record({
+      tenantId: 'tenant_1',
+      actorId: 'user_1',
+      action: 'breakglass.invoked',
+      entityType: 'BreakGlassGrant',
+      entityId: 'grant_1',
+      licenseSnapshot: { licenseNo: 'PSY-123', status: 'active' },
+      jurisdiction: 'US-CA',
+      purpose: 'client unreachable after SEVERE flag',
+      consentRef: 'consent_v3',
+      abacRuleMatched: 'break-glass',
+      deviceId: 'dev_1',
+      sessionId: 'sess_1',
+      authLevel: 'standard',
+      obligations: ['dpo-alert'],
+      critical: true,
+    });
+
+    const created = (tx.auditEvent.create as jest.Mock).mock.calls[0][0].data;
+    expect(created).toEqual(
+      expect.objectContaining({
+        licenseSnapshot: { licenseNo: 'PSY-123', status: 'active' },
+        jurisdiction: 'US-CA',
+        purpose: 'client unreachable after SEVERE flag',
+        consentRef: 'consent_v3',
+        abacRuleMatched: 'break-glass',
+        deviceId: 'dev_1',
+        sessionId: 'sess_1',
+        authLevel: 'standard',
+        obligations: ['dpo-alert'],
+      }),
+    );
+
+    // Hash covers the forensic fields: same event with a different purpose
+    // must produce a different hash.
+    const firstHash = created.hash;
+    await svc.record({
+      tenantId: 'tenant_1',
+      actorId: 'user_1',
+      action: 'breakglass.invoked',
+      entityType: 'BreakGlassGrant',
+      entityId: 'grant_1',
+      purpose: 'a DIFFERENT purpose',
+      critical: true,
+    });
+    const secondHash = (tx.auditEvent.create as jest.Mock).mock.calls[1][0].data.hash;
+    expect(secondHash).not.toBe(firstHash);
+  });
+
+  it('omitted forensic fields persist as undefined (never fabricated)', async () => {
+    const { svc, tx } = makeWriteService();
+
+    await svc.record({
+      tenantId: 'tenant_1',
+      action: 'note.signed',
+      entityType: 'SessionNote',
+      entityId: 'note_1',
+    });
+
+    const created = (tx.auditEvent.create as jest.Mock).mock.calls[0][0].data;
+    expect(created.purpose).toBeUndefined();
+    expect(created.abacRuleMatched).toBeUndefined();
+    expect(created.obligations).toBeUndefined();
+  });
+
+  it('forensicsFromPrincipal derives only what the principal honestly carries', () => {
+    expect(
+      AuditService.forensicsFromPrincipal({
+        userId: 'u1',
+        tenantId: 't1',
+        roles: [],
+        permissions: [],
+        jurisdiction: 'US-NY',
+        sessionId: 'sess_9',
+      } as any),
+    ).toEqual({ jurisdiction: 'US-NY', sessionId: 'sess_9', authLevel: 'standard' });
+
+    expect(
+      AuditService.forensicsFromPrincipal({
+        userId: 'u1',
+        tenantId: 't1',
+        roles: [],
+        permissions: [],
+        mfaEnrollmentRequired: true,
+      } as any),
+    ).toEqual({ authLevel: 'restricted-mfa-pending' });
+  });
+});

@@ -5,11 +5,13 @@ import {
   patchClinicSchema,
   patchTenantSchema,
   Permission,
+  setAiModelApprovalSchema,
   upsertFeatureFlagSchema,
   type AuthPrincipal,
   type CreateClinicInput,
   type PatchClinicInput,
   type PatchTenantInput,
+  type SetAiModelApprovalInput,
   type UpsertFeatureFlagInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
@@ -140,5 +142,28 @@ export class AdminController {
   vendorBaaRegister() {
     const entries = listVendorBaaRegister();
     return { entries, summary: vendorBaaSummary(entries) };
+  }
+
+  /**
+   * AI model registry (doc 05 §5): every model version the gateway has used,
+   * with its clinical-governance production-approval state.
+   */
+  @Get('ai-models')
+  listAiModelVersions() {
+    return this.admin.listAiModelVersions();
+  }
+
+  /**
+   * Set/revoke clinical-governance production approval on a model version
+   * (doc 12 §6 — fail-closed: refuses approval without a recorded eval run).
+   * In production the AI gateway will not call an unapproved runtime model.
+   */
+  @Post('ai-models/:id/approval')
+  setAiModelApproval(
+    @CurrentUser() user: AuthPrincipal,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(setAiModelApprovalSchema)) body: SetAiModelApprovalInput,
+  ) {
+    return this.admin.setAiModelApproval(user, id, body);
   }
 }

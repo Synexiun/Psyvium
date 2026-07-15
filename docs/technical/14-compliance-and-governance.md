@@ -166,8 +166,19 @@ from **device CDS** (subject to FDA oversight). VPSY designs its clinical agents
 | Not acquiring/processing a signal from an in-vitro/imaging device | Met (uses clinical text/structured data) | Met (uses clinical + self-report data) |
 | Displays/analyzes medical info to provide recommendations | Met | Met |
 | Recommendations to a **healthcare provider** (not patient-directing) | Met (clinician-facing only) | Met (clinician-facing; escalation stays human) |
-| Provider can **independently review the basis** (not to rely primarily on it) | **Met by design**: shows reasoning, sources, confidence, and requires explicit clinician decision | **Met by design**: shows contributing factors + evidence; clinician decides escalation |
-| Result | **Non-device CDS** (transparency-enabled) | **Non-device CDS**, monitored closely given safety weight |
+| Provider can **independently review the basis** (not to rely primarily on it) | **Met by design**: shows reasoning, sources, confidence, and requires explicit clinician decision | **Uncertain — see caveat below**: contributing factors + evidence are shown, but FDA reads this criterion as failing when the decision is **time-critical** and the provider realistically cannot review the basis first |
+| Result | **Non-device CDS** (transparency-enabled) | **Provisional / undetermined** — treated as the higher-scrutiny case pending regulatory review |
+
+> **Time-sensitivity caveat (Risk-triage / Crisis agent).** The FDA's CDS guidance
+> treats software informing **time-critical** decisions as unlikely to satisfy the
+> independent-review criterion — a crisis workflow is the paradigm case. VPSY therefore
+> does **not** claim non-device status for the crisis path. Two mitigations shape the
+> deployed design: (1) risk **detection is fully deterministic** (documented, reviewable
+> item-score/keyword logic — not an ML model), and (2) the AI model only **assembles a
+> situational summary after** a flag already exists and never re-assesses, re-classifies,
+> escalates, or resolves risk. Whether that residual AI role is non-device CDS is a
+> question for regulatory counsel **before any marketed claim**; until then the register
+> records this classification as pending review.
 
 ### 6.2 Design controls that keep agents non-device
 

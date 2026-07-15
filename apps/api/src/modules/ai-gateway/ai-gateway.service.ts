@@ -162,6 +162,7 @@ export class AiGatewayService {
       linkedEntityId: row.linkedEntityId,
       output: row.output,
       inputHash: row.inputHash,
+      inputSignals: row.inputSignals,
       createdAt: row.createdAt.toISOString(),
       modelVersion: {
         id: row.modelVersion.id,
@@ -169,6 +170,9 @@ export class AiGatewayService {
         model: row.modelVersion.model,
         version: row.modelVersion.version,
         capability: row.modelVersion.capability,
+        approvedForProduction: row.modelVersion.approvedForProduction,
+        approvedBy: row.modelVersion.approvedBy,
+        approvedAt: row.modelVersion.approvedAt ? row.modelVersion.approvedAt.toISOString() : null,
       },
       promptVersion: {
         id: row.promptVersion.id,
@@ -233,17 +237,44 @@ export class AiGatewayService {
     return this.apiKey.length > 0;
   }
 
-  /** Combined gate: key + tenant kill-switch + client consent. */
+  /** Combined gate: key + tenant kill-switch + client consent + (production) model approval. */
   private async mayCallModel(tenantId: string, clientId: string): Promise<{
     allowed: boolean;
-    withheldReason?: 'no-ai-consent' | 'feature-disabled';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved';
   }> {
     if (!this.aiConfigured) return { allowed: false };
     const enabled = await this.isAiEnabledForTenant(tenantId);
     if (!enabled) return { allowed: false, withheldReason: 'feature-disabled' };
     const consented = await this.hasAiConsent(clientId);
     if (!consented) return { allowed: false, withheldReason: 'no-ai-consent' };
+    if (!(await this.isRuntimeModelApprovedForProduction())) {
+      return { allowed: false, withheldReason: 'model-not-approved' };
+    }
     return { allowed: true };
+  }
+
+  /**
+   * Doc 05 §5 / doc 12 §6 governance gate: in production, the runtime model
+   * must have an `approvedForProduction` AIModelVersion row (clinical
+   * governance sign-off backed by a recorded eval run) before a real model
+   * call is made. Fails CLOSED — a lookup error withholds AI (the honest
+   * rule-based path runs instead). Outside production this gate is open so
+   * local demos and CI keep working without a governance ceremony.
+   */
+  private async isRuntimeModelApprovedForProduction(): Promise<boolean> {
+    if (process.env.NODE_ENV !== 'production') return true;
+    try {
+      const approved = await this.prisma.aIModelVersion.findFirst({
+        where: { provider: 'anthropic', model: this.model, approvedForProduction: true },
+        select: { id: true },
+      });
+      return approved !== null;
+    } catch (err) {
+      this.logger.warn(
+        `AI model approval check failed for ${this.model}, withholding AI: ${(err as Error).message}`,
+      );
+      return false;
+    }
   }
 
   /** Model id, stripped of any `provider/` routing prefix. Defaults to Opus 4.8. */
@@ -274,11 +305,11 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent' | 'feature-disabled';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved';
   }> {
     let summary: string;
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved' | undefined;
 
     const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
@@ -332,7 +363,7 @@ export class AiGatewayService {
     aiRationales?: AllocationRationale[];
     source?: 'ai' | 'rule-based';
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent' | 'feature-disabled';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved';
   }> {
     // Deterministic scoring rationale is computed by the Matching context;
     // this order is FINAL — the AI layer only ever explains it.
@@ -340,7 +371,7 @@ export class AiGatewayService {
 
     let aiRationales: AllocationRationale[] | undefined;
     let source: 'ai' | 'rule-based' | undefined;
-    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved' | undefined;
 
     const top3 = ranked.slice(0, 3);
     if (top3.length > 0) {
@@ -401,7 +432,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent' | 'feature-disabled';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved';
   }> {
     const signals = {
       sessionType: params.sessionType,
@@ -411,7 +442,7 @@ export class AiGatewayService {
     };
     let draft: SessionNoteDraftScaffold;
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved' | undefined;
 
     const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
@@ -462,7 +493,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent' | 'feature-disabled';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved';
   }> {
     const signals = {
       severityBand: params.severityBand,
@@ -471,7 +502,7 @@ export class AiGatewayService {
     };
     let suggestions: TreatmentPlanSuggestions;
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved' | undefined;
 
     const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
@@ -527,7 +558,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent' | 'feature-disabled';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved';
   }> {
     const signals = {
       severityBand: params.severityBand,
@@ -536,7 +567,7 @@ export class AiGatewayService {
     };
     let directions: DifferentialDirection[];
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved' | undefined;
 
     const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
@@ -587,7 +618,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent' | 'feature-disabled';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved';
   }> {
     const signals = {
       construct: params.construct,
@@ -597,7 +628,7 @@ export class AiGatewayService {
     };
     let narrative: string;
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved' | undefined;
 
     const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
@@ -657,7 +688,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent' | 'feature-disabled';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved';
   }> {
     const signals = {
       instrumentCode: params.instrumentCode,
@@ -668,7 +699,7 @@ export class AiGatewayService {
     };
     let interpretation: string;
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved' | undefined;
 
     const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
@@ -728,7 +759,7 @@ export class AiGatewayService {
     source: 'ai' | 'rule-based';
     aiConfigured: boolean;
     recommendationId?: string;
-    withheldReason?: 'no-ai-consent' | 'feature-disabled';
+    withheldReason?: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved';
   }> {
     const signals = {
       severity: params.severity,
@@ -739,7 +770,7 @@ export class AiGatewayService {
     };
     let summary: string;
     let source: 'ai' | 'rule-based';
-    let withheldReason: 'no-ai-consent' | 'feature-disabled' | undefined;
+    let withheldReason: 'no-ai-consent' | 'feature-disabled' | 'model-not-approved' | undefined;
 
     const gate = await this.mayCallModel(params.tenantId, params.clientId);
 
@@ -1390,6 +1421,11 @@ export class AiGatewayService {
           tenantId: input.tenantId,
           agent: input.agent,
           inputHash,
+          // WAVE CR: the de-identified signal bundle itself (already
+          // PHI-minimized by every caller) — persisted verbatim so the
+          // recommendation can be truly REPLAYED, not merely
+          // integrity-checked against the hash.
+          inputSignals: input.input as any,
           output: input.output as any,
           confidence: input.confidence,
           modelVersionId: model.id,

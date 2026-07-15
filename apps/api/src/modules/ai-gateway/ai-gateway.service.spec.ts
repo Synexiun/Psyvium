@@ -903,6 +903,125 @@ describe('AiGatewayService.rankCandidates (Allocation rationale extension, §3.8
   });
 });
 
+/**
+ * WAVE CR (10-10 program, final AI item) — true replay + production model
+ * approval: (1) the DE-IDENTIFIED signal bundle is persisted VERBATIM on the
+ * AIRecommendation (`inputSignals`), not just its sha256 hash, so any output
+ * can be replayed months later (doc 05 §5); (2) in production the gateway
+ * refuses a real model call unless the runtime model has a clinical-governance
+ * `approvedForProduction` AIModelVersion row (doc 12 §6) — degrading honestly
+ * to rule-based with `withheldReason: 'model-not-approved'`.
+ */
+describe('AiGatewayService — replay bundle + production model approval (WAVE CR)', () => {
+  const riskParams = {
+    tenantId: 'tenant_demo',
+    clientId: 'client_1',
+    riskFlagId: 'flag_1',
+    severity: 'HIGH',
+    riskType: 'suicidal_ideation',
+    openEscalations: 1,
+    hasActiveSafetyPlan: true,
+    slaDueInMinutes: 30,
+  };
+  const expectedSignals = {
+    severity: 'HIGH',
+    riskType: 'suicidal_ideation',
+    openEscalations: 1,
+    hasActiveSafetyPlan: true,
+    slaDueInMinutes: 30,
+  };
+
+  function withProductionAndKey() {
+    process.env = { ...ORIGINAL_ENV, NODE_ENV: 'production', ANTHROPIC_API_KEY: 'sk-test-key', AI_GATEWAY_API_KEY: '' };
+  }
+
+  /** Distinguishes the approval-gate findFirst (where.approvedForProduction) from logRecommendation's provenance findFirst. */
+  function makePrismaWithApproval(approved: boolean) {
+    const prisma = makePrisma();
+    (prisma.aIModelVersion.findFirst as jest.Mock).mockImplementation((args?: any) =>
+      args?.where?.approvedForProduction ? (approved ? { id: 'model_1' } : null) : { id: 'model_1' },
+    );
+    return prisma;
+  }
+
+  it('persists the de-identified signal bundle VERBATIM as inputSignals, alongside its hash', async () => {
+    withNoKey();
+    const prisma = makePrisma();
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
+
+    await svc.summarizeRiskContext(riskParams);
+
+    const createArgs = (prisma.aIRecommendation.create as jest.Mock).mock.calls[0][0];
+    expect(createArgs.data.inputSignals).toEqual(expectedSignals);
+    expect(createArgs.data.inputHash).toEqual(expect.any(String));
+    // The bundle is replayable AND hash-verifiable: same object, same hash base.
+    expect(JSON.stringify(createArgs.data.inputSignals)).toBe(JSON.stringify(expectedSignals));
+  });
+
+  it('production: withholds AI with withheldReason "model-not-approved" when the runtime model has no approvedForProduction row', async () => {
+    withProductionAndKey();
+    const prisma = makePrismaWithApproval(false);
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
+
+    const result = await svc.summarizeRiskContext(riskParams);
+
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(result.source).toBe('rule-based');
+    expect(result.withheldReason).toBe('model-not-approved');
+    // The withholding is recorded on the logged AIRecommendation output too.
+    const createArgs = (prisma.aIRecommendation.create as jest.Mock).mock.calls[0][0];
+    expect(createArgs.data.output).toEqual(
+      expect.objectContaining({ source: 'rule-based', withheldReason: 'model-not-approved' }),
+    );
+  });
+
+  it('production: calls the model when an approvedForProduction AIModelVersion row exists', async () => {
+    withProductionAndKey();
+    mockMessagesCreate.mockResolvedValue({ content: [{ type: 'text', text: 'Brief situational summary.' }] });
+    const prisma = makePrismaWithApproval(true);
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
+
+    const result = await svc.summarizeRiskContext(riskParams);
+
+    expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
+    expect(result.source).toBe('ai');
+    expect(result.withheldReason).toBeUndefined();
+  });
+
+  it('non-production (local demo / CI): the approval gate stays open — no governance ceremony required', async () => {
+    withKey();
+    mockMessagesCreate.mockResolvedValue({ content: [{ type: 'text', text: 'Brief situational summary.' }] });
+    const prisma = makePrismaWithApproval(false);
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
+
+    const result = await svc.summarizeRiskContext(riskParams);
+
+    expect(result.source).toBe('ai');
+    expect(result.withheldReason).toBeUndefined();
+  });
+
+  it('production: fails CLOSED — an approval-lookup error withholds AI rather than permitting the call', async () => {
+    withProductionAndKey();
+    const prisma = makePrisma();
+    (prisma.aIModelVersion.findFirst as jest.Mock).mockImplementation((args?: any) => {
+      if (args?.where?.approvedForProduction) return Promise.reject(new Error('db down'));
+      return Promise.resolve({ id: 'model_1' });
+    });
+    const bus = { publish: jest.fn() };
+    const svc = new AiGatewayService(prisma as any, bus as any, { record: jest.fn() } as any, makeConsent() as any, { isEnabled: jest.fn().mockResolvedValue(true) } as any);
+
+    const result = await svc.summarizeRiskContext(riskParams);
+
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(result.source).toBe('rule-based');
+    expect(result.withheldReason).toBe('model-not-approved');
+  });
+});
+
 describe('AiGatewayService human-decision queue', () => {
   const principal = {
     userId: 'user_clin',

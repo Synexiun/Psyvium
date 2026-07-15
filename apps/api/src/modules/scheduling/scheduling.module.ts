@@ -1,12 +1,16 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { FieldCipherModule } from '../../common/crypto/field-cipher.module';
 import { SchedulingController } from './scheduling.controller';
 import { SchedulingService } from './scheduling.service';
 import { CommunicationsService } from '../communications/communications.service';
 import { OfflineStubAdapter } from '../communications/adapters/offline-stub.adapter';
 
 @Module({
-  imports: [JwtModule.register({})],
+  // FieldCipherModule: CommunicationsService encrypts message/SMS bodies at
+  // rest, so this module-scoped instance needs the same cipher wiring
+  // CommunicationsModule has (boot fails on the missing provider otherwise).
+  imports: [JwtModule.register({}), FieldCipherModule],
   controllers: [SchedulingController],
   // `CommunicationsService` (+ its offline-stub SMS/telephony dependency) is
   // registered here too, not only in `CommunicationsModule` — it isn't

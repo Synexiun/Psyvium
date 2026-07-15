@@ -12,6 +12,8 @@ Living traceability of every bounded context against the roadmap (`technical/13-
 >
 > **Independent re-audit (2026-07-13):** see [`PLATFORM-AUDIT-2026-07-13.md`](PLATFORM-AUDIT-2026-07-13.md).  
 > **Clinical excellence + staging-PHI wave (2026-07-13):** staging-PHI stack (blobs, ClamAV, field crypto, SIEM, boot refusals, pen-test probes, restore drill) plus **clinical validation register** and **vendor BAA inventory** (API + admin UI). See [`STAGING-PHI-RUNBOOK.md`](STAGING-PHI-RUNBOOK.md), [`CLINICAL-VALIDATION-REGISTER.md`](CLINICAL-VALIDATION-REGISTER.md), [`VENDOR-BAA-REGISTER.md`](VENDOR-BAA-REGISTER.md). Remaining for true PHI GA: **signed** BAAs, external pen-test execution, Object Lock on SIEM bucket, operator PITR attestation, clinical board signatures for marketed claims.
+>
+> **AI governance + forensic-audit wave (2026-07-14):** the last open Wave CR AI item closed — `AIRecommendation.inputSignals` persists the de-identified signal bundle verbatim (true replay, doc 05 §5); `AIModelVersion.approvedForProduction/approvedBy/approvedAt` are real columns with a fail-closed admin approval API (`POST /admin/ai-models/:id/approval` — no eval run, no approval) and a production gateway gate (unapproved runtime model → honest rule-based with `withheldReason: 'model-not-approved'`); the FDA time-sensitivity claim for the crisis agent is softened (doc 14 §6.1 — non-device status NOT claimed for the crisis path, pending counsel). **AuditEvent doc-02 forensic fields** (licenseSnapshot, jurisdiction, purpose, consentRef, abacRuleMatched, deviceId, sessionId, authLevel, obligations) landed — nullable, hash-covered, wired at break-glass. `10-10-PROGRAM.md` checkboxes reconciled against landed code. API suite: **647 tests green**.
 
 ## Context status (30 contexts)
 
@@ -21,7 +23,7 @@ Living traceability of every bounded context against the roadmap (`technical/13-
 | 2 | Tenant / Clinic Network | 1 | 🟡 | Tenant/Clinic in schema + seed; no management module yet |
 | 3 | Client Registry | 1 | 🟡 | Client model + `clients` read module (`/clients/me`, clinical-summary); no admin CRUD |
 | 4 | Psychologist Registry | 1 | 🟡 | Psychologist model used by matching/clinicians; no dedicated registry CRUD |
-| 5 | Audit & Compliance | 1 | ✅ | Hash-chained `AuditService`; chain-integrity verified live |
+| 5 | Audit & Compliance | 1 | ✅ | Hash-chained `AuditService`; chain-integrity verified live; daily anchor + SIEM export; **doc-02 forensic fields** (jurisdiction/purpose/consentRef/abacRuleMatched/sessionId/authLevel/obligations…) hash-covered |
 | 6 | Admin Configuration | 1 | 📝 | `FeatureFlag` model exists; module pending |
 | 7 | Credentialing & Contracts | 2 | ✅ | `assertClinicalEligibility` + `ClinicalWriteGuard`; inactive/wrong-jurisdiction → 403 verified |
 | 8 | Intake & Screening | 2 | ✅ | Deterministic screening + risk flags; consent-gated; verified |
@@ -38,7 +40,7 @@ Living traceability of every bounded context against the roadmap (`technical/13-
 | 19 | Intervention Tracking | 4 | ✅ | Intervention/Homework API + patient home complete loop |
 | 20 | Outcomes | 4 | ✅ | Measures + per-construct trend; verified |
 | 21 | Risk & Crisis | 4 | ✅ | Escalation workflow (human-only resolve), append-only safety plans, break-glass (1h grant + HIGH audit + DPO-alert event), `/risk` board; verified live |
-| 22 | AI Gateway | 5 | ✅ | Governed offline stub, recommendation ledger, PENDING human-decision gate; verified |
+| 22 | AI Gateway | 5 | ✅ | Governed agents (activate-on-key + honest rule-based fallback), recommendation ledger with **verbatim replay bundle**, PENDING human-decision gate, consent + kill-switch + **production model-approval gate** (clinical-governance columns, fail-closed); verified |
 | 23 | Wearables | 5 | ✅ | Ingest + 7-day rollup; verified |
 | 24 | Payments | 6 | ✅ | Invoices + payment capture (atomic); `Decimal(18,4)`, no float math; `/finance` UI; verified live |
 | 25 | Accounting | 6 | ✅ | Double-entry ledger + chart of accounts; **balanced postings verified** (Σdebit==Σcredit); atomic with payment |
@@ -64,8 +66,8 @@ Living traceability of every bounded context against the roadmap (`technical/13-
 - **Compliance gates** — license/jurisdiction gate on clinical writes + consent-gated intake (roadmap Phase-2 DoD), live-verified (403 / 409).
 - **Multilingual** — 10 languages incl. Arabic RTL, cookie-driven SSR locale, zero raw keys.
 - **Tamper-evident audit** — SHA-256 hash chain, integrity verified.
-- **Quality gates** — full turbo build 4/4; 28 API tests; live end-to-end smokes per wave.
-- **Recent frontend verification note (2026-07-09)** — `/messages` page targeted TypeScript check passed and a Next production build completed with the route included. Focused Playwright regression was attempted but could not complete because the existing web middleware requires `JWT_ACCESS_SECRET` at build time for authenticated routes.
+- **Quality gates** — full turbo build 4/4; **647 API tests** (incl. blocking clinical-safety suite); live end-to-end smokes per wave.
+- **Browser E2E restored (2026-07-15)** — the full Playwright suite (journeys + axe a11y) is **15/15 green, twice consecutively**, against the real stack. `auth.setup.ts` now completes REAL TOTP MFA enrollment through the product API (inline RFC-6238 codes, no test-only auth bypass). Two product bugs found and fixed by the suite: the web client did not parse `application/problem+json` error bodies (MFA-enrolled users could never log in through the UI — the MFA_REQUIRED prompt never appeared), and no product path assigned a client a location jurisdiction (matching's scope-of-practice gate therefore yielded zero candidates for every non-seed client; registration + registry-create now accept self-reported `jurisdiction`).
 - **DevOps** — `docker-compose.yml` (Postgres+Redis) + GitHub Actions CI (validate→push→seed→build→test).
 
 ## Deviations from plan (recorded)

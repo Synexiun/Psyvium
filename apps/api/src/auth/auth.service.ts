@@ -129,7 +129,11 @@ export class AuthService {
               timezone: input.timezone,
             },
           });
-          await tx.roleAssignment.create({ data: { userId: user.id, roleId: role.id } });
+          // Self-reported location jurisdiction (see registerSchema): without
+          // it this client can never be credential-matched to a psychologist.
+          await tx.roleAssignment.create({
+            data: { userId: user.id, roleId: role.id, jurisdiction: input.jurisdiction },
+          });
           await tx.client.create({
             data: {
               userId: user.id,
@@ -155,7 +159,7 @@ export class AuthService {
         action: 'user.registered',
         entityType: 'User',
         entityId: userId,
-        after: { email, role: SELF_REGISTRATION_ROLE },
+        after: { email, role: SELF_REGISTRATION_ROLE, jurisdiction: input.jurisdiction ?? null },
       });
       return tokens;
     });

@@ -513,6 +513,13 @@ export class RiskService {
         reason: grant.reason,
         expiresAt: expiresAt.toISOString(),
       },
+      // doc 02 forensic fields: break-glass is the canonical purpose-of-use
+      // event — the justification IS the purpose, the ABAC path is explicit,
+      // and the DPO alert + 1h expiry are the enforced obligations.
+      ...AuditService.forensicsFromPrincipal(principal),
+      purpose: grant.reason,
+      abacRuleMatched: 'break-glass',
+      obligations: ['dpo-alert', `expires:${expiresAt.toISOString()}`],
       // Fail-closed (06-security-and-rbac.md §5): emergency PHI access must
       // never proceed silently without its audit + DPO-alert trail.
       critical: true,

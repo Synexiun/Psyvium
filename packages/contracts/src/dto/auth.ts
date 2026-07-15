@@ -39,6 +39,20 @@ export const registerSchema = z
      * when exactly one active tenant explicitly enables public registration.
      */
     tenantSlug: z.string().trim().min(2).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).optional(),
+    /**
+     * SELF-REPORTED location jurisdiction (e.g. "US-NY") stamped onto the
+     * CLIENT role assignment. Without it the client can never be matched:
+     * matching's scope-of-practice gate requires a client jurisdiction to
+     * credential-match any psychologist (matching.service.ts). Self-report is
+     * the intake-grade signal only — telehealth session-start location
+     * confirmation (tracked follow-up) remains the point of verification.
+     */
+    jurisdiction: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z]{2}(?:-[A-Za-z0-9]{1,6})?$/)
+      .transform((v) => v.toUpperCase())
+      .optional(),
   })
   .strict(); // reject unknown keys (e.g. a smuggled `role`) rather than silently drop them
 export type RegisterInput = z.infer<typeof registerSchema>;

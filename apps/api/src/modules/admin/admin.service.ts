@@ -1,11 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type {
+  AiModelVersionDto,
   AuthPrincipal,
   ClinicDto,
   CreateClinicInput,
   FeatureFlagDto,
   PatchClinicInput,
   PatchTenantInput,
+  SetAiModelApprovalInput,
   TenantDto,
   UpsertFeatureFlagInput,
 } from '@vpsy/contracts';
@@ -182,6 +184,82 @@ export class AdminService {
     };
   }
 
+  // ──────────── AI model registry governance (doc 05 §5, doc 12 §6) ────────
+  // AIModelVersion is a PLATFORM-LEVEL registry table (not tenant-scoped);
+  // the audit trail records which tenant's admin acted. Approval is the
+  // clinical-governance sign-off that lets the gateway call this model in
+  // production (`AiGatewayService.isRuntimeModelApprovedForProduction`).
+
+  async listAiModelVersions(): Promise<AiModelVersionDto[]> {
+    const rows = await this.prisma.aIModelVersion.findMany({ orderBy: { activatedAt: 'desc' } });
+    return rows.map((row) => this.toAiModelVersionDto(row));
+  }
+
+  async setAiModelApproval(
+    principal: AuthPrincipal,
+    id: string,
+    input: SetAiModelApprovalInput,
+  ): Promise<AiModelVersionDto> {
+    const existing = await this.prisma.aIModelVersion.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('AI model version not found');
+
+    // FAIL-CLOSED (doc 12 §6): a version with no recorded eval run cannot be
+    // approved for production — governance sign-off must reference evidence.
+    if (input.approved) {
+      const metrics = existing.evalMetrics;
+      const hasEvalEvidence =
+        metrics !== null &&
+        typeof metrics === 'object' &&
+        !Array.isArray(metrics) &&
+        Object.keys(metrics as object).length > 0;
+      if (!hasEvalEvidence) {
+        throw new ConflictException(
+          'Cannot approve for production: AIModelVersion.evalMetrics carries no eval run. ' +
+            'Record a passing offline eval before clinical-governance approval (doc 12 §6).',
+        );
+      }
+    }
+
+    const updated = await this.prisma.aIModelVersion.update({
+      where: { id },
+      data: {
+        approvedForProduction: input.approved,
+        approvedBy: input.approved ? principal.userId : null,
+        approvedAt: input.approved ? new Date() : null,
+      },
+    });
+
+    // Critical: a model reaching (or being pulled from) production is a
+    // governance event that must never be silently lost.
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: input.approved ? 'admin.ai_model.approved' : 'admin.ai_model.approval_revoked',
+      entityType: 'AIModelVersion',
+      entityId: id,
+      before: {
+        approvedForProduction: existing.approvedForProduction,
+        approvedBy: existing.approvedBy,
+      },
+      after: {
+        provider: updated.provider,
+        model: updated.model,
+        version: updated.version,
+        approvedForProduction: updated.approvedForProduction,
+        approvedBy: updated.approvedBy,
+        ...(input.notes ? { notes: input.notes } : {}),
+      },
+      critical: true,
+    });
+    await this.bus.publish(CONFIG_CHANGED, principal.tenantId, {
+      entity: 'AIModelVersion',
+      id,
+      approvedForProduction: updated.approvedForProduction,
+    });
+
+    return this.toAiModelVersionDto(updated);
+  }
+
   // ─────────────────────────────── Helpers ─────────────────────────────────
 
   private toTenantDto(t: TenantRow): TenantDto {
@@ -205,6 +283,32 @@ export class AdminService {
       timezone: c.timezone,
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),
+    };
+  }
+
+  private toAiModelVersionDto(row: {
+    id: string;
+    provider: string;
+    model: string;
+    version: string;
+    capability: string;
+    evalMetrics: unknown;
+    activatedAt: Date;
+    approvedForProduction: boolean;
+    approvedBy: string | null;
+    approvedAt: Date | null;
+  }): AiModelVersionDto {
+    return {
+      id: row.id,
+      provider: row.provider,
+      model: row.model,
+      version: row.version,
+      capability: row.capability,
+      evalMetrics: row.evalMetrics,
+      activatedAt: row.activatedAt.toISOString(),
+      approvedForProduction: row.approvedForProduction,
+      approvedBy: row.approvedBy,
+      approvedAt: row.approvedAt ? row.approvedAt.toISOString() : null,
     };
   }
 }

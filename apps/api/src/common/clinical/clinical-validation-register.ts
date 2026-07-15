@@ -215,7 +215,10 @@ const BASE_REGISTER: ClinicalValidationEntry[] = [
     marketingAllowed: false,
     requiresHumanDecision: true,
     notes:
-      'Core principle: AI assists, licensed clinicians decide. No autonomous diagnosis. PENDING human decision on AIRecommendation.',
+      'Core principle: AI assists, licensed clinicians decide. No autonomous diagnosis. PENDING human decision on AIRecommendation. ' +
+      'FDA CDS caveat: non-device status is NOT claimed for the crisis path — time-critical decisions likely fail the ' +
+      'independent-review criterion. Risk detection is deterministic; the model only assembles post-flag context. ' +
+      'Classification pending regulatory counsel review (doc 14 §6.1).',
   },
 ];
 

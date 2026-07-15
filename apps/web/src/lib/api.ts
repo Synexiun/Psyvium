@@ -190,6 +190,10 @@ export function getPrincipal(): Principal | null {
       tenantId: typeof parsed.tenantId === 'string' ? parsed.tenantId : undefined,
       roles: Array.isArray(parsed.roles) ? parsed.roles : [],
       permissions: Array.isArray(parsed.permissions) ? parsed.permissions : [],
+      // Dropping this field made /security/mfa's "already enrolled" check
+      // always-falsy — it bounced MFA-mandatory roles straight to /home
+      // before they could ever enroll.
+      mfaEnrollmentRequired: parsed.mfaEnrollmentRequired === true,
     };
   } catch {
     return null;
@@ -255,7 +259,13 @@ async function request<T>(path: string, options: RequestInit = {}, allowRefresh 
       ...(options.headers ?? {}),
     },
   });
-  const isJson = res.headers.get('content-type')?.includes('application/json');
+  // Errors arrive as RFC-9457 `application/problem+json` (the API's
+  // ProblemDetailsFilter), not bare `application/json` — matching only the
+  // latter left every error body an opaque string, so code-carrying errors
+  // (e.g. MFA_REQUIRED at login) could never reach their UI handlers and an
+  // MFA-enrolled user saw "invalid credentials" instead of the code prompt.
+  const contentType = res.headers.get('content-type') ?? '';
+  const isJson = contentType.includes('application/json') || contentType.includes('+json');
   const body = isJson ? await res.json() : await res.text();
   if (!res.ok) {
     if (

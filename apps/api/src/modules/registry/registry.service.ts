@@ -123,7 +123,11 @@ export class RegistryService {
 
       const clientRole = await tx.role.findUnique({ where: { name: 'CLIENT' } });
       if (clientRole) {
-        await tx.roleAssignment.create({ data: { userId: createdUser.id, roleId: clientRole.id } });
+        // Location jurisdiction (see createClientRegistrySchema): without it
+        // this client can never be credential-matched to a psychologist.
+        await tx.roleAssignment.create({
+          data: { userId: createdUser.id, roleId: clientRole.id, jurisdiction: input.jurisdiction },
+        });
       }
 
       const createdClient = await tx.client.create({

@@ -9,6 +9,8 @@
 >
 > **Engineering wave (2026-07-13):** Gate 0 + remaining in-repo code gates closed.  
 > **Independent re-audit:** [`PLATFORM-AUDIT-2026-07-13.md`](PLATFORM-AUDIT-2026-07-13.md) — production PHI **~5/10**, eng completeness **~7.5/10**. Path to true 10/10 is Phase G1–G3 in that report (ops + validation + compliance evidence), not more checkbox module stubs.
+>
+> **Reconciliation + final AI governance wave (2026-07-14):** checkboxes below trued-up against landed code (several items had shipped in the staging-PHI/security waves without being ticked). New this wave: AIRecommendation persists the de-identified **signal bundle verbatim** (`inputSignals`) for true replay; `AIModelVersion.approvedForProduction/approvedBy/approvedAt` are real columns with a fail-closed admin approval API (no eval run → no approval) and a production gateway gate (`withheldReason: 'model-not-approved'`); the FDA time-sensitivity claim for the crisis agent is softened in doc 14 §6.1 (classification pending regulatory counsel); **AuditEvent doc-02 forensic fields** (licenseSnapshot, jurisdiction, purpose, consentRef, abacRuleMatched, deviceId, sessionId, authLevel, obligations) landed, hash-covered, wired at break-glass.
 
 ---
 
@@ -57,7 +59,7 @@
 ## WAVE B — Real-time (in progress)
 - [x] **WebSocket transport + EventBus→socket bridge**, tenant-isolated, PHI-minimized; live risk board + connection indicator; hot-path indexes.
 - [x] **Transactional outbox** (doc 00 ADR-005): persist event rows in the same tx; relay publishes.
-- [~] Tele-session lifecycle model + presence/waiting-room seam (pairs with Wave F video).
+- [x] Tele-session lifecycle model + presence/waiting-room seam — `TeleSession` (status machine, unique room, participantEvents) + LiveKit telehealth module with waiting room (landed with Wave F, `06995ce`).
 
 ## WAVE C — Differentiators & core features
 - [x] **IRT/CAT psychometrics** (doc 07 §5-6): `ItemParameter`, EAP θ, adaptive `startCat`/`nextItem`, `ItemTranslation`. DIF pipeline remains open (see WAVE CR).
@@ -67,32 +69,32 @@
 - [x] **Diagnosis Support UI** — `/diagnosis` clinician surface for differentials + coded formulations (no AI write path).
 - [x] **Password reset** — request/complete API (enumeration-safe; digest-only tokens; session revoke on complete).
 - [x] **Diagnosis Support** module — backend + UI for hypotheses/formulations.
-- [~] **Documents** module — metadata + capability card; blob storage + malware scan remain **infra**.
+- [~] **Documents** module — metadata + capability card **plus** S3 SigV4 presign, ClamAV INSTREAM virus-scan worker, and web vault UI (`50acb54`, `23ad9cd`, `36abb55`); production activation (bucket + scanner endpoint creds) remains **infra**.
 - [x] **SMS STOP/opt-out + quiet-hours** — `SmsOptOut` model, staff opt-out API, inbound keyword STOP/START, quiet-hours gate on staff + system SMS.
 - [x] **Twilio inbound SMS webhook** — signed `POST /comms/webhooks/twilio/sms-inbound` applies STOP/START and returns TwiML.
 - [x] **SMS templates** (doc 15) — `SmsTemplate` model, upsert/list, send-by-template with `{var}` interpolation.
-- [ ] **Comp-model composability** (doc 05): `computePayout` must read senior-override/supervisor/clinic/referral fields, not a flat pct.
+- [x] **Comp-model composability** (doc 05): `computePayout` composes the full `RevenueShareRule` stack — base pct + seniorOverridePct + supervisorSharePct + clinicSharePct + referralSharePct + per-country `countryRules` overrides — in Decimal space, with >100% and malformed-rule fail-closed, itemized in `rulesApplied` (`payouts.service.ts`).
 - [x] **Audit-Read API** — `GET /audit/events` (cursor pagination, entity/actor filters) for `AUDIT_READ`.
 - [x] **Central PolicyEngine (ABAC) skeleton** (doc 03/06 §4.4): pure `evaluatePolicy` with consent/emergency/device/residency/relationship + `obligations[]` (ClinicalAccessService remains production enforcer).
 - [x] **Refresh-token rotation/differentiation** + `/auth/refresh` + family reuse revoke + `authVersion` (doc 06 §3).
 
 ## WAVE D — Production hardening (build as code)
-- [ ] **OpenTelemetry** traces/metrics/logs, PHI-safe attrs, correlation ids (doc 10 §7).
-- [ ] **CI gates** (doc 10 §4): lint, typecheck, SAST/secret-scan, unit, clinical-safety, e2e, a11y, build.
-- [ ] **Dockerfile(s)** + `/healthz`/`/readyz` probes (doc 10 §5).
+- [x] **OpenTelemetry** traces/metrics/logs, PHI-safe attrs, correlation ids (doc 10 §7) — `common/observability` module (`otel.ts`, PHI-safe `otel-sanitizer`, metrics bridge), activate-on-endpoint.
+- [~] **CI gates** (doc 10 §4): dependency audit (blocking), secret-scan (gitleaks), typecheck, unit, clinical-safety (blocking), e2e+a11y (blocking), build, docker-build proof all in `ci.yml`; **API lint script is still a stub** — the one gate left.
+- [x] **Dockerfile(s)** + `/healthz`/`/readyz` probes (doc 10 §5) — `apps/api/Dockerfile`, `apps/web/Dockerfile`, `health.controller.ts`.
 - [x] **Feature-flag/kill-switch service** — `FeatureFlagsService` + AI_ASSISTED_ANALYSIS kill switch on every model path.
-- [ ] **Playwright E2E** + **axe a11y gate** (doc 12); Testcontainers integration; k6 load.
-- [ ] **IaC** (Terraform/render.yaml/Helm) **(infra)**; **backups/DR** PITR + restore tests **(infra)**.
-- [ ] **Field-level PHI encryption + KMS + crypto-shredding** (doc 06 §7) **(infra: KMS)**.
-- [ ] **PWA**: service worker + IndexedDB offline note outbox + background sync (doc 11 §5).
-- [ ] **AuditEvent forensic fields** (doc 02): licenseSnapshot, jurisdiction, purpose, consentRef, abacRuleMatched, deviceId, sessionId, authLevel, obligations; + daily anchor; + DPO-alert subscriber.
+- [~] **Playwright E2E** + **axe a11y gate** (doc 12) — 2026-07-15: suite **15/15 green twice consecutively** against the real stack; `auth.setup.ts` performs REAL TOTP MFA enrollment (inline RFC-6238, secrets persisted for re-runs); found+fixed two product bugs (web client ignored `application/problem+json` bodies → MFA users locked out of the UI; clients had no jurisdiction path → matching yielded zero candidates for every non-seed client). Testcontainers integration + k6 load remain.
+- [~] **IaC** — `render.yaml` + `docker-compose.yml` as code; **backups/DR**: restore-drill checklist + admin security-posture probes (`c8d0f63`); operator PITR attestation + an executed drill on the real host remain **(infra)**.
+- [~] **Field-level PHI encryption + KMS** (doc 06 §7) — XChaCha20-Poly1305 field cipher, KMS DEK unwrap (`0640830`), key-rotation re-encrypt job (`c8d0f63`), production boot refusals (`99eb347`); **crypto-shredding** (per-subject key destruction) remains.
+- [~] **PWA**: hand-written `sw.js` (app-shell cache, never caches clinical writes) + IndexedDB offline note outbox + Background Sync flush bridge; full offline charting scope remains.
+- [x] **AuditEvent forensic fields** (doc 02) — licenseSnapshot, jurisdiction, purpose, consentRef, abacRuleMatched, deviceId, sessionId, authLevel, obligations landed 2026-07-14 (nullable, hash-covered, `forensicsFromPrincipal` helper, wired at break-glass); **daily anchor** (`36abb55`) + **DPO-alert subscriber** (durable break-glass event + DPO logger) already landed.
 
 ## WAVE E — Business surfaces & remaining integrations
 - [ ] **SaaS subscription + marketplace take-rate billing** (doc 05) + **Payments→Stripe** (infra: key).
 - [ ] **Public Clinic Network**: directory, public psychologist profiles, SEO/city pages, public referral (doc 01 Layer 1).
-- [ ] **Admin Configuration** + **Tenant/Clinic onboarding** UI+API (doc 01/03/07).
+- [~] **Admin Configuration** + **Tenant/Clinic onboarding** UI+API (doc 01/03/07) — admin module (tenant profile, clinic CRUD, feature flags, security posture, validation/BAA registers, AI model approvals) + registry CRUD landed; full self-service onboarding flow remains.
 - [ ] **Supervisor portal** (co-sign/oversight) + **Government/Institutional portal** (SLA, referral volume) (doc 03).
-- [ ] **Twilio Voice** click-to-call + status-callback webhook + recording (consent+jurisdiction gated) (doc 15) (infra: number/webhook).
+- [x] **Twilio Voice** click-to-call + async call lifecycle + signed status-callback webhook (doc 15) (`c02bc5a`); recording policy gates remain with the telehealth recording decision (infra: number/webhook URL).
 - [ ] Pagination/cursor on all list endpoints (doc 04); RFC-9457 error filter app-wide; FHIR-alignable facade (doc 03).
 
 ## WAVE CR — Clinical Rigor (from the 2026-07-06 evidence-based audit; each item cites its literature)
@@ -120,13 +122,13 @@ Three read-only clinical auditors graded the clinical sections against the publi
 - [x] Homework loop per Kazantzis (`ba97ee6`): rationale, difficulty, review-at-next-session endpoint (reviewedAt/By/Notes/reviewOutcome).
 - [x] Reliable Change Index (`e5076b6`): Jacobson-Truax w/ cited PHQ-9/GAD-7 psychometrics; honest 'unknown-reliability' fallback.
 - [ ] Validate-or-replace the intake composite risk score (recentLoss now feeds it — the validation study remains).
-- [ ] DIF pipeline (min. Mantel-Haenszel); TIF/conditional-SE reporting.
+- [~] DIF pipeline — Mantel–Haenszel contingency framework with honest minimum-sample gates (`dif.service.ts`, psychometrician-facing endpoint); full multi-group IRT DIF + TIF/conditional-SE reporting remains a research pipeline.
 - [x] LicenseGrant 403 gate on administer/CAT (`InstrumentLicenseGrant`).
 - [x] Post-incident review (`4a54b55`): IncidentReview (reviewer/co-sign/action items) + pending "never ages silently" list for SEVERE resolutions + break-glass; deliberately not a resolution gate. Transition-of-care record = follow-up.
-- [ ] AI: persist the de-identified signal bundle (not just hash) for true replay; promote approvedForProduction/approvedBy to real columns; soften the FDA time-sensitivity claim for the crisis agent pending regulatory review.
+- [x] AI (2026-07-14): de-identified signal bundle persisted verbatim (`AIRecommendation.inputSignals`) for true replay; `approvedForProduction/approvedBy/approvedAt` real columns on `AIModelVersion` + fail-closed admin approval API (no eval run → 409) + production gateway refuses unapproved runtime models (`withheldReason: 'model-not-approved'`); FDA time-sensitivity claim softened in doc 14 §6.1 — crisis-path non-device status explicitly NOT claimed, pending regulatory counsel.
 
 ## WAVE F — In-house telehealth video (infra)
-- [ ] **LiveKit/mediasoup SFU + TURN**, signaling, waiting room, session state machine, in-session tooling, recording, audio-only fallback, post-session summary (doc 08) — activate-on-deploy.
+- [x] **LiveKit Cloud telehealth** (`06995ce`) — tokens, participant ABAC, waiting room, session state machine, honest 503 when unconfigured — activate-on-key. Self-hosted SFU/mediasoup + TURN topology, recording (consent+jurisdiction gated), and post-session summary remain **(infra / policy)**.
 
 ---
 

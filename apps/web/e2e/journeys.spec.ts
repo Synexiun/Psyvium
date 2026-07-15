@@ -18,9 +18,13 @@ test.describe('Auth boundary (middleware)', () => {
 });
 
 test.describe('Login + sign-out', () => {
-  test('demo client login lands on /home with live data, then signs out to /login', async ({ page }) => {
+  test('client credential login lands on /home with live data, then signs out to /login', async ({ page }) => {
+    // Real credential form — demo one-click buttons were removed (Gate 0).
     await page.goto('/login');
-    await page.getByRole('button', { name: /alex\.client@example\.com/ }).click();
+    await page.locator('#login-tenant').fill('vpsy-demo');
+    await page.locator('#login-email').fill('alex.client@example.com');
+    await page.locator('#login-password').fill('Vpsy!2026');
+    await page.getByRole('button', { name: /sign in|log in|continue/i }).click();
     await expect(page).toHaveURL(/\/home$/);
 
     // The page's three honest states are loading/error/live — assert we
@@ -40,8 +44,18 @@ test.describe('Clinician journey (dr.rivera)', () => {
     await page.goto('/session');
     await expect(page.getByRole('heading', { name: 'Session workspace' })).toBeVisible();
 
-    // Real seeded caseload (dr.rivera ↔ alex.client, seed.ts assignment_demo_1)
-    // — assert the live timeline rendered, not the "no clients yet" empty state.
+    // Gate 0 browser-PHI isolation removed auto patient selection — the
+    // workspace intentionally renders NO client data until the clinician
+    // explicitly picks a patient. Assert the caseload is populated (real
+    // seeded assignment dr.rivera ↔ alex.client), select the first patient,
+    // and only then expect the live timeline.
+    const clientSelect = page.locator('#workspace-client');
+    await expect(clientSelect).toBeVisible({ timeout: 15_000 });
+    const options = clientSelect.locator('option');
+    expect(await options.count()).toBeGreaterThan(1);
+    const value = await options.nth(1).getAttribute('value');
+    await clientSelect.selectOption(value!);
+
     await expect(page.getByText('Client timeline')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('No clients are assigned to you yet.')).toHaveCount(0);
   });
@@ -132,15 +146,61 @@ test.describe('Manager journey (manager@vpsy.health)', () => {
     const approveButtons = page.getByRole('button', { name: 'Approve' });
     const before = await approveButtons.count();
 
-    // seed.ts's only Assignment is already APPROVED, so a fresh install's
-    // triage queue starts empty — seed a real pending proposal the same way
-    // the product does: a client submits an intake (matching.service.ts
-    // subscribes to IntakeSubmitted and proposes an assignment for manager
-    // review). Driven through the real /intake UI in its own authenticated
-    // context, not a bypassed API call.
-    const clientContext = await browser.newContext({ storageState: 'e2e/.auth/client.json' });
+    // seed.ts's only Assignment is already APPROVED, and matching correctly
+    // refuses to propose for a client already in care (open-assignment
+    // uniqueness + "existing APPROVED/ACTIVE wins" in matching.service.ts's
+    // proposeForClient) — so alex.client can never generate a fresh proposal.
+    // Instead, walk the REAL new-patient path end-to-end: register a brand-new
+    // client through the public tenant-aware registration API (the same
+    // endpoint a registration UI will call — no web form exists yet, Wave E),
+    // grant the two intake-required consents through the real consent API,
+    // then submit intake through the real /intake UI. matching.service.ts
+    // reacts to IntakeSubmitted and proposes an assignment for manager review.
+    const clientContext = await browser.newContext();
     const clientPage = await clientContext.newPage();
     try {
+      const uniqueEmail = `e2e.patient.${Date.now()}@example.com`;
+      // Land on the app origin first so page.request carries/sets cookies there.
+      await clientPage.goto('/login');
+      const register = await clientPage.request.post('/api/backend/auth/register', {
+        data: {
+          email: uniqueEmail,
+          password: 'E2e!Patient2026',
+          fullName: 'E2E Registered Patient',
+          tenantSlug: 'vpsy-demo',
+          // Self-reported location — without a client jurisdiction, matching's
+          // scope-of-practice gate correctly yields ZERO candidates (both seed
+          // psychologists are credentialed US-NY).
+          jurisdiction: 'US-NY',
+        },
+      });
+      expect(register.ok(), `register failed: ${register.status()}`).toBe(true);
+      const tokens = (await register.json()) as {
+        principal?: { userId: string; tenantId: string; roles: string[]; permissions: string[] };
+      };
+      // Mirror the login page's rememberPrincipal so portal role-routing works.
+      if (tokens.principal) {
+        await clientPage.evaluate((principal) => {
+          localStorage.setItem(
+            'vpsy.principalHint',
+            JSON.stringify({
+              sub: principal.userId,
+              tenantId: principal.tenantId,
+              roles: principal.roles,
+              permissions: principal.permissions,
+            }),
+          );
+        }, tokens.principal);
+      }
+      // Consent-gated intake (Phase 2 DoD): grant the two required consents
+      // through the real consent API before the intake UI will accept a submit.
+      for (const type of ['TELEPSYCHOLOGY', 'DATA_PROCESSING']) {
+        const consent = await clientPage.request.post('/api/backend/consents', {
+          data: { type, version: '1.0.0' },
+        });
+        expect(consent.ok(), `consent ${type} failed: ${consent.status()}`).toBe(true);
+      }
+
       await clientPage.goto('/intake');
       await clientPage
         .getByLabel('What brings you here?')

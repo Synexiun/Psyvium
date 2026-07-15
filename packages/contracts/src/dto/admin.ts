@@ -82,3 +82,29 @@ export const featureFlagDto = z.object({
   updatedAt: z.string(),
 });
 export type FeatureFlagDto = z.infer<typeof featureFlagDto>;
+
+// ── AI model registry governance (doc 05 §5, doc 12 §6) ──
+// approvedForProduction/approvedBy are REAL columns on AIModelVersion.
+// Approval is fail-closed at the service: a version with no recorded eval
+// run (`evalMetrics` empty) cannot be approved.
+
+export const setAiModelApprovalSchema = z.object({
+  approved: z.boolean(),
+  /** Free-text governance note (e.g. eval run reference, board minute id). Audited. */
+  notes: z.string().max(1000).optional(),
+});
+export type SetAiModelApprovalInput = z.infer<typeof setAiModelApprovalSchema>;
+
+export const aiModelVersionDto = z.object({
+  id: z.string(),
+  provider: z.string(),
+  model: z.string(),
+  version: z.string(),
+  capability: z.string(),
+  evalMetrics: z.unknown(),
+  activatedAt: z.string(),
+  approvedForProduction: z.boolean(),
+  approvedBy: z.string().nullable(),
+  approvedAt: z.string().nullable(),
+});
+export type AiModelVersionDto = z.infer<typeof aiModelVersionDto>;

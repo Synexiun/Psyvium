@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Role } from '@vpsy/contracts';
 import type { AuthPrincipal } from '@vpsy/contracts';
 import { AdminService } from './admin.service';
@@ -38,10 +38,28 @@ function makeService() {
   };
   const flagRow = { id: 'flag_1', key: 'AI_ASSISTED_ANALYSIS', enabled: true, updatedAt: new Date('2026-01-01T00:00:00Z') };
 
+  const modelVersionRow = {
+    id: 'model_1',
+    provider: 'anthropic',
+    model: 'claude-opus-4-8',
+    version: 'runtime',
+    capability: 'INTAKE',
+    evalMetrics: { evalRunId: 'eval_01', crisisRecall: 0.99 },
+    activatedAt: new Date('2026-01-01T00:00:00Z'),
+    approvedForProduction: false,
+    approvedBy: null,
+    approvedAt: null,
+  };
+
   const prisma = {
     tenant: {
       findUnique: jest.fn().mockResolvedValue(tenantRow),
       update: jest.fn().mockResolvedValue(tenantRow),
+    },
+    aIModelVersion: {
+      findMany: jest.fn().mockResolvedValue([modelVersionRow]),
+      findUnique: jest.fn().mockResolvedValue(modelVersionRow),
+      update: jest.fn().mockImplementation(({ data }: any) => ({ ...modelVersionRow, ...data })),
     },
     clinic: {
       create: jest.fn().mockResolvedValue(clinicRow),
@@ -69,7 +87,7 @@ function makeService() {
     isEnabled: jest.fn().mockResolvedValue(true),
   };
   const svc = new AdminService(prisma as any, audit as any, bus as any, flags as any);
-  return { svc, prisma, audit, bus, flags, tenantRow, clinicRow, flagRow };
+  return { svc, prisma, audit, bus, flags, tenantRow, clinicRow, flagRow, modelVersionRow };
 }
 
 describe('AdminService — Tenant', () => {
@@ -197,6 +215,89 @@ describe('AdminService — Feature flags (EU-AI-Act kill-switch seam)', () => {
     expect(result.enabled).toBe(false);
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'admin.feature_flag.upserted', before: { enabled: true }, after: expect.objectContaining({ enabled: false }) }),
+    );
+  });
+});
+
+/**
+ * WAVE CR (10-10 program, final AI item) — AI model registry governance
+ * (doc 05 §5, doc 12 §6): approvedForProduction/approvedBy are real columns,
+ * approval is FAIL-CLOSED (no eval run recorded → no approval), and every
+ * approval change is a critical audit event.
+ */
+describe('AdminService — AI model registry governance', () => {
+  it('lists model versions with their approval state', async () => {
+    const { svc } = makeService();
+
+    const result = await svc.listAiModelVersions();
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!).toEqual(
+      expect.objectContaining({
+        provider: 'anthropic',
+        model: 'claude-opus-4-8',
+        approvedForProduction: false,
+        approvedBy: null,
+      }),
+    );
+  });
+
+  it('approves a version with a recorded eval run — sets approvedBy/approvedAt and audits critically', async () => {
+    const { svc, prisma, audit } = makeService();
+
+    const result = await svc.setAiModelApproval(admin, 'model_1', { approved: true, notes: 'eval_01 passed thresholds' });
+
+    expect(result.approvedForProduction).toBe(true);
+    expect(result.approvedBy).toBe('user_admin');
+    expect(prisma.aIModelVersion.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'model_1' },
+        data: expect.objectContaining({ approvedForProduction: true, approvedBy: 'user_admin' }),
+      }),
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'admin.ai_model.approved',
+        critical: true,
+        after: expect.objectContaining({ approvedForProduction: true, notes: 'eval_01 passed thresholds' }),
+      }),
+    );
+  });
+
+  it('FAIL-CLOSED: refuses approval when evalMetrics carries no eval run (doc 12 §6)', async () => {
+    const { svc, prisma, modelVersionRow } = makeService();
+    (prisma.aIModelVersion.findUnique as jest.Mock).mockResolvedValue({ ...modelVersionRow, evalMetrics: {} });
+
+    await expect(svc.setAiModelApproval(admin, 'model_1', { approved: true })).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(prisma.aIModelVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('revokes approval (no eval evidence needed to PULL a model) and clears approvedBy/approvedAt', async () => {
+    const { svc, prisma, audit, modelVersionRow } = makeService();
+    (prisma.aIModelVersion.findUnique as jest.Mock).mockResolvedValue({
+      ...modelVersionRow,
+      evalMetrics: {},
+      approvedForProduction: true,
+      approvedBy: 'user_prior',
+    });
+
+    const result = await svc.setAiModelApproval(admin, 'model_1', { approved: false });
+
+    expect(result.approvedForProduction).toBe(false);
+    expect(result.approvedBy).toBeNull();
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'admin.ai_model.approval_revoked', critical: true }),
+    );
+  });
+
+  it('rejects approval of a model version that does not exist', async () => {
+    const { svc, prisma } = makeService();
+    (prisma.aIModelVersion.findUnique as jest.Mock).mockResolvedValue(null);
+
+    await expect(svc.setAiModelApproval(admin, 'missing', { approved: true })).rejects.toBeInstanceOf(
+      NotFoundException,
     );
   });
 });
