@@ -16,10 +16,14 @@ import { ScoringService } from './scoring.service';
  * deterministic safety-item hook firing exactly as it would on a batch form).
  */
 
+// A PSYCHOLOGIST with an active assignment to the harness client — since the
+// unified caseload ABAC (assertAuthorizedAssessmentTarget) landed on every
+// CAT path, RBAC-empty principals fail closed; the harness mocks the
+// psychologist + assignment rows this principal resolves to.
 const principal: AuthPrincipal = {
   userId: 'user_psy_a',
   tenantId: 'tenant_demo',
-  roles: [],
+  roles: [Role.PSYCHOLOGIST],
   permissions: [],
 };
 
@@ -156,6 +160,11 @@ function makeHarness(opts: {
   const prisma = {
     questionnaireVersion: { findUnique: jest.fn().mockResolvedValue(version) },
     client: { findFirst: jest.fn().mockResolvedValue(client) },
+    // Unified caseload ABAC: the default clinician principal resolves to an
+    // active psychologist with an APPROVED assignment to the harness client.
+    psychologist: { findFirst: jest.fn().mockResolvedValue({ id: 'psy_row_a' }) },
+    assignment: { findFirst: jest.fn().mockResolvedValue({ id: 'assignment_1' }) },
+    breakGlassGrant: { findFirst: jest.fn().mockResolvedValue(null) },
     instrumentLicenseGrant: { findUnique: jest.fn().mockResolvedValue(null) },
     questionnaireResponse: {
       findFirst: jest.fn().mockImplementation(({ where }: any) => {
@@ -268,6 +277,16 @@ describe('CatService.start — CAT opt-in gate + first-item selection', () => {
     const { cat } = makeHarness({ items: grmBank(STRONG_BANK), clientUserId: 'user_someone_else' });
     const clientPrincipal: AuthPrincipal = { ...principal, userId: 'user_client_1', roles: [Role.CLIENT] };
     await expect(cat.start(clientPrincipal, { versionId: 'qv_cat', clientId: 'client_1' })).rejects.toThrow(
+      ForbiddenException,
+    );
+  });
+
+  it('ABAC (unified caseload gate): a PSYCHOLOGIST without an assignment or break-glass cannot start a CAT — RBAC alone is not enough', async () => {
+    const { cat, prisma } = makeHarness({ items: grmBank(STRONG_BANK) });
+    (prisma.assignment.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.breakGlassGrant.findFirst as jest.Mock).mockResolvedValue(null);
+
+    await expect(cat.start(principal, { versionId: 'qv_cat', clientId: 'client_1' })).rejects.toThrow(
       ForbiddenException,
     );
   });

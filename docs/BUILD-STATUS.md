@@ -34,7 +34,7 @@ Living traceability of every bounded context against the roadmap (`technical/13-
 | 13 | Clinical Documentation | 3 | ✅ | Signable, versioned notes; verified |
 | 14 | Messaging | 3 | 🟡 | Secure client↔clinician text threads + `/messages` UI shipped; latest UI refresh flicker fixed (keeps conversation mounted during background thread reloads, guards read marking until user id is known). Targeted TS + Next build passed; full browser regression blocked by known `JWT_ACCESS_SECRET` build-time middleware requirement. Async voice/video `MediaMessage` remains shipped + verified. |
 | 15 | Documents | 3 | 🟡 | Metadata module + admin capability card; blob storage + malware scan = infra |
-| 16 | Psychometrics | 4 | ✅ | Classical + IRT EAP + CAT; safety-item → Risk; **InstrumentLicenseGrant** 403 gate; ItemTranslation provenance |
+| 16 | Psychometrics | 4 | ✅ | Classical + IRT EAP + CAT; safety-item → Risk; **InstrumentLicenseGrant** 403 gate; ItemTranslation provenance; **unified caseload ABAC on every path** (CAT start/answer/read included; manager minimum-necessary parity with ClinicalAccessService — audit 30-day item 5 closed 2026-07-15) |
 | 17 | Diagnosis Support | 4 | ✅ | Hypotheses + coded Formulations; clinician UI `/diagnosis`; no AI write path |
 | 18 | Treatment Planning | 4 | ✅ | Plans + goals, auto-supersede; SMART goals; review cadence; **client acknowledgment** |
 | 19 | Intervention Tracking | 4 | ✅ | Intervention/Homework API + patient home complete loop |

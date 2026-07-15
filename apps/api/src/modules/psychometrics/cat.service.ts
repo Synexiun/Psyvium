@@ -1,14 +1,12 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import {
   questionnaireCutoffsSchema,
-  Role,
   ScoringMethod,
   type AuthPrincipal,
   type CatAnswerInput,
@@ -24,6 +22,7 @@ import { CatSelectionService, type CatCandidate } from './cat-selection.service'
 import { IrtScoringService } from './irt-scoring.service';
 import { PsychometricsService } from './psychometrics.service';
 import { assertActiveInstrumentLicense } from './instrument-license';
+import { assertAuthorizedAssessmentTarget } from './assessment-target-access';
 import { validateSafetyConfiguration } from './response-validation';
 
 /**
@@ -124,7 +123,11 @@ export class CatService {
       select: { id: true, userId: true },
     });
     if (!client) throw new NotFoundException('Client not found');
-    this.assertClientSelf(principal, client.userId);
+    // Unified caseload ABAC (audit P0 "one access path"): same enforcer as
+    // batch administer/read/interpret — clients self-only, psychologists
+    // need an active assignment or break-glass, managers honor
+    // minimum-necessary mode. RBAC alone is NOT sufficient here.
+    await assertAuthorizedAssessmentTarget(this.prisma, principal, client);
 
     // Doc 07 §2 — same LICENSE_REQUIRED gate as batch administer, at START
     // so a licensed CAT never begins without a royalty-tracked grant.
@@ -383,13 +386,6 @@ export class CatService {
     return { version, candidates };
   }
 
-  /** ABAC (doc 06): a CLIENT may only touch their own sessions; clinicians/managers pass on RBAC. */
-  private assertClientSelf(principal: AuthPrincipal, clientUserId: string): void {
-    if (principal.roles.includes(Role.CLIENT) && clientUserId !== principal.userId) {
-      throw new ForbiddenException('Clients may only administer their own assessments');
-    }
-  }
-
   private async getOwnedSession(principal: AuthPrincipal, sessionId: string): Promise<CatSessionRow> {
     const session = await this.prisma.catSession.findFirst({
       where: { id: sessionId, tenantId: principal.tenantId, deletedAt: null },
@@ -398,10 +394,12 @@ export class CatService {
 
     const client = await this.prisma.client.findFirst({
       where: { id: session.clientId, tenantId: principal.tenantId },
-      select: { userId: true },
+      select: { id: true, userId: true },
     });
     if (!client) throw new NotFoundException('Client not found');
-    this.assertClientSelf(principal, client.userId);
+    // Unified caseload ABAC — see start(); answering/reading a session is
+    // the same PHI surface as starting one.
+    await assertAuthorizedAssessmentTarget(this.prisma, principal, client);
 
     return session as CatSessionRow;
   }

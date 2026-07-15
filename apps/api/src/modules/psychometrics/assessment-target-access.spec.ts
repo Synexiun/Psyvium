@@ -95,12 +95,47 @@ describe('assessment target access', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('allows a manager for any client in the tenant', async () => {
+  it('allows a manager for any client in the tenant (default operational mode)', async () => {
     const prisma = harness();
     const principal = { ...basePrincipal, roles: [Role.MANAGER] };
     await expect(
       assertAuthorizedAssessmentTarget(prisma, principal, { id: 'client_1', userId: 'client_user' }),
     ).resolves.toBeUndefined();
+  });
+
+  // Audit P0 "one access path": this helper must mirror ClinicalAccessService's
+  // manager minimum-necessary mode — never be the laxer enforcer.
+  describe('VPSY_MANAGER_MINIMUM_NECESSARY=true (parity with ClinicalAccessService)', () => {
+    const ORIGINAL_ENV = process.env;
+    beforeEach(() => {
+      process.env = { ...ORIGINAL_ENV, VPSY_MANAGER_MINIMUM_NECESSARY: 'true' };
+    });
+    afterEach(() => {
+      process.env = ORIGINAL_ENV;
+    });
+
+    it('blocks a manager without a live break-glass grant', async () => {
+      const prisma = harness({ breakGlassId: null });
+      const principal = { ...basePrincipal, roles: [Role.MANAGER] };
+
+      await expect(
+        assertAuthorizedAssessmentTarget(prisma, principal, { id: 'client_1', userId: 'client_user' }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('allows a manager holding a live break-glass grant for this client', async () => {
+      const prisma = harness({ breakGlassId: 'bg_1' });
+      const principal = { ...basePrincipal, roles: [Role.MANAGER] };
+
+      await expect(
+        assertAuthorizedAssessmentTarget(prisma, principal, { id: 'client_1', userId: 'client_user' }),
+      ).resolves.toBeUndefined();
+      expect(prisma.breakGlassGrant.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ clientId: 'client_1', invokedBy: 'user_1' }),
+        }),
+      );
+    });
   });
 
   it('blocks a psychologist who is not assigned to the target', async () => {

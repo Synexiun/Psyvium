@@ -26,7 +26,10 @@ interface AssessmentTargetPrisma {
 /**
  * ABAC for assessment administration AND clinician read/interpret of
  * responses. Clients: self only. Psychologists: active assignment OR live
- * break-glass grant. Managers: tenant operational access. Supervisors:
+ * break-glass grant. Managers: tenant operational access — unless
+ * VPSY_MANAGER_MINIMUM_NECESSARY=true, in which case managers need a live
+ * break-glass grant exactly like ClinicalAccessService (audit P0 "one access
+ * path" — this helper must never be the laxer enforcer). Supervisors:
  * supervised assignment chain. Fail closed otherwise.
  */
 export async function assertAuthorizedAssessmentTarget(
@@ -35,9 +38,28 @@ export async function assertAuthorizedAssessmentTarget(
   client: AssessmentTargetClient,
 ): Promise<void> {
   if (principal.roles.includes(Role.CLIENT) && client.userId === principal.userId) return;
-  if (principal.roles.includes(Role.MANAGER)) return;
 
   const now = new Date();
+
+  const managerMinimumNecessary = process.env.VPSY_MANAGER_MINIMUM_NECESSARY === 'true';
+  if (principal.roles.includes(Role.MANAGER)) {
+    if (!managerMinimumNecessary) return;
+    if (prisma.breakGlassGrant) {
+      const grant = await prisma.breakGlassGrant.findFirst({
+        where: {
+          tenantId: principal.tenantId,
+          clientId: client.id,
+          invokedBy: principal.userId,
+          expiresAt: { gt: now },
+        },
+        select: { id: true },
+      });
+      if (grant) return;
+    }
+    throw new ForbiddenException(
+      'Assessment access denied — manager minimum-necessary mode requires break-glass',
+    );
+  }
 
   if (principal.roles.includes(Role.PSYCHOLOGIST)) {
     const psychologist = await prisma.psychologist.findFirst({
