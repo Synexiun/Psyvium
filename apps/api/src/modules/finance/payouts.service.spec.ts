@@ -61,6 +61,148 @@ function makeService(overrides: Partial<Record<string, unknown>> = {}) {
 
 const period = { periodStart: '2026-06-01T00:00:00.000Z', periodEnd: '2026-06-30T00:00:00.000Z' };
 
+const secondManager: AuthPrincipal = {
+  userId: 'user_manager_2',
+  tenantId: 'tenant_demo',
+  roles: [Role.MANAGER],
+  permissions: [],
+};
+
+/**
+ * Dual-control decision gate (audit G2 "Payouts: approval"): approval must
+ * come from a DIFFERENT user than the computer; rejection requires a note
+ * (schema-enforced) and MAY be self-issued; CAS prevents double decisions;
+ * disbursement requires APPROVED.
+ */
+describe('PayoutsService.decidePayout (dual control)', () => {
+  function makeDecideService(payoutRow: Record<string, unknown> | null) {
+    const base = payoutRow
+      ? {
+          id: 'payout_1',
+          tenantId: 'tenant_demo',
+          psychologistId: 'psy_1',
+          periodStart: new Date('2026-06-01T00:00:00Z'),
+          periodEnd: new Date('2026-06-30T00:00:00Z'),
+          computedAmount: new Prisma.Decimal('108.0000'),
+          currency: 'USD',
+          status: 'COMPUTED',
+          computedBy: 'user_manager',
+          approvedBy: null,
+          approvedAt: null,
+          decisionNote: null,
+          createdAt: new Date('2026-07-01T00:00:00Z'),
+          psychologist: { user: { fullName: 'Dr. Elena Rivera' } },
+          ...payoutRow,
+        }
+      : null;
+    const prisma = {
+      payout: {
+        findFirst: jest.fn().mockResolvedValue(base),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findFirstOrThrow: jest.fn().mockImplementation(async () => ({
+          ...base,
+          status: 'APPROVED',
+          approvedBy: 'user_manager_2',
+          approvedAt: new Date('2026-07-02T00:00:00Z'),
+        })),
+      },
+    };
+    const audit = { record: jest.fn() };
+    const bus = { publish: jest.fn() };
+    const svc = new PayoutsService(prisma as any, audit as any, bus as any, { postBalancedEntry: jest.fn() } as any);
+    return { svc, prisma, audit, bus };
+  }
+
+  it('DUAL CONTROL: refuses approval by the same user who computed the payout, with a critical audit', async () => {
+    const { svc, prisma, audit } = makeDecideService({});
+
+    await expect(
+      svc.decidePayout(managerPrincipal, 'payout_1', { decision: 'APPROVED' }),
+    ).rejects.toThrow(/dual control/i);
+
+    expect(prisma.payout.updateMany).not.toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'payout.self_approval_refused', critical: true }),
+    );
+  });
+
+  it('approves via CAS when a DIFFERENT user decides, with critical audit + event', async () => {
+    const { svc, prisma, audit, bus } = makeDecideService({});
+
+    const result = await svc.decidePayout(secondManager, 'payout_1', { decision: 'APPROVED' });
+
+    expect(result.status).toBe('APPROVED');
+    expect(result.approvedBy).toBe('user_manager_2');
+    expect(prisma.payout.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'COMPUTED' }),
+        data: expect.objectContaining({ status: 'APPROVED', approvedBy: 'user_manager_2' }),
+      }),
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'payout.approved', critical: true }),
+    );
+    expect(bus.publish).toHaveBeenCalledWith('payout.approved', 'tenant_demo', expect.any(Object));
+  });
+
+  it('allows SELF-rejection (walking back your own computation is safe; blessing it is not)', async () => {
+    const { svc, prisma, audit } = makeDecideService({});
+    (prisma.payout.findFirstOrThrow as jest.Mock).mockResolvedValue({
+      id: 'payout_1',
+      tenantId: 'tenant_demo',
+      psychologistId: 'psy_1',
+      periodStart: new Date('2026-06-01T00:00:00Z'),
+      periodEnd: new Date('2026-06-30T00:00:00Z'),
+      computedAmount: new Prisma.Decimal('108.0000'),
+      currency: 'USD',
+      status: 'REJECTED',
+      computedBy: 'user_manager',
+      decisionNote: 'wrong period boundaries',
+      createdAt: new Date('2026-07-01T00:00:00Z'),
+      psychologist: { user: { fullName: 'Dr. Elena Rivera' } },
+    });
+
+    const result = await svc.decidePayout(managerPrincipal, 'payout_1', {
+      decision: 'REJECTED',
+      note: 'wrong period boundaries',
+    });
+
+    expect(result.status).toBe('REJECTED');
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'payout.rejected', critical: true }),
+    );
+  });
+
+  it('rejects deciding a payout that is not COMPUTED', async () => {
+    const { svc } = makeDecideService({ status: 'APPROVED' });
+
+    await expect(
+      svc.decidePayout(secondManager, 'payout_1', { decision: 'APPROVED' }),
+    ).rejects.toThrow(/Only COMPUTED payouts/);
+  });
+
+  it('CAS: a concurrent second decision loses cleanly', async () => {
+    const { svc, prisma } = makeDecideService({});
+    (prisma.payout.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+
+    await expect(
+      svc.decidePayout(secondManager, 'payout_1', { decision: 'APPROVED' }),
+    ).rejects.toThrow(/already decided/);
+  });
+
+  it('assertDisbursable: only APPROVED payouts may reach the disbursement seam', async () => {
+    const { svc, prisma } = makeDecideService({ status: 'COMPUTED' });
+    (prisma.payout.findFirst as jest.Mock).mockResolvedValue({ status: 'COMPUTED' });
+    await expect(svc.assertDisbursable(managerPrincipal, 'payout_1')).rejects.toThrow(/must be APPROVED/);
+
+    (prisma.payout.findFirst as jest.Mock).mockResolvedValue({ status: 'APPROVED' });
+    await expect(svc.assertDisbursable(managerPrincipal, 'payout_1')).resolves.toBeUndefined();
+
+    (prisma.payout.findFirst as jest.Mock).mockResolvedValue(null);
+    await expect(svc.assertDisbursable(managerPrincipal, 'missing')).rejects.toThrow(/not found/i);
+  });
+});
+
 describe('PayoutsService.computePayout', () => {
   it('computes computedAmount = paidTotal × RevenueShareRule.pct as an exact Decimal', async () => {
     const { svc, prismaTx, accounting, bus } = makeService();

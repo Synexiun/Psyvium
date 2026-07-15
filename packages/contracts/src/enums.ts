@@ -184,6 +184,8 @@ export type InvoiceStatus = (typeof InvoiceStatus)[keyof typeof InvoiceStatus];
 export const PayoutStatus = {
   PENDING: 'PENDING',
   COMPUTED: 'COMPUTED',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
   RELEASED: 'RELEASED',
   FAILED: 'FAILED',
 } as const;

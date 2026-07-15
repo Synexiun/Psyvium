@@ -153,6 +153,9 @@ export const Events = {
   PaymentCaptured: 'payment.captured',
   PaymentRefunded: 'payment.refunded',
   PayoutComputed: 'payout.computed',
+  // Dual-control decision gate (audit G2 "Payouts: approval").
+  PayoutApproved: 'payout.approved',
+  PayoutRejected: 'payout.rejected',
   // AI Gateway (ADR-007) — every inference is logged as an AIRecommendation
   // behind a PENDING human-decision gate; this is the seam the real-time
   // layer (SP3) and any other PENDING-queue subscriber hooks into.

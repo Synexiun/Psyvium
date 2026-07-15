@@ -1,6 +1,12 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@vpsy/database';
-import type { AuthPrincipal, ComputePayoutInput, PayoutDto } from '@vpsy/contracts';
+import type { AuthPrincipal, ComputePayoutInput, DecidePayoutInput, PayoutDto } from '@vpsy/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { EventBus, Events } from '../../common/events/event-bus.service';
@@ -79,6 +85,10 @@ type PayoutRow = {
   computedAmount: Prisma.Decimal;
   currency: string;
   status: string;
+  computedBy?: string | null;
+  approvedBy?: string | null;
+  approvedAt?: Date | null;
+  decisionNote?: string | null;
   createdAt: Date;
   psychologist: { user: { fullName: string } };
 };
@@ -159,6 +169,8 @@ export class PayoutsService {
           currency: 'USD',
           rulesApplied,
           status: 'COMPUTED',
+          // Dual control: the approver must be a DIFFERENT user (decidePayout).
+          computedBy: principal.userId,
         },
       });
       if (computedAmount.greaterThan(0)) {
@@ -218,6 +230,102 @@ export class PayoutsService {
     });
 
     return this.toPayoutDto({ ...payout, psychologist } as unknown as PayoutRow);
+  }
+
+  /**
+   * Dual-control decision gate (audit G2 "Payouts: approval"): a COMPUTED
+   * payout is approved or rejected by a human — and the approver must be a
+   * DIFFERENT user than the one who computed it (no self-approval of one's
+   * own computation run). Compare-and-swap so two concurrent decisions
+   * cannot both land. Approval is what a future bank-rail disbursement
+   * requires; rejection needs a note so the statement trail explains itself.
+   */
+  async decidePayout(principal: AuthPrincipal, payoutId: string, input: DecidePayoutInput): Promise<PayoutDto> {
+    const payout = await this.prisma.payout.findFirst({
+      where: { id: payoutId, tenantId: principal.tenantId, deletedAt: null },
+      include: { psychologist: { include: { user: true } } },
+    });
+    if (!payout) throw new NotFoundException('Payout not found');
+    if (payout.status !== 'COMPUTED') {
+      throw new ConflictException(`Only COMPUTED payouts can be decided (current status=${payout.status})`);
+    }
+
+    // Dual control — even for APPROVED-only; a rejection may be self-issued
+    // (walking back your own computation is safe; blessing it is not).
+    if (input.decision === 'APPROVED' && payout.computedBy === principal.userId) {
+      await this.audit.record({
+        tenantId: principal.tenantId,
+        actorId: principal.userId,
+        action: 'payout.self_approval_refused',
+        entityType: 'Payout',
+        entityId: payoutId,
+        after: { computedBy: payout.computedBy },
+        critical: true,
+      });
+      throw new ForbiddenException(
+        'Dual control: a payout cannot be approved by the same user who computed it.',
+      );
+    }
+
+    const claimed = await this.prisma.payout.updateMany({
+      where: { id: payoutId, tenantId: principal.tenantId, status: 'COMPUTED' },
+      data: {
+        status: input.decision,
+        approvedBy: input.decision === 'APPROVED' ? principal.userId : null,
+        approvedAt: input.decision === 'APPROVED' ? new Date() : null,
+        decisionNote: input.note ?? null,
+      },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictException('Payout was already decided by another action');
+    }
+
+    const updated = await this.prisma.payout.findFirstOrThrow({
+      where: { id: payoutId, tenantId: principal.tenantId },
+      include: { psychologist: { include: { user: true } } },
+    });
+
+    // Money-governance event: never silently lost.
+    await this.audit.record({
+      tenantId: principal.tenantId,
+      actorId: principal.userId,
+      action: input.decision === 'APPROVED' ? 'payout.approved' : 'payout.rejected',
+      entityType: 'Payout',
+      entityId: payoutId,
+      before: { status: 'COMPUTED', computedBy: payout.computedBy },
+      after: {
+        status: updated.status,
+        amount: updated.computedAmount.toFixed(4),
+        ...(input.note ? { note: input.note } : {}),
+      },
+      critical: true,
+    });
+    await this.bus.publish(
+      input.decision === 'APPROVED' ? Events.PayoutApproved : Events.PayoutRejected,
+      principal.tenantId,
+      { payoutId, psychologistId: updated.psychologistId, amount: updated.computedAmount.toFixed(4) },
+    );
+
+    return this.toPayoutDto(updated as unknown as PayoutRow);
+  }
+
+  /**
+   * Disbursement precondition used by the controller: the payout must exist
+   * and be APPROVED before the (still honest-503) bank-rail step is even
+   * considered — the dual-control gate orders ahead of the adapter seam.
+   */
+  async assertDisbursable(principal: AuthPrincipal, payoutId: string): Promise<void> {
+    const payout = await this.prisma.payout.findFirst({
+      where: { id: payoutId, tenantId: principal.tenantId, deletedAt: null },
+      select: { status: true },
+    });
+    if (!payout) throw new NotFoundException('Payout not found');
+    if (payout.status !== 'APPROVED') {
+      throw new ConflictException(
+        `Payout must be APPROVED before disbursement (current status=${payout.status}). ` +
+          'Dual control: approval by a different user than the computer is required first.',
+      );
+    }
   }
 
   async listPayouts(principal: AuthPrincipal): Promise<PayoutDto[]> {
@@ -366,6 +474,10 @@ export class PayoutsService {
       computedAmount: payout.computedAmount.toFixed(4),
       currency: payout.currency,
       status: payout.status as PayoutDto['status'],
+      computedBy: payout.computedBy ?? null,
+      approvedBy: payout.approvedBy ?? null,
+      approvedAt: payout.approvedAt ? payout.approvedAt.toISOString() : null,
+      decisionNote: payout.decisionNote ?? null,
       createdAt: payout.createdAt.toISOString(),
     };
   }

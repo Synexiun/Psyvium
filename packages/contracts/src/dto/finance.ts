@@ -66,9 +66,36 @@ export const payoutSchema = z.object({
   computedAmount: moneyString,
   currency: z.string(),
   status: z.nativeEnum(PayoutStatus),
+  /** Dual-control fields (audit G2): approver must differ from computer. */
+  computedBy: z.string().nullable().optional(),
+  approvedBy: z.string().nullable().optional(),
+  approvedAt: z.string().nullable().optional(),
+  decisionNote: z.string().nullable().optional(),
   createdAt: z.string(),
 });
 export type PayoutDto = z.infer<typeof payoutSchema>;
+
+/**
+ * COMPUTED → APPROVED | REJECTED. Approval is the dual-control disbursement
+ * gate — a payout can only be disbursed (once a bank-rail adapter exists)
+ * after a DIFFERENT user than the one who computed it has approved it.
+ * A rejection note is required so the statement trail explains itself.
+ */
+export const decidePayoutSchema = z
+  .object({
+    decision: z.enum(['APPROVED', 'REJECTED']),
+    note: z.string().max(1000).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.decision === 'REJECTED' && !value.note?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['note'],
+        message: 'A note explaining the rejection is required',
+      });
+    }
+  });
+export type DecidePayoutInput = z.infer<typeof decidePayoutSchema>;
 
 export const financeSummarySchema = z.object({
   currency: z.string(),

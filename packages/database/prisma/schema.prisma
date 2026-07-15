@@ -195,6 +195,8 @@ enum InvoiceStatus {
 enum PayoutStatus {
   PENDING
   COMPUTED
+  APPROVED
+  REJECTED
   RELEASED
   FAILED
 }
@@ -1515,6 +1517,13 @@ model Payout {
   currency       String       @default("USD")
   rulesApplied   Json         @default("{}")
   status         PayoutStatus @default(PENDING)
+  /// Dual-control disbursement gate (audit G2 "Payouts: approval + ACH"):
+  /// who computed vs who approved must be DIFFERENT users; disbursement
+  /// requires status APPROVED. Rejection returns money to statement-only.
+  computedBy   String?
+  approvedBy   String?
+  approvedAt   DateTime?
+  decisionNote String?
   releasedAt     DateTime?
   createdAt      DateTime     @default(now())
   deletedAt      DateTime?

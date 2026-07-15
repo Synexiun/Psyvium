@@ -12,12 +12,14 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   computePayoutSchema,
   createInvoiceSchema,
+  decidePayoutSchema,
   payInvoiceSchema,
   requestRefundSchema,
   Permission,
   type AuthPrincipal,
   type ComputePayoutInput,
   type CreateInvoiceInput,
+  type DecidePayoutInput,
   type PayInvoiceInput,
   type RequestRefundInput,
 } from '@vpsy/contracts';
@@ -122,13 +124,33 @@ export class FinanceController {
   }
 
   /**
+   * Dual-control decision gate (audit G2 "Payouts: approval"): approve or
+   * reject a COMPUTED payout. Approval must come from a DIFFERENT user than
+   * the one who computed it; rejection requires a note. Disbursement (below)
+   * requires APPROVED status.
+   */
+  @Post('payouts/:id/decide')
+  @RequirePermissions(Permission.FINANCE_MANAGE)
+  decidePayout(
+    @CurrentUser() user: AuthPrincipal,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(decidePayoutSchema)) body: DecidePayoutInput,
+  ) {
+    return this.payouts.decidePayout(user, id, body);
+  }
+
+  /**
    * Bank-rail disbursement is not implemented (audit Gate 0 §16 / Gate 2).
-   * Compute remains available for statements; this endpoint exists so clients
-   * never invent a fake "paid out" transition.
+   * The dual-control gate now orders AHEAD of the adapter seam: a payout
+   * must be APPROVED (by a different user than its computer) before this
+   * endpoint even reaches its honest 503. Compute remains available for
+   * statements; this endpoint exists so clients never invent a fake
+   * "paid out" transition.
    */
   @Post('payouts/:id/disburse')
   @RequirePermissions(Permission.FINANCE_MANAGE)
-  disbursePayout(@Param('id') id: string) {
+  async disbursePayout(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
+    await this.payouts.assertDisbursable(user, id);
     if (process.env.VPSY_ALLOW_PAYOUT_DISBURSE === 'true') {
       // Reserved for a real ACH/wire adapter. Still not wired.
       throw new ServiceUnavailableException(
