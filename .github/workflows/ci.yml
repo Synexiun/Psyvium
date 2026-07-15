@@ -56,10 +56,37 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # ── Dependency audit ────────────────────────────────────────────────
-      # High+critical findings fail the job. Use `pnpm audit --fix` + a
-      # reviewed exceptions process if a transitive advisory has no fix yet.
-      - name: "Dependency audit (high+critical — BLOCKING)"
-        run: pnpm audit --audit-level high
+      # High+critical findings fail the job (CVSS >= 7.0). Formerly
+      # `pnpm audit --audit-level high`, replaced 2026-07-15: npm retired the
+      # legacy audit endpoints (HTTP 410, pnpm/pnpm#11265 — broken through
+      # pnpm 10.33), which had turned this gate into a hard infra failure.
+      # osv-scanner reads pnpm-lock.yaml natively and queries the live OSV
+      # database (same GHSA advisories npm serves, plus more ecosystems).
+      # Keep the reviewed-exceptions process: overrides go in osv-scanner.toml
+      # (https://google.github.io/osv-scanner/configuration/) with a comment
+      # + expiry, never by loosening the CVSS threshold below.
+      - name: "Dependency audit (high+critical — BLOCKING; OSV)"
+        run: |
+          curl -sSfL -o /usr/local/bin/osv-scanner \
+            https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_linux_amd64
+          chmod +x /usr/local/bin/osv-scanner
+          # Exit code is nonzero when ANY vuln is found; we enforce severity
+          # policy ourselves below, so capture JSON regardless.
+          osv-scanner --lockfile pnpm-lock.yaml --format json > osv-report.json || true
+          # A scanner crash must fail the gate too — silence is not a pass.
+          jq -e '.results != null or .error == null' osv-report.json > /dev/null
+          BLOCKING=$(jq '[.results[]?.packages[]?.groups[]?
+            | select((.max_severity // "0" | tonumber) >= 7.0)] | length' osv-report.json)
+          TOTAL=$(jq '[.results[]?.packages[]?.groups[]?] | length' osv-report.json)
+          echo "OSV findings: total=$TOTAL, high+critical(CVSS>=7)=$BLOCKING"
+          if [ "$BLOCKING" -gt 0 ]; then
+            jq -r '.results[]?.packages[]?
+              | . as $p
+              | $p.groups[]? | select((.max_severity // "0" | tonumber) >= 7.0)
+              | "BLOCKING: \($p.package.name)@\($p.package.version) CVSS \(.max_severity) (\(.ids | join(", ")))"' \
+              osv-report.json
+            exit 1
+          fi
 
       - name: Prisma generate
         run: pnpm --filter @vpsy/database exec prisma generate
