@@ -99,6 +99,12 @@ jobs:
       - name: "Apply migrations (prisma migrate deploy)"
         run: pnpm --filter @vpsy/database exec prisma migrate deploy
 
+      # seed.ts imports @vpsy/contracts (ROLE_PERMISSIONS, consent versions),
+      # whose dist/ only exists after a build — build just that package first.
+      # (The full turbo Build below still runs; turbo will hit its cache.)
+      - name: Build contracts (seed dependency)
+        run: pnpm --filter @vpsy/contracts run build
+
       - name: Seed
         run: pnpm --filter @vpsy/database run seed
 
