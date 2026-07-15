@@ -95,7 +95,7 @@
 - [~] **Admin Configuration** + **Tenant/Clinic onboarding** UI+API (doc 01/03/07) — admin module (tenant profile, clinic CRUD, feature flags, security posture, validation/BAA registers, AI model approvals) + registry CRUD landed; full self-service onboarding flow remains.
 - [ ] **Supervisor portal** (co-sign/oversight) + **Government/Institutional portal** (SLA, referral volume) (doc 03).
 - [x] **Twilio Voice** click-to-call + async call lifecycle + signed status-callback webhook (doc 15) (`c02bc5a`); recording policy gates remain with the telehealth recording decision (infra: number/webhook URL).
-- [ ] Pagination/cursor on all list endpoints (doc 04); RFC-9457 error filter app-wide; FHIR-alignable facade (doc 03).
+- [~] ~~RFC-9457 error filter app-wide~~ (done — `ProblemDetailsFilter` via `useGlobalFilters`, `main.ts`; web client parses `+json` since 2026-07-15). Remaining: pagination/cursor on all list endpoints (messaging + audit-read have it; most lists don't) and the FHIR-alignable facade (doc 03).
 
 ## WAVE CR — Clinical Rigor (from the 2026-07-06 evidence-based audit; each item cites its literature)
 Three read-only clinical auditors graded the clinical sections against the published evidence base (AERA/APA/NCME Standards, COSMIN, C-SSRS, Stanley-Brown SPI, Zero Suicide, Joint Commission NPSG 15.01.01, APA Record Keeping, Kazantzis homework meta-analyses, FDA CDS 2022, EU AI Act, APA AI guidance 2025). IRT math, break-glass, human-only resolution, and EU-AI-Act oversight/logging were **credited as sound**. Gaps, ranked:
