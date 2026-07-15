@@ -99,11 +99,13 @@ jobs:
       - name: "Apply migrations (prisma migrate deploy)"
         run: pnpm --filter @vpsy/database exec prisma migrate deploy
 
-      # seed.ts imports @vpsy/contracts (ROLE_PERMISSIONS, consent versions),
-      # whose dist/ only exists after a build — build just that package first.
-      # (The full turbo Build below still runs; turbo will hit its cache.)
-      - name: Build contracts (seed dependency)
-        run: pnpm --filter @vpsy/contracts run build
+      # Build BEFORE Seed/Lint/Typecheck: seed.ts imports @vpsy/contracts,
+      # and `tsc --noEmit` on the api resolves @vpsy/database's DECLARATION
+      # files — both only exist post-build. (These orderings were latent for
+      # months: every run since the Typecheck/Seed steps landed died earlier,
+      # at the endpoint-retired audit step, so they first executed 2026-07-15.)
+      - name: Build (turbo — contracts → database → api + web)
+        run: pnpm build
 
       - name: Seed
         run: pnpm --filter @vpsy/database run seed
@@ -113,9 +115,6 @@ jobs:
 
       - name: Typecheck (api)
         run: pnpm --filter @vpsy/api run typecheck
-
-      - name: Build (turbo — contracts → database → api + web)
-        run: pnpm build
 
       # ── SAFETY GATE ──────────────────────────────────────────────────────
       # docs/technical/12-testing-strategy.md §6: the clinical-safety suite
