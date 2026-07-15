@@ -152,9 +152,9 @@ jobs:
       - name: "E2E (apps/web — Playwright browser journeys + axe a11y; BLOCKING)"
         run: pnpm --filter @vpsy/web run test:e2e
 
-      # Temporary CI-truth capture: the E2E has never run in CI before (every
-      # prior run died earlier). Upload the report + traces so a failure is
-      # debuggable from the network log rather than guessed at.
+      # Keep failures debuggable from the trace network log — the 2026-07-15
+      # E2E root cause (login proxied to production via a missing build-time
+      # API_URL) was only findable from request-level evidence.
       - name: Upload Playwright report (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
