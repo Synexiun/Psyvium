@@ -30,7 +30,7 @@
 - [x] **Render/Docker JWT + public URL wiring** — `render.yaml` documents `JWT_ACCESS_SECRET` on web + `WEB_ORIGIN`/`PUBLIC_API_URL` as operator-set https URLs; `next.config.mjs` normalizes bare host → `https://`. *(Final secret copy on Render dashboard remains **infra**.)*
 - [x] **CI `prisma migrate deploy`** — replaces `db push` so raw SQL (RLS, partial uniques) installs in CI.
 - [x] **Shared Redis mandatory multi-instance** — production boot fails without `REDIS_URL` unless explicit single-instance allow.
-- [x] **Dependency high/critical vulns blocking policy** — `pnpm audit --audit-level high` is blocking in CI.
+- [x] **Dependency high/critical vulns blocking policy** — blocking in CI. 2026-07-15: `pnpm audit` replaced with **osv-scanner** (npm retired the legacy audit endpoints — HTTP 410, pnpm/pnpm#11265 — which had silently turned this gate into an infra failure); the first real OSV scan surfaced **9 hidden high/critical advisories** (multer, lodash, glob, picomatch, tmp, uuid), all remediated via pnpm overrides → 0 blocking.
 
 ## Verified strong (keep as the template — audits credited these)
 - AI assists / clinicians decide; manager final authority; human-only risk resolution — architecturally enforced.
