@@ -1,4 +1,3 @@
-import { ConflictException } from '@nestjs/common';
 import { CrmErrorCode, type AuthPrincipal } from '@vpsy/contracts';
 import { Role } from '@vpsy/contracts';
 import { CrmService } from './crm.service';

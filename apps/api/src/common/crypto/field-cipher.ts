@@ -8,7 +8,7 @@ import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 // silently resolve to `undefined` forever, even after awaiting `sodium.ready`.
 // `require(...)` keeps the SAME object reference the library mutates in
 // place, so property access here is always live.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- see rationale above
 import sodium = require('libsodium-wrappers');
 import { FIELD_KEY_PROVIDER, type FieldKeyProvider } from './field-key-provider';
 

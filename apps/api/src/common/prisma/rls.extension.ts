@@ -63,9 +63,7 @@ export function withTenantRls<T extends PrismaClient>(base: T) {
     },
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const originalTransaction = (extended as any).$transaction.bind(extended);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (extended as any).$transaction = (...txArgs: any[]) => {
     const [first, ...rest] = txArgs;
     if (typeof first !== 'function') {
@@ -81,7 +79,6 @@ export function withTenantRls<T extends PrismaClient>(base: T) {
     }
     const tenantId = TenantContext.getTenantId();
     const wrappedCallback = async (tx: unknown) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (tx as any).$executeRawUnsafe(SET_TENANT_SQL, tenantId ?? null);
       return TenantContext.runInsideTransaction(() => first(tx));
     };

@@ -71,7 +71,6 @@ type RevenueShareRuleLike = {
   countryRules?: Prisma.JsonValue | null;
 };
 
-type PsychologistRow = { id: string; user: { fullName: string } };
 type PayoutRow = {
   id: string;
   psychologistId: string;

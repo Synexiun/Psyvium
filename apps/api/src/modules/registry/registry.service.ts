@@ -472,7 +472,6 @@ export class RegistryService {
    * for the caller to surface in non-production; production would email it.
    */
   private async issueInviteToken(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tx: any,
     tenantId: string,
     userId: string,

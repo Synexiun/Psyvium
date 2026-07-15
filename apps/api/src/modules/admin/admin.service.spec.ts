@@ -128,7 +128,7 @@ describe('AdminService — Tenant', () => {
 
 describe('AdminService — Clinics', () => {
   it('creates a Clinic and audits it', async () => {
-    const { svc, prisma, audit } = makeService();
+    const { svc, audit } = makeService();
 
     const result = await svc.createClinic(admin, { name: 'Main Clinic', type: 'VIRTUAL', timezone: 'UTC' });
 

@@ -107,4 +107,8 @@ async function bootstrap() {
   );
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  // console (not Logger): Nest's logger may not exist if bootstrap failed this early.
+  console.error('Fatal: API bootstrap failed', err);
+  process.exit(1);
+});

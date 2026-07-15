@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { REQUIRED_CONSENT_VERSIONS, Role, SeverityBand } from '@vpsy/contracts';
 import type { AuthPrincipal } from '@vpsy/contracts';
 import { CredentialingService } from '../modules/credentialing/credentialing.service';

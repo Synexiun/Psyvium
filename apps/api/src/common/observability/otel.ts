@@ -42,7 +42,7 @@ import { PhiSanitizingSpanProcessor } from './otel-sanitizer';
 // `compilerOptions` object that omits it. A plain `require()` sidesteps that
 // entirely (Node resolves + parses the JSON itself; TS just sees `any`),
 // so this line behaves identically under `nest build`, `ts-jest`, and `ts-node`.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- see rationale above
 const { version: API_PACKAGE_VERSION } = require('../../../package.json') as { version: string };
 
 const logger = new Logger('OTel');

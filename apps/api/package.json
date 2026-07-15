@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest --passWithNoTests",
     "test:safety": "jest --config jest.config.cjs --testPathPattern clinical-safety",
-    "lint": "echo 'lint ok'"
+    "lint": "eslint src --max-warnings 0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
@@ -52,14 +52,17 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@nestjs/cli": "^10.4.9",
     "@nestjs/schematics": "^10.2.3",
     "@nestjs/testing": "^10.4.15",
     "@types/express": "^5.0.0",
     "@types/jest": "^29.5.14",
     "@types/node": "^22.10.2",
+    "eslint": "^9.39.5",
     "jest": "^29.7.0",
     "ts-jest": "^29.2.5",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.63.0"
   }
 }

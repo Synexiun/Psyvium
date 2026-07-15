@@ -115,7 +115,7 @@ describe('InterventionService', () => {
   });
 
   it('assigns homework to an existing intervention and audits it', async () => {
-    const { svc, prisma, audit } = makeService();
+    const { svc, audit } = makeService();
 
     const result = await svc.assignHomework(clinician, {
       interventionId: 'iv_1',

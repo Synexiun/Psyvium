@@ -162,7 +162,7 @@ export class MessagingService {
     const tenantId = principal.tenantId;
 
     let clientIds: string[] = [];
-    let psychologistIdByClient = new Map<string, string>();
+    const psychologistIdByClient = new Map<string, string>();
 
     if (principal.roles.includes(Role.CLIENT)) {
       const client = await this.prisma.client.findFirst({ where: { userId: principal.userId, tenantId } });

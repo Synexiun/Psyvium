@@ -80,7 +80,7 @@
 
 ## WAVE D — Production hardening (build as code)
 - [x] **OpenTelemetry** traces/metrics/logs, PHI-safe attrs, correlation ids (doc 10 §7) — `common/observability` module (`otel.ts`, PHI-safe `otel-sanitizer`, metrics bridge), activate-on-endpoint.
-- [~] **CI gates** (doc 10 §4): dependency audit (blocking), secret-scan (gitleaks), typecheck, unit, clinical-safety (blocking), e2e+a11y (blocking), build, docker-build proof all in `ci.yml`; **API lint script is still a stub** — the one gate left.
+- [x] **CI gates** (doc 10 §4): dependency audit (blocking), secret-scan (gitleaks), typecheck, unit, clinical-safety (blocking), e2e+a11y (blocking), build, docker-build proof all in `ci.yml`; **API lint is real as of 2026-07-15** — ESLint 9 flat config (`apps/api/eslint.config.mjs`), type-aware async-correctness rules (no-floating-promises / no-misused-promises / await-thenable), `--max-warnings 0`, zero findings at adoption (already wired into CI's Lint step).
 - [x] **Dockerfile(s)** + `/healthz`/`/readyz` probes (doc 10 §5) — `apps/api/Dockerfile`, `apps/web/Dockerfile`, `health.controller.ts`.
 - [x] **Feature-flag/kill-switch service** — `FeatureFlagsService` + AI_ASSISTED_ANALYSIS kill switch on every model path.
 - [~] **Playwright E2E** + **axe a11y gate** (doc 12) — 2026-07-15: suite **15/15 green twice consecutively** against the real stack; `auth.setup.ts` performs REAL TOTP MFA enrollment (inline RFC-6238, secrets persisted for re-runs); found+fixed two product bugs (web client ignored `application/problem+json` bodies → MFA users locked out of the UI; clients had no jurisdiction path → matching yielded zero candidates for every non-seed client). Testcontainers integration + k6 load remain.
