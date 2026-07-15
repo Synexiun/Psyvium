@@ -8,7 +8,8 @@
     "JWT_REFRESH_SECRET",
     "REDIS_URL",
     "AI_GATEWAY_API_KEY",
-    "NEXT_PUBLIC_API_URL"
+    "NEXT_PUBLIC_API_URL",
+    "API_URL"
   ],
   "tasks": {
     "build": {

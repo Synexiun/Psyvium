@@ -38,6 +38,13 @@ jobs:
       # Explicit opt-in for shared demo seed passwords (never set in real PHI).
       ALLOW_DEMO_SEED: 'true'
       NODE_OPTIONS: --max-old-space-size=4096
+      # CRITICAL for E2E: next.config.mjs resolves the /api/backend/* rewrite
+      # destination from API_URL at BUILD time (next build always runs with
+      # NODE_ENV=production, whose fallback is the LIVE Render API — commit
+      # 34a5868). Without this, the CI web build proxies logins to production:
+      # Render's Secure cookie is refused on http://localhost and every
+      # authenticated journey bounces back to /login.
+      API_URL: http://localhost:4000
 
     steps:
       - uses: actions/checkout@v4
