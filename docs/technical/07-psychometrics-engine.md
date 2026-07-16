@@ -388,6 +388,92 @@ GET /v1/instruments/instr_promis_anx/properties
 -> 200 { "reliability": {...}, "validity": {...}, "responsiveness": {...}, "dif": [...] }
 ```
 
+## 14. Clinician-assigned assessment workflow
+
+Beyond client self-report and CAT, a clinician can push a specific static
+instrument onto a caseload client's dashboard, then review the completed
+result. This is the **`AssessmentAssignment`** workflow — distinct from the
+ad hoc self-administer path in that a licensed clinician initiates it and
+remains the final reader of the result.
+
+### 14.1 Data model
+
+```prisma
+model AssessmentAssignment {
+  id                     String   @id
+  tenantId               String
+  clientId               String
+  questionnaireVersionId String
+  assignedBy             String                    // clinician userId
+  note                   String?                   // optional instruction shown to the client
+  status                 String   @default("ASSIGNED")   // ASSIGNED|COMPLETED|CANCELLED
+  dueAt                  DateTime?
+  responseId             String?  @unique          // links the scored QuestionnaireResponse
+  completedAt            DateTime?
+  cancelledBy            String?
+  cancelledAt            DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  deletedAt              DateTime?                 // soft delete
+
+  @@index([tenantId, clientId, status])
+  @@index([tenantId, status, createdAt])
+}
+```
+
+Migration `20260715020000_assessment_assignments` enables `ROW LEVEL SECURITY`
++ `FORCE ROW LEVEL SECURITY` with a tenant-isolation policy keyed on the
+`app.current_tenant` GUC — the same backstop pattern used across every other
+PHI-bearing table (§03).
+
+### 14.2 Endpoints (`/assessments`)
+
+| Method & path | Permission | Actor | Notes |
+|---|---|---|---|
+| `POST /assignments` | `ASSESSMENT_INTERPRET` | clinician | rejects `CAT` instruments (400 — use the adaptive flow instead); enforces `assertActiveInstrumentLicense` + `assertAuthorizedAssessmentTarget` (unified caseload ABAC); one open assignment per instrument per client, else `409` |
+| `GET /assignments/me` | `ASSESSMENT_ADMINISTER` | client | the signed-in client's own assignment list — their dashboard feed |
+| `GET /assignments?clientId=` | `ASSESSMENT_INTERPRET` | clinician | one client's assignments, same ABAC gate as assign |
+| `POST /assignments/:id/complete` | `ASSESSMENT_ADMINISTER` + `Idempotency-Key` | client, self only | `client.userId !== principal.userId` → `403`. CAS-first: `updateMany` `ASSIGNED`→`COMPLETED` with `count===1` guard runs **before** any scoring write, so a double-submit race can never double-score. Scores through the identical deterministic batch pipeline used by self-administer (bands + safety-item → Risk routing), links `responseId`, then fire-and-forget requests the governed AI briefing — a gateway failure never blocks completion |
+| `POST /assignments/:id/cancel` | `ASSESSMENT_INTERPRET` | clinician | cancels an open (`ASSIGNED`) assignment via the same CAS pattern |
+| `GET /assignments/:id/response` | `ASSESSMENT_INTERPRET` | clinician | the completed answers + score behind an assignment |
+| `GET /scores/:id/ai-briefing` | `ASSESSMENT_INTERPRET` | clinician | latest governed AI briefing read from the `PENDING` `AIRecommendation` ledger — a pure read, **never** triggers a model call (regeneration stays `POST /scores/:id/ai-interpret`) |
+
+```mermaid
+sequenceDiagram
+  participant C as Clinician
+  participant API as Assessment API
+  participant Cl as Client dashboard
+  participant Sc as Scoring pipeline
+  participant AI as AI gateway
+  C->>API: POST /assignments (ASSESSMENT_INTERPRET)
+  API-->>Cl: assignment appears (GET /assignments/me)
+  Cl->>API: POST /assignments/:id/complete (self, Idempotency-Key)
+  API->>Sc: CAS claim ASSIGNED→COMPLETED, then score (bands + safety routing)
+  Sc-->>API: PsychometricScore linked via responseId
+  API-->>AI: fire-and-forget interpretScore()
+  AI-->>API: AIRecommendation (PENDING) persisted
+  C->>API: GET /assignments/:id/response + GET /scores/:id/ai-briefing
+  API-->>C: answers, score, band, interpretation guide, AI briefing
+```
+
+### 14.3 Governance invariants
+
+- **AI assists, licensed clinicians decide**: the AI briefing is persisted as
+  an `AIRecommendation` (`agent=PSYCHOMETRIC`, `linkedEntityType=PsychometricScore`,
+  `humanDecision=PENDING`) — assistive context, never a verdict, and the
+  clinician's read of it is a plain query, not a trigger.
+- **Score suppression**: the client holds `ASSESSMENT_ADMINISTER` but not
+  `ASSESSMENT_INTERPRET`, so score, band, and interpretation stay invisible on
+  their own dashboard — consistent with `interpretationMode = CLINICIAN_ONLY`
+  (§12).
+- **Audit**: every assign, complete, cancel, and view emits a tamper-evident
+  audit event (`assessment.assigned`, `assessment.assignment_completed`,
+  `assessment.assignment_cancelled`) per §04/§05.
+- **Events**: `AssessmentAssigned` and `AssessmentAssignmentCompleted` publish
+  on the `EventBus` for downstream consumers (e.g. caseload dashboards,
+  outcome tracking §10) — contexts never cross-import, they only react to
+  these.
+
 This engine gives VPSY OS a defensible, publisher-respecting measurement core:
 rigorous IRT/CAT scoring, transparent COSMIN-grade property reporting, fairness via
 DIF/invariance, and outcome tracking that powers measurement-based care — while the

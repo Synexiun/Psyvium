@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   computeEscalationSlaDueAt,
+  instrumentGuideSchema,
   itemTranslationProvenanceSchema,
   questionnaireCutoffsSchema,
   RiskSource,
@@ -136,7 +137,7 @@ export class PsychometricsService {
           where: { published: true },
           orderBy: { createdAt: 'desc' },
           take: 1,
-          select: { id: true, version: true },
+          select: { id: true, version: true, cutoffs: true },
         },
         licenseGrants: {
           where: { tenantId: principal.tenantId },
@@ -157,6 +158,11 @@ export class PsychometricsService {
         else if (grant.status === 'ACTIVE') licenseGrantStatus = 'active';
       }
       const administerAllowed = free || licenseGrantStatus === 'active';
+      // Clinician scoring key + interpretation guidance, stored in the
+      // version's cutoffs JSON by the instrument pack (never patient-facing).
+      const guideParsed = instrumentGuideSchema.safeParse(
+        (q.versions[0]?.cutoffs as { guide?: unknown } | null)?.guide,
+      );
       return {
         questionnaireId: q.id,
         code: q.code,
@@ -167,6 +173,7 @@ export class PsychometricsService {
         latestPublishedVersionId: q.versions[0]?.id ?? null,
         licenseGrantStatus,
         administerAllowed,
+        guide: guideParsed.success ? guideParsed.data : null,
       };
     });
   }

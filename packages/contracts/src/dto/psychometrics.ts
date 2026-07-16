@@ -41,6 +41,27 @@ export const questionnaireCutoffsSchema = z.object({
 });
 export type QuestionnaireCutoffs = z.infer<typeof questionnaireCutoffsSchema>;
 
+/**
+ * Clinician-facing scoring key + interpretation guidance, stored alongside
+ * `bands`/`safetyItems` in the version's `cutoffs` JSON (zod strips unknown
+ * keys on the scoring path, so this coexists safely) and surfaced through the
+ * instrument catalog. This is REFERENCE material for the licensed clinician —
+ * never patient-facing, never a diagnosis.
+ */
+export const instrumentGuideSchema = z.object({
+  /** How the raw score is computed (anchors, reverse-keyed items, ranges). */
+  scoringKey: z.string(),
+  /** What each band means per the published convention. */
+  bandGuide: z.string(),
+  /** Primary citation(s) for the instrument + its cut-scores. */
+  reference: z.string(),
+  /** Psychometric properties worth knowing at the point of care. */
+  psychometrics: z.string().optional(),
+  /** Cautions: population scope, polarity quirks, licensing, validity limits. */
+  cautions: z.string().optional(),
+});
+export type InstrumentGuide = z.infer<typeof instrumentGuideSchema>;
+
 export const administerResponseSchema = z.object({
   versionId: z.string(),
   clientId: z.string(),
@@ -60,8 +81,52 @@ export const instrumentCatalogEntrySchema = z.object({
   latestPublishedVersionId: z.string().nullable(),
   licenseGrantStatus: z.enum(['not_required', 'active', 'missing', 'expired', 'revoked']),
   administerAllowed: z.boolean(),
+  /** Clinician scoring key + interpretation guidance (from the latest published version). */
+  guide: instrumentGuideSchema.nullable().optional(),
 });
 export type InstrumentCatalogEntry = z.infer<typeof instrumentCatalogEntrySchema>;
+
+// ─────────────────────────────────────────────────────────────
+// Assessment assignments (doc 07 §9): clinician assigns → client completes
+// from their dashboard → clinician reviews answers + score + AI briefing.
+// ─────────────────────────────────────────────────────────────
+
+export const ASSESSMENT_ASSIGNMENT_STATUSES = ['ASSIGNED', 'COMPLETED', 'CANCELLED'] as const;
+export type AssessmentAssignmentStatus = (typeof ASSESSMENT_ASSIGNMENT_STATUSES)[number];
+
+export const assignAssessmentSchema = z.object({
+  clientId: z.string().min(1),
+  /** A PUBLISHED QuestionnaireVersion id (catalog's latestPublishedVersionId). */
+  versionId: z.string().min(1),
+  /** Optional short instruction shown to the client with the assignment. */
+  note: z.string().max(500).optional(),
+  dueAt: z.string().datetime().optional(),
+});
+export type AssignAssessmentInput = z.infer<typeof assignAssessmentSchema>;
+
+export const completeAssignmentSchema = z.object({
+  answers: z.record(z.string(), z.number()),
+  responseTimeMs: z.number().int().min(0).optional(),
+});
+export type CompleteAssignmentInput = z.infer<typeof completeAssignmentSchema>;
+
+export const assessmentAssignmentSchema = z.object({
+  id: z.string(),
+  clientId: z.string(),
+  versionId: z.string(),
+  instrumentCode: z.string(),
+  instrumentName: z.string(),
+  construct: z.string(),
+  itemCount: z.number().int().nonnegative(),
+  note: z.string().nullable(),
+  status: z.enum(ASSESSMENT_ASSIGNMENT_STATUSES),
+  assignedBy: z.string(),
+  dueAt: z.string().nullable(),
+  responseId: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type AssessmentAssignmentDto = z.infer<typeof assessmentAssignmentSchema>;
 
 /**
  * IRT item parameters (docs/technical/07-psychometrics-engine.md §3/§5).

@@ -478,6 +478,7 @@ model Client {
   diagnosisHypotheses DiagnosisHypothesis[]
   formulations        Formulation[]
   responses           QuestionnaireResponse[]
+  assessmentAssignments AssessmentAssignment[]
   safetyPlans         SafetyPlan[]
   outcomeMeasures     OutcomeMeasure[]
   breakGlassGrants    BreakGlassGrant[]
@@ -1248,8 +1249,9 @@ model QuestionnaireVersion {
   published       Boolean       @default(false)
   createdAt       DateTime      @default(now())
 
-  items     Item[]
-  responses QuestionnaireResponse[]
+  items       Item[]
+  responses   QuestionnaireResponse[]
+  assignments AssessmentAssignment[]
 
   @@unique([questionnaireId, version])
 }
@@ -1288,6 +1290,40 @@ model PsychometricScore {
   reliabilityAtTheta Float?
   createdAt          DateTime              @default(now())
   deletedAt          DateTime?
+}
+
+/// A clinician's order for a client to complete a specific published
+/// instrument version: the psychologist assigns it, the client sees it on
+/// their dashboard and completes it, the clinician then reviews answers +
+/// deterministic score + the governed AI briefing. Status: ASSIGNED →
+/// COMPLETED | CANCELLED (String, not a new enum — same precedent as
+/// CatSession.status). `responseId` links the QuestionnaireResponse created
+/// at completion (unique: one response per assignment; completion is CAS'd
+/// on status so a double-submit can never score twice).
+model AssessmentAssignment {
+  id                     String               @id @default(cuid())
+  tenantId               String
+  clientId               String
+  client                 Client               @relation(fields: [clientId], references: [id])
+  questionnaireVersionId String
+  questionnaireVersion   QuestionnaireVersion @relation(fields: [questionnaireVersionId], references: [id])
+  /// userId of the assigning clinician (manager/psychologist/supervisor).
+  assignedBy             String
+  /// Optional short instruction shown to the client with the assignment.
+  note                   String?
+  status                 String               @default("ASSIGNED")
+  dueAt                  DateTime?
+  responseId             String?              @unique
+  completedAt            DateTime?
+  /// userId + timestamp when CANCELLED (kept distinct from soft-delete).
+  cancelledBy            String?
+  cancelledAt            DateTime?
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  deletedAt              DateTime?
+
+  @@index([tenantId, clientId, status])
+  @@index([tenantId, status, createdAt])
 }
 
 /// Computerized Adaptive Testing session state (07-psychometrics-engine.md §6;

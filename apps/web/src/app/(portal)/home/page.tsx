@@ -31,6 +31,7 @@ import { SkeletonCard, SkeletonStack } from '@/components/Skeleton';
 import { ErrorPanel } from '@/components/ErrorPanel';
 import { EmptyState } from '@/components/EmptyState';
 import { StatTile } from '@/components/StatTile';
+import { PendingAssessmentsCard } from '@/components/assessments/PendingAssessmentsCard';
 
 interface HomeworkItem {
   id: string;
@@ -241,6 +242,11 @@ export default function PatientHomePage() {
       </div>
 
       <div className="mt-6 space-y-4">
+        {/* Assigned assessments waiting on the client (doc 07 §9) — near the
+            top so a due check-in is one glance away. Client-role only; renders
+            its own honest loading/empty states and stays silent for staff. */}
+        <PendingAssessmentsCard />
+
         {loading && <SkeletonStack count={3} />}
 
         {!loading && !!error && <ErrorPanel message={errorMessage} onRetry={reload} />}

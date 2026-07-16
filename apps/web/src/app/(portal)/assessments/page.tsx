@@ -1,20 +1,21 @@
 'use client';
 
 /**
- * Adaptive assessment (CAT — psychometrics §6). A clinical instrument, so
- * the layout is deliberately calm and single-focus: one question at a time,
- * item selection is entirely server-driven, and progress is HONEST — a count
- * of items answered against the known cap (12), never a percentage bar
- * toward a total the algorithm hasn't decided yet.
+ * Assessments — role-aware entry (doc 07 §9 + psychometrics §6).
+ *
+ * Three surfaces behind one route:
+ *  - `?version=<id>` deep-link → the adaptive (CAT) flow below, unchanged.
+ *    That link is how a clinician launches CAT for a client.
+ *  - CLIENT (no assessment:interpret) → "My assessments": the assignments a
+ *    clinician created for them, each completed as a calm static form.
+ *  - Clinician (assessment:interpret) → assign panel + client assignment
+ *    browser with the full results review (answers, deterministic score,
+ *    scoring key, governed AI briefing).
  *
  * Result gating (interpretationMode = CLINICIAN_ONLY, doc 07 §"score
  * suppression"): a CLIENT completing their own assessment sees a calm
  * completion note — never the score, band, or interpretation text. Only a
  * principal holding assessment:interpret (clinician) sees the numbers.
- *
- * Instrument discovery: there is no "list instruments" endpoint this wave —
- * the version id arrives from the clinician (typically as a link
- * /assessments?version=<id>, mirroring the risk page's paste-an-id pattern).
  */
 import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -24,6 +25,9 @@ import { api, getPrincipal, ApiError } from '@/lib/api';
 import { useI18n } from '@/i18n';
 import { SkeletonCard } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
+import { MyAssessments } from '@/components/assessments/MyAssessments';
+import { ClinicianAssessments } from '@/components/assessments/ClinicianAssessments';
+import { SeverityChip } from '@/components/assessments/SeverityChip';
 
 /** Doc §6 stopping rule — the only honest upper bound we can show. */
 const MAX_ITEMS = 12;
@@ -32,9 +36,28 @@ export default function AssessmentsPage() {
   // useSearchParams requires a Suspense boundary in the app router.
   return (
     <Suspense fallback={<SkeletonCard className="mt-6" />}>
-      <CatFlow />
+      <AssessmentsRouter />
     </Suspense>
   );
+}
+
+function AssessmentsRouter() {
+  const searchParams = useSearchParams();
+  // The CAT deep-link keeps its historical meaning — launch the adaptive flow.
+  const hasVersionDeepLink = !!searchParams?.get('version');
+
+  // Role resolution is hydration-safe: the principal hint lives in
+  // localStorage, so the first client render matches SSR (resolving), then an
+  // effect branches. This is UI routing only — the API re-authorizes every call.
+  const [role, setRole] = useState<'resolving' | 'clinician' | 'client'>('resolving');
+  useEffect(() => {
+    const p = getPrincipal();
+    setRole(p?.permissions.includes(Permission.ASSESSMENT_INTERPRET) ? 'clinician' : 'client');
+  }, []);
+
+  if (hasVersionDeepLink) return <CatFlow />;
+  if (role === 'resolving') return <SkeletonCard className="mt-6" />;
+  return role === 'clinician' ? <ClinicianAssessments /> : <MyAssessments />;
 }
 
 function CatFlow() {
@@ -278,22 +301,5 @@ function CatFlow() {
         <EmptyState className="mt-6" body={t('cat.notCat')} />
       )}
     </div>
-  );
-}
-
-function SeverityChip({ band }: { band: string }) {
-  const { dict } = useI18n();
-  const cls =
-    band === 'SEVERE'
-      ? 'border-risk/40 text-risk bg-risk/10'
-      : band === 'HIGH'
-        ? 'border-signal/40 text-signal bg-signal/10'
-        : band === 'MODERATE'
-          ? 'border-signal/25 text-signal-soft bg-signal/5'
-          : 'border-teal/20 text-teal-soft bg-teal/5';
-  return (
-    <span className={`chip border ${cls}`}>
-      {dict.cat.bands[band as keyof typeof dict.cat.bands] ?? band}
-    </span>
   );
 }

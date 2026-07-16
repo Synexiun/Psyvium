@@ -160,6 +160,10 @@ export const Events = {
   // behind a PENDING human-decision gate; this is the seam the real-time
   // layer (SP3) and any other PENDING-queue subscriber hooks into.
   AIRecommendationCreated: 'ai_recommendation.created',
+  // Assessment assignment workflow (doc 07 §9): clinician assigns → client
+  // completes from their dashboard → clinician reviews + AI briefing.
+  AssessmentAssigned: 'assessment.assigned',
+  AssessmentAssignmentCompleted: 'assessment.assignment_completed',
   // Telehealth (context 12, last unbuilt context — `08-telehealth-and-
   // realtime.md`): LiveKit-backed session lifecycle events.
   TeleSessionCreated: 'telesession.created',

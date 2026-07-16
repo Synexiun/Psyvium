@@ -2,13 +2,17 @@ import { Body, Controller, Get, Param, Post, Query, UseGuards, UseInterceptors }
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   administerResponseSchema,
+  assignAssessmentSchema,
   catAnswerSchema,
   catStartSchema,
+  completeAssignmentSchema,
   Permission,
   type AdministerResponseInput,
+  type AssignAssessmentInput,
   type AuthPrincipal,
   type CatAnswerInput,
   type CatStartInput,
+  type CompleteAssignmentInput,
 } from '@vpsy/contracts';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/auth/permissions.guard';
@@ -17,6 +21,7 @@ import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 import { PsychometricsService } from './psychometrics.service';
+import { AssessmentAssignmentService } from './assessment-assignment.service';
 import { CatService } from './cat.service';
 import { DifService, type DifAnalysisRequest } from './dif.service';
 
@@ -27,9 +32,77 @@ import { DifService, type DifAnalysisRequest } from './dif.service';
 export class PsychometricsController {
   constructor(
     private readonly psychometrics: PsychometricsService,
+    private readonly assignments: AssessmentAssignmentService,
     private readonly cat: CatService,
     private readonly dif: DifService,
   ) {}
+
+  // ── Assessment assignments (doc 07 §9): clinician assigns → client
+  // completes from their dashboard → clinician reviews + AI briefing. ──
+
+  /** Clinician assigns a published instrument to a caseload client. */
+  @Post('assignments')
+  @RequirePermissions(Permission.ASSESSMENT_INTERPRET)
+  assign(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(assignAssessmentSchema)) body: AssignAssessmentInput,
+  ) {
+    return this.assignments.assign(user, body);
+  }
+
+  /** The signed-in client's own assignment list (their dashboard). */
+  @Get('assignments/me')
+  @RequirePermissions(Permission.ASSESSMENT_ADMINISTER)
+  listMyAssignments(@CurrentUser() user: AuthPrincipal) {
+    return this.assignments.listMine(user);
+  }
+
+  /** Clinician view of one client's assignments (unified caseload ABAC). */
+  @Get('assignments')
+  @RequirePermissions(Permission.ASSESSMENT_INTERPRET)
+  listAssignmentsForClient(@CurrentUser() user: AuthPrincipal, @Query('clientId') clientId: string) {
+    return this.assignments.listForClient(user, clientId);
+  }
+
+  /**
+   * CLIENT-SELF completion — scored through the exact batch pipeline
+   * (deterministic bands + safety-item → Risk routing), then the governed AI
+   * briefing is auto-requested. Idempotency mirrors the administer path.
+   */
+  @Post('assignments/:id/complete')
+  @RequirePermissions(Permission.ASSESSMENT_ADMINISTER)
+  @UseInterceptors(IdempotencyInterceptor)
+  completeAssignment(
+    @CurrentUser() user: AuthPrincipal,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(completeAssignmentSchema)) body: CompleteAssignmentInput,
+  ) {
+    return this.assignments.complete(user, id, body);
+  }
+
+  /** Clinician cancels an open (ASSIGNED) assignment. */
+  @Post('assignments/:id/cancel')
+  @RequirePermissions(Permission.ASSESSMENT_INTERPRET)
+  cancelAssignment(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
+    return this.assignments.cancel(user, id);
+  }
+
+  /** The completed response (answers + score) behind an assignment. */
+  @Get('assignments/:id/response')
+  @RequirePermissions(Permission.ASSESSMENT_INTERPRET)
+  assignmentResponse(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
+    return this.assignments.getAssignmentResponse(user, id);
+  }
+
+  /**
+   * Latest governed AI briefing for a score (from the PENDING-ledger; never
+   * triggers a model call — regenerate stays POST scores/:id/ai-interpret).
+   */
+  @Get('scores/:id/ai-briefing')
+  @RequirePermissions(Permission.ASSESSMENT_INTERPRET)
+  scoreBriefing(@CurrentUser() user: AuthPrincipal, @Param('id') id: string) {
+    return this.assignments.getScoreBriefing(user, id);
+  }
 
   /**
    * License-aware instrument catalog (professional psychometrics inventory).

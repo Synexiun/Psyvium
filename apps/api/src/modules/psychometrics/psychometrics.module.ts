@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { CredentialingModule } from '../credentialing/credentialing.module';
 import { PsychometricsController } from './psychometrics.controller';
 import { PsychometricsService } from './psychometrics.service';
+import { AssessmentAssignmentService } from './assessment-assignment.service';
 import { ScoringService } from './scoring.service';
 import { IrtScoringService } from './irt-scoring.service';
 import { CatSelectionService } from './cat-selection.service';
@@ -14,6 +15,7 @@ import { DifService } from './dif.service';
   controllers: [PsychometricsController],
   providers: [
     PsychometricsService,
+    AssessmentAssignmentService,
     ScoringService,
     IrtScoringService,
     CatSelectionService,

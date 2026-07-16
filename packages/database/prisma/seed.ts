@@ -8,6 +8,7 @@
 import { PrismaClient } from '@prisma/client';
 import { AI_CONSENT_VERSION, REQUIRED_CONSENT_VERSIONS, ROLE_PERMISSIONS } from '@vpsy/contracts';
 import argon2 from 'argon2';
+import { seedInstrumentPack } from './instrument-pack';
 
 const prisma = new PrismaClient();
 const DEMO_PASSWORD = 'Vpsy!2026';
@@ -1267,10 +1268,17 @@ async function main() {
     });
   }
 
+  // Standard instrument pack (doc 07 §2): the widely used, freely
+  // reproducible screeners with verbatim items + published scoring keys.
+  const pack = await seedInstrumentPack(prisma);
+
   console.log('✅ Seed complete. Demo login password for all accounts: Vpsy!2026');
   console.log('   Manager:', manager.email, '| Psychologists: dr.rivera@, dr.okafor@ | Client: alex.client@');
   console.log('   Demo dashboard client id (alex.client, assigned to dr.rivera):', client.id);
   console.log('   Psychometrics: classical VPSY-DEP-SCREEN-9 (version', qv.id, ', 9 original items + 3 draft es ItemTranslations) + IRT VPSY-ANX-IRT-7 (version', qvIrt.id, ', 7 GRM-calibrated items).');
+  console.log(
+    `   Instrument pack: ${pack.instruments} standard instruments (${pack.items} items) — PHQ-9, GAD-7, PHQ-15, PCL-5, AUDIT, K10, WHODAS 2.0 (12), EPDS, RSES, SWLS — with published keys, bands, safety hooks, and clinician guides.`,
+  );
   console.log('   CRM: 5 pipeline stages, 3 referrers, 3 demo leads.');
   console.log('   Communications Hub: 1 provisioned phone number, 1 demo call + 1 SMS + 1 voice media message.');
   console.log('   Scheduling: 3 open AvailabilitySlots on dr.rivera (next 3 days).');

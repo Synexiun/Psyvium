@@ -46,6 +46,11 @@ import type {
   PsychologistRegistryListDto,
   // Computerized Adaptive Testing (psychometrics §6)
   CatSessionStateDto,
+  // Assessment catalog + assignment workflow (psychometrics §9)
+  InstrumentCatalogEntry,
+  AssessmentAssignmentDto,
+  VersionItemsResponseDto,
+  QuestionnaireResponseDto,
 } from '@vpsy/contracts';
 import type { CaseloadEntry, ClinicalSummary, WearableRollup } from './clinical-types';
 import type {
@@ -914,4 +919,64 @@ export const api = {
       },
     }),
   catState: (sessionId: string) => request<CatSessionStateDto>(`/assessments/cat/${sessionId}`),
+
+  // ── Assessment catalog + assignment workflow (psychometrics §9) ──
+  // A clinician assigns a published instrument to a caseload client, the client
+  // completes it from their dashboard, then the clinician reviews the answers,
+  // deterministic score/band, scoring-key guide, and the governed AI briefing.
+
+  /** License-aware professional instrument catalog (clinician instrument picker). */
+  assessmentCatalog: () => request<InstrumentCatalogEntry[]>('/assessments/catalog'),
+
+  /** Clinician assigns a published instrument version to a caseload client. */
+  assignAssessment: (payload: { clientId: string; versionId: string; note?: string; dueAt?: string }) =>
+    request<AssessmentAssignmentDto>('/assessments/assignments', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  /** The signed-in CLIENT's own assignments (their dashboard list). */
+  myAssignments: () => request<AssessmentAssignmentDto[]>('/assessments/assignments/me'),
+
+  /** Clinician view of one client's assignments (caseload ABAC). */
+  clientAssignments: (clientId: string) =>
+    request<AssessmentAssignmentDto[]>(`/assessments/assignments?clientId=${encodeURIComponent(clientId)}`),
+
+  /** Item stems + response options for an assignment's instrument (the take-assessment form). */
+  versionItems: (versionId: string, locale?: string) =>
+    request<VersionItemsResponseDto>(
+      `/assessments/versions/${versionId}/items${locale ? `?locale=${encodeURIComponent(locale)}` : ''}`,
+    ),
+
+  /**
+   * CLIENT-SELF completion of an assignment. Answers are keyed by item linkId
+   * (q1..qN) → the selected option's numeric value. Idempotency-Key replays a
+   * double-tapped submit instead of scoring twice (doc 04 §8).
+   */
+  completeAssignment: (id: string, answers: Record<string, number>, responseTimeMs?: number) =>
+    request<{ assignment: AssessmentAssignmentDto; responseId: string }>(
+      `/assessments/assignments/${id}/complete`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ answers, ...(responseTimeMs !== undefined ? { responseTimeMs } : {}) }),
+        headers: { 'Idempotency-Key': `assignment-complete:${id}` },
+      },
+    ),
+
+  /** Clinician cancels an open (ASSIGNED) assignment. */
+  cancelAssignment: (id: string) =>
+    request<AssessmentAssignmentDto>(`/assessments/assignments/${id}/cancel`, { method: 'POST' }),
+
+  /** Clinician view of the completed response (answers + score) behind an assignment. */
+  assignmentResponse: (id: string) =>
+    request<QuestionnaireResponseDto>(`/assessments/assignments/${id}/response`),
+
+  /**
+   * Latest governed AI briefing for a score (from the PENDING ledger; never
+   * triggers a model call). Returns null when none has been generated yet.
+   */
+  scoreBriefing: (scoreId: string) =>
+    request<{ recommendationId: string; output: unknown; humanDecision: string; createdAt: string } | null>(
+      `/assessments/scores/${scoreId}/ai-briefing`,
+    ),
 };
