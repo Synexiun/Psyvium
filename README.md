@@ -18,7 +18,7 @@ Full documentation: [`docs/`](./docs/README.md) — [Business track](./docs/busi
 | Layer | Choice |
 |-------|--------|
 | Monorepo | Turborepo + pnpm |
-| API | NestJS — modular monolith, hexagonal, 28 DDD bounded contexts |
+| API | NestJS — modular monolith, hexagonal, 30 DDD bounded contexts |
 | DB / ORM | PostgreSQL + Prisma (TimescaleDB for wearables, planned) |
 | Web | Next.js 15 App Router · PWA · Tailwind ("Clinical Aurora" design system) |
 | Shared | `@vpsy/contracts` (zod DTOs + enums + RBAC) — one source of truth for API & web |
@@ -31,15 +31,16 @@ See [ADR-001](./docs/technical/03-tech-stack-and-decisions.md) for why TypeScrip
 
 ```
 apps/
-  api/    NestJS modular monolith — ~19 bounded-context modules live (auth, intake, matching,
-          credentialing, consent, clinical-docs, treatment-planning, psychometrics, outcomes,
-          wearables, clients, clinicians, crm, communications, risk, scheduling, finance,
-          ai-gateway, audit)
+  api/    NestJS modular monolith — 25 bounded-context modules live (admin, ai-gateway, analytics,
+          clients, clinical-documentation, clinicians, communications, consent, credentialing, crm,
+          diagnosis, documents, finance, intake, intervention, matching, messaging, outcomes,
+          psychometrics, registry, risk, scheduling, telehealth, treatment-planning, wearables)
+          plus cross-cutting auth + hash-chained audit
   web/    Next.js 15 PWA — public site + 10 role portals, 10 languages incl. Arabic RTL
 packages/
   contracts/  shared zod DTOs, enums, RBAC matrix
-  database/   Prisma schema (~60 models) + seed
-docs/       business/ (8) + technical/ (16) + BUILD-STATUS + DEMO-WALKTHROUGH
+  database/   Prisma schema (77 models) + seed
+docs/       business/ (8) + technical/ (17) + BUILD-STATUS + DEMO-WALKTHROUGH
 ```
 
 **Portals** (`apps/web`): `/` landing · `/login` · `/intake` · `/manager` triage · `/session` clinician workspace · `/home` patient PWA · `/assessments` (role-aware: client take-a-test vs clinician assign + results) · `/crm` · `/comms` · `/risk` · `/schedule` (+ `/finance`). Every screen is multilingual + RTL-ready.
