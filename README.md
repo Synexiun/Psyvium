@@ -42,7 +42,7 @@ packages/
 docs/       business/ (8) + technical/ (16) + BUILD-STATUS + DEMO-WALKTHROUGH
 ```
 
-**Portals** (`apps/web`): `/` landing · `/login` · `/intake` · `/manager` triage · `/session` clinician workspace · `/home` patient PWA · `/crm` · `/comms` · `/risk` · `/schedule` (+ `/finance`). Every screen is multilingual + RTL-ready.
+**Portals** (`apps/web`): `/` landing · `/login` · `/intake` · `/manager` triage · `/session` clinician workspace · `/home` patient PWA · `/assessments` (role-aware: client take-a-test vs clinician assign + results) · `/crm` · `/comms` · `/risk` · `/schedule` (+ `/finance`). Every screen is multilingual + RTL-ready.
 
 **Build status:** [`docs/BUILD-STATUS.md`](./docs/BUILD-STATUS.md) tracks all 30 contexts (built & verified / partial / documented) — Phase 2 is complete; Phases 3–5 substantially built.
 
@@ -81,6 +81,7 @@ pnpm test        # clinical-safety unit tests (screening)
 - ✅ `pnpm build` — 4/4 workspaces build clean · Prisma schema valid · seed idempotent
 - ✅ Full API test suite green; every wave live-smoke-tested end-to-end through the web proxy
 - ✅ **Care spine:** intake → deterministic screening → AI-ranked proposal → manager approval → clinician workspace (signable notes) → assessment → outcomes
+- ✅ **Standard assessments:** clinician assigns a keyed instrument → client completes it from their dashboard (score suppressed) → clinician reviews answers/score/band/scoring-key + a governed AI briefing (PENDING human gate); no double-scoring under concurrent submits
 - ✅ **Compliance enforced:** clinical writes blocked without an active/in-jurisdiction license (403); intake blocked with a withdrawn consent (409); audit hash-chain integrity verified
 - ✅ **AI governance:** every AI recommendation logged and gated `PENDING` behind a human decision
 - ✅ **Risk & Crisis:** escalations resolved by humans only; break-glass = time-boxed + audited + DPO alert
